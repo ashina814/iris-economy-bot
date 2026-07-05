@@ -1,0 +1,17 @@
+[Unit]
+Description=Iris K-Credit Economy Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/iris-economy-bot
+EnvironmentFile=/opt/iris-economy-bot/.env
+ExecStart=/usr/bin/node src/discord.js
+Restart=always
+RestartSec=5
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
