@@ -6,16 +6,16 @@ const { JsonStore } = require("./storage");
 const store = new JsonStore(path.join(__dirname, "..", "data", "local-state.json"), createInitialState);
 const state = store.load();
 const engine = new EconomyEngine(state);
-let actor = { id: "local:player", name: "Local Player" };
+let actor = { id: "local:player", name: "ローカル住民" };
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
-  prompt: "kc> "
+  prompt: "iris> "
 });
 
-console.log("K-Credit Economy Bot local simulator");
-console.log("Type `help` to see commands. Type `name YourName` to rename. Type `exit` to quit.");
+console.log("アイリス経済Bot ローカル確認");
+console.log("`help` でコマンド一覧、`name 名前` で名前変更、`exit` で終了。");
 console.log("");
 rl.prompt();
 
@@ -33,7 +33,7 @@ rl.on("line", (line) => {
 
   if (input.toLowerCase().startsWith("name ")) {
     actor = { ...actor, name: input.slice(5).trim() || actor.name };
-    console.log(`Renamed to ${actor.name}`);
+    console.log(`${actor.name} に変更しました。`);
     rl.prompt();
     return;
   }
@@ -47,5 +47,5 @@ rl.on("line", (line) => {
 
 rl.on("close", () => {
   store.save(engine.state);
-  console.log("Saved. See you in the ledger.");
+  console.log("保存しました。");
 });

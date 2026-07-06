@@ -8,91 +8,247 @@ function rng() {
 }
 
 const engine = new EconomyEngine(createInitialState(), { rng });
-const actor = { id: "test:user", name: "Tester" };
+const actor = { id: "test:user", name: "テスター" };
 
 const commands = [
   "join",
   "panel",
-  "panel casino",
-  "panel market",
-  "panel sink",
+  "panel inn",
+  "panel marketplace",
+  "panel official-shop",
+  "panel user-shops",
+  "panel my-shop",
   "panel invite",
-  "house",
-  "house profile sweet",
+  "panel lounge",
+  "panel admin",
   "daily",
   "profile",
   "ranks",
   "card",
-  "policy",
-  "market",
-  "invest RAMEN 200",
-  "portfolio",
-  "quest task",
-  "train attack",
-  "slots 50",
-  "crash 50 2.0",
-  "roulette 50 red",
-  "coinflip 50 heads",
-  "dice 50 3",
-  "bj 50",
-  "kabu",
-  "kabu buy 100",
-  "kabu sell all",
-  "safety",
-  "sink 100",
+  "marketplace product frame",
+  "marketplace confirm frame",
+  "marketplace buy frame",
   "invite",
   "simulate-text 20",
   "simulate-vc 30",
   "rank text",
   "rank vc",
-  "rank rpg",
-  "news"
+  "rank invite",
+  "rank net"
 ];
 
 for (const command of commands) {
   const result = engine.run(command, actor);
-  assert(result && typeof result.title === "string", `No result for ${command}`);
-  assert(Array.isArray(result.lines), `No lines for ${command}`);
+  assert(result && typeof result.title === "string", `${command} の結果がありません`);
+  assert(Array.isArray(result.lines), `${command} の本文行がありません`);
 }
 
 const user = engine.state.users[actor.id];
-assert(user.joined, "User should be joined");
-assert(user.lifetimeEarned >= 100000, "Initial grant should be around 100k KC");
-assert(engine.state.house.profile === "sweet", "House profile should be configurable");
-assert(user.activity.textXp > 0, "Text XP should increase");
-assert(user.activity.vcXp > 0, "VC XP should increase");
-assert(user.rpg.xp > 0, "RPG XP should increase");
-assert(user.casino.plays >= 4, "Casino plays should be recorded");
-assert(Object.keys(engine.state.market.assets).length >= 4, "Market assets should exist");
+assert(user.joined, "参加状態になる必要があります");
+assert(user.lifetimeEarned >= 100000, "初期配布は100,000 Ris以上が必要です");
+assert(user.activity.textXp > 0, "TC経験値が増える必要があります");
+assert(user.activity.vcXp > 0, "VC経験値が増える必要があります");
+assert(user.inventory.frame >= 1, "公式ショップでカード枠を購入できる必要があります");
 
 const card = engine.run("card", actor);
-assert(card.card, "Card command should include Discord card data");
-assert(card.lines.some((line) => line.includes("CARD")), "Card command should include CLI card layout");
+assert(card.card, "カードコマンドにDiscordカード情報が必要です");
+assert(card.lines.some((line) => line.includes("カード")), "カードコマンドにCLIカード表示が必要です");
+
+const marketPanel = engine.run("panel marketplace", actor);
+assert(marketPanel.panel, "マーケットパネルが必要です");
+assert(marketPanel.panel.components.length > 0, "マーケットパネルに操作部品が必要です");
+
+// 初期資本が CPI 補正なしで素の 100,000 Ris になっていることを確認
+const freshEngine = new EconomyEngine(createInitialState(), { rng });
+const freshActor = { id: "test:fresh", name: "新規参加者" };
+const joinResult = freshEngine.run("join", freshActor);
+assert(joinResult.ok, "join が成功する必要があります");
+const freshUser = freshEngine.state.users[freshActor.id];
+assert.strictEqual(freshUser.wallet, 100000, `初期配布は素の10万Ris（実際: ${freshUser.wallet}）`);
+
+const seller = { id: "test:seller", name: "売り手" };
+const buyer = { id: "test:buyer", name: "買い手" };
+engine.run("join", seller);
+engine.run("join", buyer);
+engine.run("marketplace open-shop", seller);
+const sellerUser = engine.getUser(seller.id, seller.name);
+const listingResult = engine.createUserListing(sellerUser, {
+  name: "通話券",
+  type: "item",
+  mode: "permanent",
+  price: "500",
+  stock: "2",
+  description: "30分だけ話を聞く券"
+});
+assert(listingResult.ok, "民営商品を出品できる必要があります");
+const listing = engine.state.marketplace.listings[0];
+assert(listing.status === "active", "通常商品は公開状態になる必要があります");
+const listingPanel = engine.run(`marketplace listing ${listing.id}`, buyer);
+assert(listingPanel.panel, "民営商品の詳細パネルが必要です");
+const buyListing = engine.run(`marketplace listing-buy ${listing.id}`, buyer);
+assert(buyListing.ok, "民営商品を購入できる必要があります");
+assert(engine.getUser(buyer.id, buyer.name).marketplace.inventory.length === 1, "購入品が持ち物に入る必要があります");
+assert(engine.getUser(seller.id, seller.name).marketplace.sales > 0, "販売者の売上が増える必要があります");
+
+// ロール出品は自動判定ではなく手動対応になるはず
+const roleListingResult = engine.createUserListing(sellerUser, {
+  name: "限定ロール",
+  type: "role",
+  mode: "permanent",
+  price: "800",
+  stock: "1",
+  description: "運営が付与するロール"
+});
+assert(roleListingResult.ok, "ロール出品ができる必要があります");
+const roleListing = engine.state.marketplace.listings.find((entry) => entry.name === "限定ロール");
+assert(roleListing.manual === true, "ロール出品は manual=true になる必要があります");
+
+const admin = { id: "test:admin", name: "運営" };
+engine.run("join", admin);
+const auctionCreate = engine.createOfficialAuction(engine.getUser(admin.id, admin.name), {
+  name: "限定称号",
+  type: "title",
+  startPrice: "1000",
+  durationMinutes: "60",
+  description: "公式競売のテスト商品"
+});
+assert(auctionCreate.ok, "公式オークションを作成できる必要があります");
+const auction = engine.state.marketplace.auctions[0];
+assert(auction.status === "open", "公式オークションは開催中になる必要があります");
+const firstBidder = engine.getUser(actor.id, actor.name);
+const secondBidder = engine.getUser(buyer.id, buyer.name);
+const firstWallet = firstBidder.wallet;
+const firstBid = engine.placeAuctionBid(firstBidder, auction.id, "1200");
+assert(firstBid.ok, "入札できる必要があります");
+assert(firstBidder.wallet === firstWallet - 1200, "入札額が拘束される必要があります");
+const refundedWallet = firstBidder.wallet;
+const secondBid = engine.placeAuctionBid(secondBidder, auction.id, "1600");
+assert(secondBid.ok, "上書き入札できる必要があります");
+assert(engine.getUser(actor.id, actor.name).wallet === refundedWallet + 1200, "上書きされた入札者へ自動返金される必要があります");
+const closeResult = engine.forceEndAuction(engine.getUser(admin.id, admin.name), auction.id);
+assert(closeResult.ok, "公式オークションを終了できる必要があります");
+assert(auction.status === "ended", "公式オークションは終了状態になる必要があります");
+assert(engine.getUser(buyer.id, buyer.name).marketplace.inventory.some((item) => item.name === "限定称号"), "落札者へ商品が付与される必要があります");
+
+const innPanel = engine.run("panel inn", actor);
+assert(innPanel.panel, "二人宿パネルが必要です");
+assert(innPanel.panel.components[0].items[0].command === "create-yado-vc", "二人宿はVC作成ボタンが必要です");
+const innCommand = engine.run("inn", actor);
+assert(innCommand.lines.some((line) => line.includes("固定パネル")), "宿コマンドは固定パネル案内が必要です");
 
 engine.startVoiceSession(actor, "voice:test");
 const voiceUser = engine.getUser(actor.id, actor.name);
 voiceUser.activity.voiceJoinedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
 voiceUser.activity.voiceLastClaimAt = voiceUser.activity.voiceJoinedAt;
 const vcClaim = engine.run("vc", actor);
-assert(vcClaim.title === "VC報酬" || vcClaim.title === "VCランク昇格", "VC claim should settle active voice time");
-assert(engine.state.users[actor.id].activity.vcDailyEarned > 0, "VC daily KC should increase");
+assert(vcClaim.title === "VC報酬" || vcClaim.title === "VCランク昇格", "VC在室分を精算できる必要があります");
+assert(engine.state.users[actor.id].activity.vcDailyEarned > 0, "VC日次Risが増える必要があります");
 
-for (let i = 0; i < 15; i += 1) {
-  engine.run("simulate-text 50", actor);
-}
-assert(engine.state.policy.history.length > 0, "Policy cycle should run after enough commands");
-const upgradedCard = engine.run("card", actor);
-assert(upgradedCard.card.footer.includes("Layout"), "Upgraded card should report layout");
-
-const invitee = { id: "test:invitee", name: "Invitee" };
+const invitee = { id: "test:invitee", name: "招待された人" };
 const tracked = engine.recordInviteJoin(actor, invitee, { code: "abc123" });
-assert(tracked?.ok, "Invite should be tracked");
+assert(tracked?.ok, "招待を追跡できる必要があります");
 engine.run("join", invitee);
-assert(engine.state.users[actor.id].invites.qualified >= 1, "Inviter should get a qualified invite");
-assert(engine.state.users[actor.id].invites.earned > 0, "Inviter should earn invite KC");
+assert(engine.state.users[actor.id].invites.qualified >= 1, "招待の立数が増える必要があります");
+assert(engine.state.users[actor.id].invites.earned > 0, "招待報酬Risが入る必要があります");
 
-const sinkBefore = engine.state.sink.totalBurned;
-engine.run("sink 100", actor);
-assert(engine.state.sink.totalBurned > sinkBefore, "Sink should burn KC");
+// 招待報酬も素の値（CPI補正なし）で 900+ になるはず
+const inviterAfterInvite = engine.state.users[actor.id];
+assert(inviterAfterInvite.invites.earned >= 900, `招待報酬は素の900Ris以上（実際: ${inviterAfterInvite.invites.earned}）`);
 
-console.log("Smoke test passed.");
+// 民営出品の審査承認/却下
+const highPricedListing = engine.createUserListing(sellerUser, {
+  name: "高額サービス",
+  type: "service",
+  mode: "permanent",
+  price: "60000",
+  stock: "1",
+  description: "審査待ちになるはずの高額サービス"
+});
+assert(highPricedListing.ok, "高額サービス出品ができる必要があります");
+const pending = engine.state.marketplace.listings.find((l) => l.name === "高額サービス");
+assert.strictEqual(pending.status, "pending", "高額サービスは審査待ちになる必要があります");
+const adminUser = engine.getUser(admin.id, admin.name);
+const approveResult = engine.approveListing(adminUser, pending.id);
+assert(approveResult.ok, "承認が成功する必要があります");
+assert.strictEqual(pending.status, "active", "承認後は active になる必要があります");
+
+const anotherPending = engine.createUserListing(sellerUser, {
+  name: "怪しい称号",
+  type: "title",
+  mode: "permanent",
+  price: "500",
+  stock: "1",
+  description: "却下されるべき出品"
+});
+const pendingId = engine.state.marketplace.listings.find((l) => l.name === "怪しい称号").id;
+const rejectResult = engine.rejectListing(adminUser, pendingId, "商品名が不適切");
+assert(rejectResult.ok, "却下が成功する必要があります");
+const rejected = engine.state.marketplace.listings.find((l) => l.id === pendingId);
+assert.strictEqual(rejected.status, "rejected", "却下後は rejected になる必要があります");
+assert.strictEqual(rejected.reviewNote, "商品名が不適切", "却下理由が記録される必要があります");
+
+// 取引対応の運営完了 / 返金
+const forRefundListing = engine.createUserListing(sellerUser, {
+  name: "返金テスト用サービス",
+  type: "service",
+  mode: "permanent",
+  price: "500",
+  stock: "1",
+  description: "返金テスト"
+});
+assert(forRefundListing.ok);
+const testListing = engine.state.marketplace.listings.find((l) => l.name === "返金テスト用サービス");
+engine.approveListing(adminUser, testListing.id);
+const buyerBeforeRefund = engine.getUser(buyer.id, buyer.name).wallet;
+const sellerBeforeRefund = engine.getUser(seller.id, seller.name).wallet;
+const purchaseResult = engine.buyUserListing(engine.getUser(buyer.id, buyer.name), testListing.id);
+assert(purchaseResult.ok, "サービス購入ができる必要があります");
+const purchasedOrder = engine.state.marketplace.orders.find(
+  (o) => o.listingId === testListing.id && o.buyerId === buyer.id
+);
+assert(purchasedOrder, "取引レコードが作られる必要があります");
+const refundResult = engine.adminRefundOrder(adminUser, purchasedOrder.id);
+assert(refundResult.ok, "運営返金が成功する必要があります");
+assert.strictEqual(engine.getUser(buyer.id, buyer.name).wallet, buyerBeforeRefund, "購入者の財布が返金で元に戻る必要があります");
+const buyerInventoryAfter = engine.getUser(buyer.id, buyer.name).marketplace.inventory;
+assert(
+  !buyerInventoryAfter.some((item) => String(item.orderId) === String(purchasedOrder.id)),
+  "返金後は購入者の持ち物から該当商品が消える必要があります"
+);
+assert.strictEqual(purchasedOrder.status, "refunded", "取引が refunded になる必要があります");
+
+// 給与配布: 中央発行で管理者財布は減らず、対象全員に一律で入る
+const payeeA = { id: "test:payee-a", name: "受給者A" };
+const payeeB = { id: "test:payee-b", name: "受給者B" };
+engine.run("join", payeeA);
+engine.run("join", payeeB);
+const adminBefore = engine.getUser(admin.id, admin.name).wallet;
+const payeeAWalletBefore = engine.getUser(payeeA.id, payeeA.name).wallet;
+const salaryResult = engine.distributeSalary(engine.getUser(admin.id, admin.name), {
+  entries: [
+    { id: payeeA.id, name: payeeA.name },
+    { id: payeeB.id, name: payeeB.name },
+    { id: payeeA.id, name: payeeA.name }
+  ],
+  perUser: "500",
+  roleLabel: "テストロール"
+});
+assert(salaryResult.ok, "給与配布が成功する必要があります");
+assert.strictEqual(salaryResult.paid.length, 2, `重複除外後 2 人（実際: ${salaryResult.paid.length}）`);
+assert.strictEqual(salaryResult.total, 1000, `合計 1000 Ris（実際: ${salaryResult.total}）`);
+assert.strictEqual(engine.getUser(admin.id, admin.name).wallet, adminBefore, "管理者の財布は減らない");
+assert.strictEqual(engine.getUser(payeeA.id, payeeA.name).wallet, payeeAWalletBefore + 500, "受給者Aに500 Ris入る");
+const salaryInvalid = engine.distributeSalary(engine.getUser(admin.id, admin.name), { entries: [], perUser: "500" });
+assert(!salaryInvalid.ok, "対象0人の配布は失敗する必要があります");
+
+// カジノ関連のコマンドが未知扱いになることを確認
+const casinoRemoved = engine.run("slots 50", actor);
+assert(casinoRemoved.title === "未知の経済行為", `カジノコマンドは削除済み（title: ${casinoRemoved.title}）`);
+const rpgRemoved = engine.run("quest task", actor);
+assert(rpgRemoved.title === "未知の経済行為", `RPGコマンドは削除済み（title: ${rpgRemoved.title}）`);
+const sinkRemoved = engine.run("sink 100", actor);
+assert(sinkRemoved.title === "未知の経済行為", `シンクコマンドは削除済み（title: ${sinkRemoved.title}）`);
+const policyRemoved = engine.run("policy", actor);
+assert(policyRemoved.title === "未知の経済行為", `政策コマンドは削除済み（title: ${policyRemoved.title}）`);
+
+console.log("スモークテスト通過。");

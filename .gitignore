@@ -3,3 +3,5 @@ data/*.json
 data/*.tmp
 data/*.broken-*
 .env
+*.zip
+.DS_Store

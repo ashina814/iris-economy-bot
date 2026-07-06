@@ -1,128 +1,97 @@
 const CURRENCY = {
-  code: "KC",
-  name: "K-Credit",
-  issuer: "Kei Central Ledger"
+  code: "Ris",
+  name: "Ris",
+  issuer: "アイリス中央台帳"
 };
 
 const ECONOMY_CONFIG = {
   starterGrant: 100000
 };
 
-const ASSETS = {
-  RAMEN: {
-    name: "深夜ラーメン先物",
-    price: 120,
-    volatility: 0.18,
-    description: "夜中ほど買われる謎の商品。翌朝に少し反省される。"
-  },
-  OSHI: {
-    name: "推し活ETF",
-    price: 300,
-    volatility: 0.22,
-    description: "尊さで上がり、財布の現実で下がる。"
-  },
-  FUTON: {
-    name: "布団IPO",
-    price: 80,
-    volatility: 0.13,
-    description: "上場すると全員が二度寝する。値動きは意外と堅い。"
-  },
-  TAX: {
-    name: "税務署REIT",
-    price: 500,
-    volatility: 0.09,
-    description: "みんなが嫌がるほど安定する、心の置き場所に困る銘柄。"
-  },
-  NEON: {
-    name: "ネオン雑談HD",
-    price: 220,
-    volatility: 0.2,
-    description: "深夜VCが伸びると買われる。朝になると全員が記憶をなくす。"
-  },
-  MUTE: {
-    name: "ミュート解除工業",
-    price: 160,
-    volatility: 0.24,
-    description: "『あ、ミュートだった』の回数に連動するらしい。IRは全部小声。"
-  },
-  GABA: {
-    name: "ガバナンス豆腐",
-    price: 90,
-    volatility: 0.31,
-    description: "柔らかいのに値動きだけ硬派。決算は毎回ちょっと崩れる。"
-  },
-  YAMI: {
-    name: "闇鍋クラウド",
-    price: 420,
-    volatility: 0.27,
-    description: "何を売ってるか分からないが、なぜか月額課金だけ強い。"
-  }
-};
-
 const SHOP_ITEMS = {
   chair: {
-    name: "社長のイス",
+    name: "深座りの椅子",
     price: 1500,
     max: 1,
     kind: "passive",
-    description: "座るだけで労働報酬 +15%。姿勢も態度もデカくなる。"
+    type: "権利",
+    description: "労働報酬が少し増える。座ってるだけで偉そう。",
+    effect: "労働報酬 +15%",
+    usage: "持っているだけで自動発動"
   },
   stamp: {
-    name: "謎スタンプカード",
+    name: "常連カード",
     price: 1200,
     max: 1,
     kind: "passive",
-    description: "ログボ +250 KC。何の店のカードか誰も知らない。"
-  },
-  shredder: {
-    name: "領収書シュレッダー",
-    price: 900,
-    max: 99,
-    kind: "consumable",
-    description: "税務署ヘイトを 25 下げる。使うと部屋が静かになる。"
+    type: "権利",
+    description: "毎日の受け取りに少し上乗せ。財布の底が少し厚くなる。",
+    effect: "ログボ +250 Ris",
+    usage: "持っているだけで自動発動"
   },
   coupon: {
-    name: "逆クーポン",
+    name: "くじ付き封筒",
     price: 300,
     max: 99,
     kind: "consumable",
-    description: "使うとお金が増えることも減ることもある。経理が泣く。"
+    type: "アイテム",
+    description: "開けるまで分からない。小遣いか、ため息か。",
+    effect: "-450 〜 +700 Ris のランダム収支",
+    usage: "`使う くじ付き封筒` で1個消費"
   },
-  helmet: {
-    name: "投資ヘルメット",
-    price: 1800,
+  frame: {
+    name: "黒金カード枠",
+    price: 12000,
     max: 1,
     kind: "passive",
-    description: "市場急落時の損をちょっとだけやわらげる。精神論ではない。"
+    type: "称号",
+    description: "プロフィールに見栄を足す。強くはならない、でも見られる。",
+    effect: "プロフィールカードに金枠を追加",
+    usage: "所持中は自動で反映"
   },
-  tonic: {
-    name: "集中トニック",
-    price: 650,
-    max: 20,
+  roompass: {
+    name: "宿の増築券",
+    price: 5000,
+    max: 10,
     kind: "consumable",
-    description: "RPGのHPとエナジーを少し戻す。味は会議室の水。"
+    type: "チケット",
+    description: "宿の追加人数枠を1つ増やせるチケット。",
+    effect: "二人宿の人数上限 +1（別途 5,000 Ris の増築費用は不要）",
+    usage: "宿の管理パネルから使用"
   }
 };
 
-const WORKS = [
-  { text: "自販機の下を金融街として再開発した", min: 90, max: 260, heat: 2, xp: 8 },
-  { text: "会議で『それはレバレッジですね』だけ言い続けた", min: 120, max: 310, heat: 4, xp: 10 },
-  { text: "レシートを見て宇宙の真理に近づいた", min: 80, max: 230, heat: 1, xp: 7 },
-  { text: "社内通貨を勝手に発行して昼休みに上場した", min: 170, max: 420, heat: 10, xp: 14 },
-  { text: "『雰囲気で決算を読む』講座を開いた", min: 140, max: 360, heat: 6, xp: 12 },
-  { text: "空き箱をサブスク化して投資家をうならせた", min: 160, max: 390, heat: 8, xp: 13 },
-  { text: "給与明細に励ましの付箋を貼る副業をした", min: 100, max: 270, heat: 0, xp: 9 }
-];
+const MARKET_PRODUCT_TYPES = {
+  role: "ロール",
+  title: "称号",
+  item: "アイテム",
+  ticket: "チケット",
+  right: "権利",
+  service: "サービス",
+  bundle: "セット商品"
+};
 
-const MARKET_NEWS = [
-  "中央台帳が咳払い。板が一瞬だけ正座しました。",
-  "深夜VC指数が上振れ。眠い銘柄ほど買われています。",
-  "『実質無料』発言で財布の倫理が崩壊しました。",
-  "決算資料のフォントが強すぎて、内容より先に買われています。",
-  "謎の専門家が『ここは握力』と言い、握っている理由が消えました。",
-  "全銘柄が一瞬だけ『俺、何の会社だっけ』になりました。",
-  "ミュート解除需要が急増。会議系銘柄に雑な資金流入。",
-  "推し活関連に資金流入。理由は尊いから。以上です。"
+const MARKET_SALE_MODES = {
+  permanent: "買い切り",
+  timed: "期間制"
+};
+
+const MARKETPLACE_CONFIG = {
+  feeBps: 500,
+  reviewPrice: 50000,
+  maxActiveListings: 8,
+  defaultDurationDays: 7,
+  auctionExtendMinutes: 5
+};
+
+const WORKS = [
+  { text: "自販機の下を金融街として再開発した", min: 90, max: 260, xp: 8 },
+  { text: "会議で『それはレバレッジですね』だけ言い続けた", min: 120, max: 310, xp: 10 },
+  { text: "レシートを見て宇宙の真理に近づいた", min: 80, max: 230, xp: 7 },
+  { text: "社内通貨を勝手に発行して昼休みに上場した", min: 170, max: 420, xp: 14 },
+  { text: "『雰囲気で決算を読む』講座を開いた", min: 140, max: 360, xp: 12 },
+  { text: "空き箱をサブスク化して投資家をうならせた", min: 160, max: 390, xp: 13 },
+  { text: "給与明細に励ましの付箋を貼る副業をした", min: 100, max: 270, xp: 9 }
 ];
 
 const TEXT_RANKS = [
@@ -144,118 +113,28 @@ const VC_RANKS = [
 ];
 
 const ECONOMY_RANKS = [
-  { name: "未上場", min: -Infinity },
+  { name: "未上場", min: 0 },
   { name: "個人商店", min: 1000 },
   { name: "流動性提供者", min: 7000 },
   { name: "地区銀行", min: 25000 },
   { name: "経済圏中枢", min: 80000 },
-  { name: "K-Credit 財閥", min: 200000 }
+  { name: "アイリス財閥", min: 200000 }
 ];
-
-const RPG_RANKS = [
-  { name: "見習い", min: 0 },
-  { name: "探索者", min: 120 },
-  { name: "作戦参謀", min: 420 },
-  { name: "領域守護者", min: 1000 },
-  { name: "伝説の会計係", min: 2400 },
-  { name: "世界決算者", min: 5200 }
-];
-
-const QUESTS = {
-  task: {
-    name: "未処理タスクの砦",
-    cost: 2,
-    power: 18,
-    rewardMin: 140,
-    rewardMax: 340,
-    xpMin: 24,
-    xpMax: 46,
-    description: "積まれたタスクを片づける。倒すというより、減らす。"
-  },
-  invoice: {
-    name: "請求書の迷宮",
-    cost: 3,
-    power: 28,
-    rewardMin: 280,
-    rewardMax: 620,
-    xpMin: 42,
-    xpMax: 80,
-    description: "数字と向き合う試練。目をそらすと増える。"
-  },
-  deadline: {
-    name: "締切前線",
-    cost: 4,
-    power: 42,
-    rewardMin: 520,
-    rewardMax: 1100,
-    xpMin: 80,
-    xpMax: 150,
-    description: "集中力で突破する高難度クエスト。通知は切っていけ。"
-  }
-};
-
-const CASINO_SYMBOLS = ["KC", "7", "BAR", "IPO", "TAX", "UP"];
-
-const CASINO_MASCOT = {
-  name: "リリス",
-  title: "アイリス地下卓の煽りディーラー",
-  opener: "リリスが卓に肘をついた。笑ってるのに、目だけ負けを待ってる。",
-  win: [
-    "リリス: はいはい、今日はその顔していいよ。次で崩れる顔だけど。",
-    "リリス: うわ、通した。台帳が一瞬だけ舌打ちしたわ。",
-    "リリス: まだ勝ち顔早い。財布しまってから威張りな。",
-    "リリス: いいじゃん。少しだけ、あたしの読みを汚したね。"
-  ],
-  lose: [
-    "リリス: んー、今の押し方、財布が先に謝ってたよ。",
-    "リリス: はい床。きれいに抜けたね。そこ座って反省しな。",
-    "リリス: 取り返す前に水飲みな。指がもう負けてる。",
-    "リリス: その顔、嫌いじゃないよ。負けを認めたらもっと良くなる。"
-  ],
-  block: [
-    "リリス: 今日は閉店。RPG行きな、顔が熱い。",
-    "リリス: その指、今信用ない。休憩。",
-    "リリス: 台帳ストップ。ここから先はだいたい負け顔。",
-    "リリス: 止められて悔しい？ いい顔。でも今日は終わり。"
-  ]
-};
-
-const KABU_CONFIG = {
-  minPrice: 28,
-  maxPrice: 680,
-  startPrice: 96,
-  shelfLifeDays: 7
-};
-
-const POLICY_CONFIG = {
-  baseCpi: 1000,
-  policyCycleCommands: 12,
-  targetInflationBps: 8,
-  maxDeflationBps: -80,
-  maxInflationBps: 240
-};
-
-const SAFETY_CONFIG = {
-  casinoDailyLossBase: 2400,
-  casinoDailyPlayLimit: 80,
-  casinoLossStreakLimit: 4,
-  casinoCooldownMs: 12 * 60 * 1000
-};
 
 const VOICE_REWARD_CONFIG = {
   kcPerMinute: 4,
   xpPerMinute: 6,
+  levelXpBase: 120,
+  salaryStepLevels: 10,
+  salaryKcPerStep: 1,
   dailyCapBase: 1800,
   dailyCapPerLevel: 90,
-  maxClaimMinutes: 240,
-  autoSettleMs: 10 * 60 * 1000
+  maxClaimMinutes: 240
 };
 
-const SINK_CONFIG = {
-  baseTarget: 6000,
-  targetGrowth: 1.18,
-  minContribution: 100,
-  eventDurationCommands: 36
+const INN_CONFIG = {
+  roomTtlCommands: 48,
+  maxOpenRooms: 12
 };
 
 const INVITE_CONFIG = {
@@ -264,163 +143,86 @@ const INVITE_CONFIG = {
   dailyPaidLimit: 4
 };
 
-const HOUSE_PROFILES = {
-  normal: {
-    name: "通常営業",
-    kugi: 100,
-    returnRate: 94,
-    volatility: 100,
-    jackpot: 100,
-    description: "ふつう。リリスが一番つまらなそうな顔をする設定。"
-  },
-  sweet: {
-    name: "甘デジ",
-    kugi: 108,
-    returnRate: 98,
-    volatility: 82,
-    jackpot: 92,
-    description: "当たりは軽い。脳汁は薄め。雑談向け。"
-  },
-  middle: {
-    name: "ミドル",
-    kugi: 100,
-    returnRate: 94,
-    volatility: 115,
-    jackpot: 105,
-    description: "今の標準。ちょい荒、ちゃんと痛い。"
-  },
-  max: {
-    name: "強欲",
-    kugi: 92,
-    returnRate: 90,
-    volatility: 145,
-    jackpot: 125,
-    description: "当たりは重い。刺さると声が出る。やりすぎ注意。"
-  },
-  festival: {
-    name: "祭り",
-    kugi: 115,
-    returnRate: 101,
-    volatility: 130,
-    jackpot: 115,
-    description: "短時間イベント用。常設すると経済が変な汗をかく。"
-  }
-};
-
 const CARD_STYLES = [
   {
     id: "civic",
-    name: "CIVIC",
+    name: "市民",
     minScore: 0,
     color: 0x64748b,
     width: 54,
     layout: "compact",
-    tagline: "Entry ledger card"
+    tagline: "初期台帳カード"
   },
   {
     id: "chrome",
-    name: "CHROME",
-    minScore: 4,
+    name: "クロム",
+    minScore: 3,
     color: 0x0891b2,
     width: 60,
     layout: "split",
-    tagline: "Ranked activity card"
+    tagline: "活動ランクカード"
   },
   {
     id: "aurum",
-    name: "AURUM",
-    minScore: 8,
+    name: "金帳",
+    minScore: 6,
     color: 0xd97706,
     width: 64,
     layout: "ledger",
-    tagline: "Premium balance sheet"
+    tagline: "上位帳簿カード"
   },
   {
     id: "prism",
-    name: "PRISM",
-    minScore: 13,
+    name: "虹帳",
+    minScore: 9,
     color: 0x7c3aed,
     width: 68,
     layout: "matrix",
-    tagline: "Multi-domain rank matrix"
+    tagline: "複合ランク台帳"
   },
   {
     id: "black",
-    name: "BLACK",
-    minScore: 18,
+    name: "黒札",
+    minScore: 12,
     color: 0x111827,
     width: 72,
     layout: "executive",
-    tagline: "Central ledger executive card"
+    tagline: "中央台帳の上位札"
   }
 ];
 
 function createInitialState() {
   return {
-    version: 3,
+    version: 4,
     currency: CURRENCY,
     commandCount: 0,
     users: {},
-    market: {
-      day: 1,
-      assets: Object.fromEntries(
-        Object.entries(ASSETS).map(([symbol, asset]) => [
-          symbol,
-          {
-            name: asset.name,
-            price: asset.price,
-            previousPrice: asset.price,
-            volatility: asset.volatility,
-            description: asset.description
-          }
-        ])
-      ),
-      kabu: {
-        price: KABU_CONFIG.startPrice,
-        previousPrice: KABU_CONFIG.startPrice,
-        trend: "flat",
-        trendAge: 0,
-        news: "カブ屋が路地に出ました。買う理由はだいたい雰囲気です。"
-      },
-      news: ["K-Credit 経済圏が開場しました。最初から少し不安です。"]
-    },
-    policy: {
-      cpi: POLICY_CONFIG.baseCpi,
-      previousCpi: POLICY_CONFIG.baseCpi,
-      inflationBps: 0,
-      targetInflationBps: POLICY_CONFIG.targetInflationBps,
-      stance: "neutral",
-      issued: 0,
-      sunk: 0,
-      cycleIssued: 0,
-      cycleSunk: 0,
-      moneySupply: 0,
-      lastPolicyCommand: 0,
-      history: []
-    },
-    sink: {
-      name: "自由闇鍋",
-      pool: 0,
-      target: SINK_CONFIG.baseTarget,
-      level: 0,
-      totalBurned: 0,
-      activeEvent: null,
-      history: []
-    },
-    house: {
-      profile: "middle",
-      kugi: HOUSE_PROFILES.middle.kugi,
-      returnRate: HOUSE_PROFILES.middle.returnRate,
-      volatility: HOUSE_PROFILES.middle.volatility,
-      jackpot: HOUSE_PROFILES.middle.jackpot,
-      updatedBy: null,
-      updatedAt: null
+    marketplace: {
+      nextListingId: 1,
+      nextOrderId: 1,
+      nextAuctionId: 1,
+      shops: {},
+      listings: [],
+      orders: [],
+      auctions: [],
+      logs: [],
+      settings: {
+        feeBps: MARKETPLACE_CONFIG.feeBps,
+        reviewPrice: MARKETPLACE_CONFIG.reviewPrice,
+        maxActiveListings: MARKETPLACE_CONFIG.maxActiveListings,
+        auctionExtendMinutes: MARKETPLACE_CONFIG.auctionExtendMinutes
+      }
     },
     invites: {
       totalTracked: 0,
       totalQualified: 0,
       totalPaid: 0,
       recent: []
+    },
+    inn: {
+      nextId: 1,
+      rooms: [],
+      history: []
     },
     ledger: []
   };
@@ -435,7 +237,6 @@ class EconomyEngine {
 
   run(input, actor) {
     const user = this.getUser(actor.id, actor.name);
-    this.regenerateRpg(user);
     const parsed = parseInput(input);
 
     if (!parsed.command) {
@@ -443,10 +244,6 @@ class EconomyEngine {
     }
 
     this.state.commandCount += 1;
-    const beforeSupply = this.moneySupply();
-    const spoil = this.applyKabuSpoilage(user);
-    this.maybeAdvanceMarket();
-    const raid = this.maybeTaxRaid(user);
 
     let result;
     switch (parsed.command) {
@@ -481,28 +278,10 @@ class EconomyEngine {
       case "ランク":
         result = this.rankCard(user);
         break;
-      case "policy":
-      case "inflation":
-      case "cpi":
-      case "インフレ":
-        result = this.policyReport();
-        break;
-      case "sink":
-      case "burn":
-      case "祭壇":
-      case "闇鍋":
-        result = this.sink(user, parsed.args);
-        break;
       case "invite":
       case "invites":
       case "招待":
         result = this.inviteReport(user);
-        break;
-      case "safety":
-      case "safe":
-      case "limits":
-      case "安全":
-        result = this.safetyReport(user);
         break;
       case "help":
       case "h":
@@ -525,7 +304,17 @@ class EconomyEngine {
         break;
       case "shop":
       case "店":
-        result = this.shop();
+      case "マーケット":
+        result = this.marketplace(user);
+        break;
+      case "myshop":
+      case "mystore":
+      case "自分の店":
+        result = this.myShop(user);
+        break;
+      case "marketplace":
+      case "market-ui":
+        result = this.marketplaceCommand(user, parsed.args);
         break;
       case "buy":
       case "買う":
@@ -535,115 +324,26 @@ class EconomyEngine {
       case "使う":
         result = this.useItem(user, parsed.args[0]);
         break;
-      case "market":
-      case "markets":
-      case "相場":
-        result = this.market();
-        break;
-      case "kabu":
-      case "turnip":
-      case "カブ":
-        result = this.kabu(user, parsed.args);
-        break;
-      case "invest":
-      case "投資":
-        result = this.invest(user, parsed.args[0], parsed.args[1]);
-        break;
-      case "sell":
-      case "売る":
-        result = this.sell(user, parsed.args[0], parsed.args[1]);
-        break;
-      case "portfolio":
-      case "pf":
-      case "ポートフォリオ":
-        result = this.portfolio(user);
-        break;
-      case "loan":
-      case "借金":
-        result = this.loan(user, parsed.args[0]);
-        break;
-      case "repay":
-      case "返済":
-        result = this.repay(user, parsed.args[0]);
-        break;
       case "rank":
       case "leaderboard":
       case "ランキング":
         result = this.leaderboard(parsed.args[0]);
         break;
-      case "news":
-      case "events":
-      case "ニュース":
-        result = this.news();
-        break;
       case "lounge":
       case "通話":
         result = this.panel(user, "lounge");
+        break;
+      case "inn":
+      case "yado":
+      case "宿":
+      case "二人宿":
+        result = this.inn(user);
         break;
       case "vc":
       case "voice":
       case "claimvc":
       case "通話報酬":
         result = this.claimVoiceReward(user);
-        break;
-      case "casino":
-      case "カジノ":
-        result = this.panel(user, "casino");
-        break;
-      case "house":
-      case "釘":
-      case "casino-config":
-        result = this.house(user, parsed.args);
-        break;
-      case "rpg":
-      case "status":
-      case "ステータス":
-        result = this.rpgStatus(user);
-        break;
-      case "quests":
-      case "クエスト":
-        result = this.quests();
-        break;
-      case "quest":
-      case "adventure":
-      case "冒険":
-        result = this.quest(user, parsed.args[0]);
-        break;
-      case "train":
-      case "鍛錬":
-        result = this.train(user, parsed.args[0]);
-        break;
-      case "rest":
-      case "休む":
-        result = this.rest(user);
-        break;
-      case "slots":
-      case "slot":
-      case "スロット":
-        result = this.slots(user, parsed.args[0]);
-        break;
-      case "coinflip":
-      case "flip":
-      case "コイントス":
-        result = this.coinflip(user, parsed.args[0], parsed.args[1]);
-        break;
-      case "dice":
-      case "ダイス":
-        result = this.dice(user, parsed.args[0], parsed.args[1]);
-        break;
-      case "blackjack":
-      case "bj":
-      case "ブラックジャック":
-        result = this.blackjack(user, parsed.args[0]);
-        break;
-      case "crash":
-      case "倍率":
-        result = this.crash(user, parsed.args[0], parsed.args[1]);
-        break;
-      case "roulette":
-      case "roul":
-      case "ルーレット":
-        result = this.roulette(user, parsed.args[0], parsed.args[1]);
         break;
       case "simulate-text":
         result = this.simulateText(user, parsed.args[0]);
@@ -663,233 +363,166 @@ class EconomyEngine {
         break;
     }
 
-    if (raid) result.lines.unshift(...raid.lines, "");
-    if (spoil) result.lines.unshift(spoil, "");
-    this.observeSupplyDelta(this.moneySupply() - beforeSupply);
-    this.maybeRunPolicyCycle();
+    this.closeEndedAuctions();
     this.updateTitle(user);
     return result;
   }
 
   panel(user, panelIdRaw = "home") {
-    const panelId = String(panelIdRaw || "home").toLowerCase();
-    const safety = this.casinoSafety(user);
+    const rawPanelId = String(panelIdRaw || "home").toLowerCase();
+    const panelAliases = {
+      "ホーム": "home",
+      "通話": "lounge",
+      "ラウンジ": "lounge",
+      "宿": "inn",
+      "二人宿": "inn",
+      "店": "marketplace",
+      "ショップ": "marketplace",
+      "マーケット": "marketplace",
+      "公式ショップ": "official-shop",
+      "民営ショップ": "user-shops",
+      "公式オークション": "official-auctions",
+      "購入履歴": "market-inventory",
+      "持ち物": "market-inventory",
+      "自分の店": "my-shop",
+      "出品": "my-listings",
+      "売上": "my-sales",
+      "マーケット管理": "market-admin",
+      "招待": "invite",
+      "管理": "admin",
+      "運営": "admin"
+    };
+    const panelId = panelAliases[rawPanelId] || rawPanelId;
     const panels = {
       home: () => ({
-        title: "K-Credit Lounge",
-        description: "通話しながら触れる経済圏ホーム。まずはカード、ログボ、労働、気分でRPGか市場。",
+        title: "アイリス",
+        description: "財布、ランク、マーケット、宿。よく使うものだけ置いています。",
         color: 0x0f766e,
         fields: [
-          { name: "Today", value: this.loopSuggestion(user), inline: false },
-          { name: "Status", value: `${this.moneyLine(user)}\nText ${rankFor(TEXT_RANKS, user.activity.textXp).name} / VC ${rankFor(VC_RANKS, user.activity.vcXp).name}`, inline: true },
-          { name: "Policy", value: `CPI ${this.cpiLabel()}\n${this.policyLabel()}`, inline: true }
+          { name: "今日の回し方", value: this.loopSuggestion(user), inline: false },
+          { name: "財布", value: this.moneyLine(user), inline: true },
+          { name: "ランク", value: `TCレベル ${this.textLevel(user)} / ${rankFor(TEXT_RANKS, user.activity.textXp).name}\nVCレベル ${this.vcLevel(user)} / ${rankFor(VC_RANKS, user.activity.vcXp).name}`, inline: true }
         ],
         components: [
           buttons([
             runButton("参加", "join", "success"),
             runButton("カード", "card", "primary"),
             runButton("ログボ", "daily", "success"),
-            runButton("労働", "work", "primary"),
+            panelButton("マーケット", "marketplace", "primary"),
             panelButton("通話", "lounge")
           ]),
           buttons([
-            panelButton("RPG", "rpg"),
-            panelButton("市場", "market"),
-            panelButton("カジノ", "casino", "danger"),
-            panelButton("シンク", "sink"),
-            panelButton("招待", "invite", "success")
+            panelButton("二人宿", "inn", "success"),
+            panelButton("自分の店", "my-shop"),
+            panelButton("招待", "invite")
           ]),
           select("行き先を選ぶ", [
-            option("通話ラウンジ", "panel:lounge", "Text/VCランクと通話向け導線"),
-            option("RPGパネル", "panel:rpg", "クエスト、休息、育成"),
-            option("市場パネル", "panel:market", "相場、ポートフォリオ、政策"),
-            option("カジノパネル", "panel:casino", "低額ベットと安全上限つき"),
-            option("シンク", "panel:sink", "KCを燃やして鯖イベントを起こす"),
-            option("招待", "panel:invite", "招待報酬と招待ランキング"),
-            option("安全設計", "panel:safety", "損失上限、クールダウン、方針")
+            option("通話ラウンジ", "panel:lounge", "発言と通話ランク"),
+            option("マーケット", "panel:marketplace", "買う、見る、入札する"),
+            option("自分の店", "panel:my-shop", "出品、売上、取引管理"),
+            option("二人宿", "panel:inn", "2人用VCを作成するパネル"),
+            option("招待", "panel:invite", "招待報酬と招待ランキング")
           ])
         ]
       }),
+      shop: () => this.marketplacePanel(user),
+      marketplace: () => this.marketplacePanel(user),
+      "official-shop": () => this.officialShopPanel(user),
+      "user-shops": () => this.userShopsPanel(user),
+      "official-auctions": () => this.officialAuctionsPanel(user),
+      "market-inventory": () => this.marketInventoryPanel(user),
+      "my-shop": () => this.myShopPanel(user),
+      "listing-new": () => this.listingNewPanel(user),
+      "my-listings": () => this.myListingsPanel(user),
+      "my-sales": () => this.mySalesPanel(user),
+      "market-admin": () => this.marketAdminPanel(user),
+      "market-review": () => this.marketReviewPanel(),
+      "market-trades": () => this.marketTradesPanel(),
+      "market-logs": () => this.marketLogsPanel(),
       lounge: () => ({
-        title: "Voice Lounge Panel",
-        description: "通話に上がってるだけでKCが落ちます。退室時にも精算、途中で欲しけりゃ押せばいい。",
+        title: "通話ラウンジ",
+        description: "VC滞在時間と通常チャットの活動状況を確認できます。",
         color: 0x2563eb,
         fields: [
-          { name: "VC", value: `Rank ${rankFor(VC_RANKS, user.activity.vcXp).name}\n${user.activity.vcMinutes} min / ${user.activity.vcXp} XP`, inline: true },
-          { name: "VC Pay", value: this.voiceRewardLine(user), inline: true },
-          { name: "Text", value: `Rank ${rankFor(TEXT_RANKS, user.activity.textXp).name}\n${user.activity.textMessages} msg / ${user.activity.textXp} XP`, inline: true },
-          { name: "回し方", value: "VCに入る -> しゃべる -> `VC精算` -> カードが育つ。黙ってても少し増えます。", inline: false }
+          { name: "VC", value: `ランク ${rankFor(VC_RANKS, user.activity.vcXp).name}\n${user.activity.vcMinutes}分 / 経験値 ${user.activity.vcXp}`, inline: true },
+          { name: "VC報酬", value: this.voiceRewardLine(user), inline: true },
+          { name: "発言", value: `ランク ${rankFor(TEXT_RANKS, user.activity.textXp).name}\n${user.activity.textMessages}発言 / 経験値 ${user.activity.textXp}`, inline: true },
+          { name: "使い方", value: "VCに参加すると滞在時間が記録されます。必要な時にVC精算を押してください。", inline: false }
         ],
         components: [
           buttons([
             runButton("カード", "card", "primary"),
             runButton("VC精算", "vc", "success"),
+            panelButton("二人宿", "inn", "success"),
             runButton("Text順位", "rank text"),
-            runButton("VC順位", "rank vc"),
-            panelButton("ホーム", "home")
+            runButton("VC順位", "rank vc")
           ]),
           select("ラウンジ操作", [
             option("VC報酬を受け取る", "run:vc", "在室分を途中精算"),
+            option("二人宿パネル", "panel:inn", "2人用VCを作成する"),
             option("プロフィールカード", "run:card", "今の見た目と総合ランク"),
             option("Textランキング", "run:rank text", "よく話す人ランキング"),
-            option("VCランキング", "run:rank vc", "よく通話にいる人ランキング"),
-            option("安全パネル", "panel:safety", "やりすぎ防止の確認")
+            option("VCランキング", "run:rank vc", "よく通話にいる人ランキング")
           ])
         ]
       }),
-      rpg: () => ({
-        title: "RPG Panel",
-        description: "短い刺激をRPG側に逃がす場所。カジノに寄りすぎないための受け皿でもあります。",
-        color: 0x16a34a,
+      inn: () => ({
+        title: "二人宿",
+        description: "このカテゴリに宿VCを作成します。作成後、宿内の管理パネルから名前と人数を変更できます。",
+        color: 0x14b8a6,
         fields: [
-          { name: "Status", value: `${rankFor(RPG_RANKS, user.rpg.xp).name} / Lv ${this.rpgLevel(user)}\n${this.rpgLine(user)}`, inline: true },
-          { name: "Stats", value: `ATK ${user.rpg.attack} / DEF ${user.rpg.defense}\nFOCUS ${user.rpg.focus} / LUCK ${user.rpg.luck}`, inline: true },
-          { name: "おすすめ", value: user.rpg.energy >= 4 ? "`締切前線` いけます。重いなら `未処理タスク`。" : "Energyが薄いので `rest` か `use tonic`。", inline: false }
+          { name: "公開宿", value: "無料 / 誰でも見える / 基本2人", inline: true },
+          { name: "シークレット宿", value: "10,000 Ris / 選んだ相手と自分だけ見える", inline: true },
+          { name: "人数追加", value: "どちらも追加1人につき5,000 Ris", inline: true },
+          { name: "期限", value: "12時間で自動終了", inline: true },
+          { name: "制限", value: "1人につき作成できる宿は1つまで。空になった宿VCは自動削除されます。", inline: false }
         ],
         components: [
           buttons([
-            runButton("ステータス", "rpg"),
-            runButton("タスク", "quest task", "success"),
-            runButton("請求書", "quest invoice", "primary"),
-            runButton("締切", "quest deadline", "danger"),
-            runButton("休む", "rest", "success")
-          ]),
-          select("育成/道具", [
-            option("ATKを鍛える", "run:train attack", "クエスト突破力"),
-            option("DEFを鍛える", "run:train defense", "被ダメージ軽減"),
-            option("FOCUSを鍛える", "run:train focus", "Energyと安定感"),
-            option("LUCKを鍛える", "run:train luck", "報酬と運要素"),
-            option("トニック使用", "run:use tonic", "HPとEnergyを少し回復")
-          ]),
-          buttons([panelButton("ホーム", "home"), panelButton("カジノ", "casino"), panelButton("市場", "market")])
+            runButton("公開宿を作る", "create-yado-vc", "primary"),
+            runButton("シークレット宿", "choose-secret-yado", "danger")
+          ])
         ]
       }),
-      market: () => ({
-        title: "Stock Pit Panel",
-        description: "値動きで雑談を起こす場所。パネルは小口だけ。全ツッパは自分の指で打ってください。",
-        color: 0x0891b2,
+      admin: () => ({
+        title: "運営パネル",
+        description: "運営用の確認とパネル送信を行います。",
+        color: 0x334155,
         fields: [
-          { name: "Policy", value: `CPI ${this.cpiLabel()}\n${this.policyLabel()}`, inline: true },
-          { name: "Portfolio", value: `${fmt(Math.floor(this.holdingsValue(user)))}\n${Object.keys(user.holdings).length} assets`, inline: true },
-          { name: "Hot Board", value: this.hotBoard(), inline: false },
-          { name: "Note", value: "パネル投資は300 KC固定。胃が動く額はコマンド入力に隔離しています。", inline: false }
+          { name: "マーケット", value: "公式商品、民営ショップ、公式オークションを扱います。", inline: true },
+          { name: "給与配布", value: "ロールを選んで、保持者全員に一律で Ris を配布します。", inline: true },
+          { name: "パネル送信", value: "管理パネルのボタンで、このチャンネルへ常設マーケットを送信します。", inline: false }
         ],
         components: [
           buttons([
-            runButton("相場", "market"),
-            runButton("PF", "portfolio"),
-            runButton("カブ価", "kabu"),
-            runButton("政策", "policy"),
+            panelButton("マーケット管理", "market-admin", "primary"),
+            customButton("給与配布", "eco:admin:salary-start", "success"),
+            customButton("常設パネル送信", "eco:market:post-panel"),
             panelButton("ホーム", "home")
           ]),
-          select("小口投資", [
-            option("カブ 1000 KC買う", "run:kabu buy 1000", "腐る前に売る胃痛商品"),
-            option("カブ 全部売る", "run:kabu sell all", "逃げる時は一瞬"),
-            option("NEON 300 KC", "run:invest NEON 300", "深夜VCが燃料の雑談株"),
-            option("MUTE 300 KC", "run:invest MUTE 300", "ミュート解除需要に賭ける"),
-            option("GABA 300 KC", "run:invest GABA 300", "崩れる豆腐に乗る"),
-            option("YAMI 300 KC", "run:invest YAMI 300", "正体不明クラウドを買う"),
-            option("OSHI 300 KC", "run:invest OSHI 300", "尊さを買う。財布は知らん"),
-            option("政策レポート", "run:policy", "インフレ状態を見る")
+          select("公開したいパネル", [
+            option("ホーム", "panel:home", "入口"),
+            option("マーケット", "panel:marketplace", "買う側の入口"),
+            option("自分の店", "panel:my-shop", "売る側の入口"),
+            option("マーケット管理", "panel:market-admin", "公式商品、審査、取引対応"),
+            option("二人宿", "panel:inn", "2人用VC作成パネル"),
+            option("招待", "panel:invite", "招待台帳")
           ])
         ]
       }),
-      casino: () => ({
-        title: "Casino Panel",
-        description: "脳は使わない。手汗だけ使う。仮想KCだけ、負けが込んだら台帳が肩を叩きます。",
-        color: 0xdc2626,
-        fields: [
-          { name: CASINO_MASCOT.name, value: `${CASINO_MASCOT.title}\n「勝てる顔してないけど、座る？ ま、負け顔も嫌いじゃないけど」`, inline: false },
-          { name: "釘", value: this.houseLine(), inline: false },
-          { name: "Safety", value: safety.summary, inline: false },
-          { name: "Stats", value: `${user.casino.wins}勝 ${user.casino.losses}敗\n収支 ${fmt(user.casino.profit)}`, inline: true },
-          { name: "Limit", value: `Daily loss ${fmt(safety.dailyLoss)} / ${fmt(safety.dailyLossLimit)}\nPlays ${safety.dailyPlays}/${SAFETY_CONFIG.casinoDailyPlayLimit}`, inline: true },
-          { name: "Vibe", value: "`Crash` は倍率チキンレース。`Roulette` は置いて祈るだけ。取り返しボタンはありません。", inline: false }
-        ],
-        components: [
-          buttons([
-            runButton("Crash x2", "crash 100 2.0", "danger", safety.blocked),
-            runButton("Roulette 赤", "roulette 100 red", "danger", safety.blocked),
-            runButton("Slots 100", "slots 100", "danger", safety.blocked),
-            runButton("BJ 100", "bj 100", "danger", safety.blocked),
-            panelButton("安全", "safety")
-          ]),
-          select("低額ゲーム", [
-            option("Crash 100 KC / x1.5", "run:crash 100 1.5", "浅く逃げる。勝ちは軽いが生存寄り"),
-            option("Crash 100 KC / x3.0", "run:crash 100 3.0", "欲が顔を出すライン"),
-            option("Roulette 100 KC / 赤", "run:roulette 100 red", "置くだけ。玉が悪い"),
-            option("Roulette 100 KC / ゼロ", "run:roulette 100 zero", "ほぼ祈祷。倍率は高め"),
-            option("Slots 100 KC", "run:slots 100", "絵柄3つのスロット"),
-            option("Blackjack 100 KC", "run:bj 100", "自動プレイのブラックジャック"),
-            option("安全レポート", "run:safety", "今日の上限とクールダウン")
-          ], safety.blocked),
-          buttons([panelButton("ホーム", "home"), panelButton("RPGへ逃がす", "rpg"), runButton("カード", "card")])
-          ,
-          select("店の設定", [
-            option("甘デジ", "run:house profile sweet", "軽い。雑談向け"),
-            option("ミドル", "run:house profile middle", "標準設定"),
-            option("強欲", "run:house profile max", "荒い。短時間向け"),
-            option("祭り", "run:house profile festival", "イベント用。常設注意"),
-            option("現在の釘を見る", "run:house", "設定確認")
-          ])
-        ]
-      }),
-      safety: () => ({
-        title: "Safety Panel",
-        description: "刺激は強め、設計は静かに堅め。煽り通知、実マネー、無制限ベットは扱いません。",
-        color: 0x475569,
-        fields: [
-          { name: "Casino Guard", value: safety.summary, inline: false },
-          { name: "Rules", value: "日次損失上限 / 連敗クールダウン / 1日プレイ上限 / CPI連動ベット上限", inline: false },
-          { name: "Social Guard", value: "Text XPはクールダウンあり。VCは1回最大240分精算。昇格時以外は静かに保存。", inline: false }
-        ],
-        components: [
-          buttons([
-            runButton("安全レポート", "safety"),
-            runButton("政策", "policy"),
-            panelButton("ホーム", "home"),
-            panelButton("RPG", "rpg"),
-            panelButton("カジノ", "casino")
-          ])
-        ]
-      }),
-      sink: () => {
-        const event = this.activeSinkEvent();
-        return {
-          title: "Sink Panel",
-          description: "KCを燃やす場所。財布は減る。鯖には変な追い風が吹く。",
-          color: 0x9333ea,
-          fields: [
-            { name: this.state.sink.name, value: `${fmt(this.state.sink.pool)} / ${fmt(this.state.sink.target)}\n累計焼却 ${fmt(this.state.sink.totalBurned)}`, inline: true },
-            { name: "Event", value: event ? `${event.name}\n残り ${event.expiresAtCommand - this.state.commandCount} actions` : "いまは無風。誰か燃やせ。", inline: true },
-            { name: "何が起きる", value: "VC報酬ブースト、カブ価の変な風、税務署の目そらし、カードの見栄え。直接配当はありません。", inline: false }
-          ],
-          components: [
-            buttons([
-              runButton("100 KC燃やす", "sink 100", "primary"),
-              runButton("500 KC燃やす", "sink 500", "primary"),
-              runButton("1000 KC燃やす", "sink 1000", "danger"),
-              runButton("状態", "sink"),
-              panelButton("ホーム", "home")
-            ]),
-            buttons([panelButton("招待", "invite", "success"), panelButton("通話", "lounge"), panelButton("市場", "market")])
-          ]
-        };
-      },
       invite: () => ({
-        title: "Invite Panel",
-        description: "人を呼ぶとKC。即抜け農場は台帳が冷めた目で見ます。",
+        title: "招待台帳",
+        description: "招待成立数と報酬を確認できます。",
         color: 0x22c55e,
         fields: [
           { name: "あなた", value: this.inviteLine(user), inline: true },
-          { name: "報酬", value: `招待成立 ${fmt(this.inviteReward(user))}\n相手にも ${fmt(this.rewardAmount(INVITE_CONFIG.inviteeBonus))}`, inline: true },
+          { name: "報酬", value: `招待成立 ${fmt(this.inviteReward(user))}\n相手にも ${fmt(INVITE_CONFIG.inviteeBonus)}`, inline: true },
           { name: "条件", value: "招待で入る -> その人が `/eco join`。1日の有償招待には上限あり。", inline: false }
         ],
         components: [
           buttons([
             runButton("招待状況", "invite", "success"),
             runButton("招待ランキング", "rank invite"),
-            panelButton("シンク", "sink"),
             panelButton("ホーム", "home")
           ])
         ]
@@ -902,7 +535,7 @@ class EconomyEngine {
       "",
       ...panel.fields.map((field) => `${field.name}: ${field.value.replace(/\n/g, " / ")}`),
       "",
-      "Discordではボタンとセレクトで操作できます。CLIでは表示された裏コマンドを直接打ってください。"
+      "Discordではボタンとセレクトで操作できます。"
     ];
 
     return {
@@ -918,14 +551,15 @@ class EconomyEngine {
       ok: true,
       title: `${CURRENCY.name} 経済圏ヘルプ`,
       lines: [
-        "基本は `/eco` または `panel` から触ってください。細かいコマンドはパネルの裏側にあります。",
+        "Discordでは `/マーケット`, `/自分の店`, `/管理` からマーケットを操作します。",
         "`panel` - ホームパネル",
-        "`panel lounge` - 通話/Text/VCパネル",
-        "`panel rpg` - RPGパネル",
-        "`panel market` - 市場パネル",
-        "`panel casino` - カジノパネル",
-        "`panel safety` - 安全設計パネル",
-        "`card` / `policy` / `safety` - 直接見たい時だけ使う短縮コマンド"
+        "`panel lounge` - 発言/通話パネル",
+        "`panel inn` - 二人宿パネル",
+        "`panel marketplace` - マーケット",
+        "`panel my-shop` - 自分の店",
+        "`panel invite` - 招待台帳",
+        "`daily` / `work` / `subsidy` - 収入コマンド",
+        "`card` / `invite` - 直接見たい時だけ使う短縮コマンド"
       ]
     };
   }
@@ -940,7 +574,7 @@ class EconomyEngine {
     }
 
     user.joined = true;
-    const grant = this.rewardAmount(ECONOMY_CONFIG.starterGrant);
+    const grant = ECONOMY_CONFIG.starterGrant;
     user.wallet += grant;
     user.lifetimeEarned += grant;
     this.log(user, "join", grant, "初期資本");
@@ -952,7 +586,7 @@ class EconomyEngine {
       lines: [
         `${user.name} は初期資本 ${fmt(grant)} を受け取りました。`,
         inviteBonus ? `招待成立: ${inviteBonus.inviter.name} に ${fmt(inviteBonus.reward)}、あなたに ${fmt(inviteBonus.inviteeBonus)}。` : null,
-        "ようこそ。財布は薄いが、声は出せる。",
+        "各パネルから機能を利用できます。",
         this.moneyLine(user)
       ].filter(Boolean)
     };
@@ -964,13 +598,8 @@ class EconomyEngine {
       title: `${user.name} の残高`,
       lines: [
         `財布: ${fmt(user.wallet)}`,
-        `投資評価額: ${fmt(Math.floor(this.holdingsValue(user)))}`,
-        `カブ評価額: ${fmt(Math.floor(this.kabuValue(user)))}`,
-        `借金: ${fmt(user.debt)}`,
         `純資産: ${fmt(Math.floor(this.netWorth(user)))}`,
-        `経済ランク: ${rankFor(ECONOMY_RANKS, this.netWorth(user)).name}`,
-        `CPI: ${this.cpiLabel()} / 政策: ${this.policyLabel()}`,
-        `税務署ヘイト: ${bar(user.heat, 100)} ${user.heat}/100`
+        `経済ランク: ${rankFor(ECONOMY_RANKS, this.netWorth(user)).name}`
       ]
     };
   }
@@ -988,10 +617,9 @@ class EconomyEngine {
     const textRank = rankWithProgress(TEXT_RANKS, user.activity.textXp);
     const vcRank = rankWithProgress(VC_RANKS, user.activity.vcXp);
     const econRank = rankWithProgress(ECONOMY_RANKS, net);
-    const rpgRank = rankWithProgress(RPG_RANKS, user.rpg.xp);
     const style = this.cardStyle(user);
     const score = this.cardScore(user);
-    const title = `${user.name} / ${style.name} CARD`;
+    const title = `${user.name} / ${style.name}カード`;
     const data = {
       mode,
       user,
@@ -1001,136 +629,23 @@ class EconomyEngine {
       subtitle: user.title,
       net,
       wallet: user.wallet,
-      debt: user.debt,
-      heat: user.heat,
       textRank,
       vcRank,
-      econRank,
-      rpgRank,
-      casinoLine: `${user.casino.wins}勝 ${user.casino.losses}敗 / ${fmt(user.casino.profit)}`,
-      rpgLine: this.rpgLine(user),
-      cpiLine: `${this.cpiLabel()} / ${this.policyLabel()}`
+      textLevel: this.textLevel(user),
+      vcLevel: this.vcLevel(user),
+      vcSalaryPerMinute: this.voiceSalaryPerMinute(user),
+      econRank
     };
 
     return {
       ok: true,
       title,
       lines: renderPlayerCardLines(data),
-      card: buildDiscordCard(data)
+      card: {
+        ...buildDiscordProfileCard(data),
+        profile: buildProfileImageData(data)
+      }
     };
-  }
-
-  policyReport() {
-    const policy = this.state.policy;
-    const priceFactor = this.priceFactor();
-    const rewardFactor = this.rewardFactor();
-    const supply = this.moneySupply();
-
-    return {
-      ok: true,
-      title: "K-Credit Monetary Policy",
-      lines: [
-        `CPI: ${this.cpiLabel()} (${signedPercent(policy.inflationBps)} / cycle)`,
-        `政策スタンス: ${this.policyLabel()}`,
-        `Money Supply: ${fmt(Math.floor(supply))}`,
-        `Cycle Flow: +${fmt(policy.cycleIssued)} / -${fmt(policy.cycleSunk)}`,
-        `Total Flow: +${fmt(policy.issued)} / -${fmt(policy.sunk)}`,
-        `価格倍率: x${priceFactor.toFixed(2)} / 報酬倍率: x${rewardFactor.toFixed(2)}`,
-        "高インフレ時は価格とベット上限が締まり、報酬の伸びは抑制されます。デフレ時は報酬側が少し支援されます。"
-      ]
-    };
-  }
-
-  sink(user, args = []) {
-    const amountRaw = args[0];
-    if (!amountRaw || ["status", "状態"].includes(String(amountRaw).toLowerCase())) {
-      const event = this.activeSinkEvent();
-      return {
-        ok: true,
-        title: this.state.sink.name,
-        lines: [
-          `鍋: ${fmt(this.state.sink.pool)} / ${fmt(this.state.sink.target)}`,
-          `累計焼却: ${fmt(this.state.sink.totalBurned)} / Lv ${this.state.sink.level}`,
-          event ? `発動中: ${event.name} - ${event.description}` : "発動中: なし。鍋が冷めています。",
-          "例: `sink 500`。燃やしたKCは戻りません。そこがいい。"
-        ]
-      };
-    }
-
-    const amount = parseAmount(amountRaw, user.wallet);
-    if (!Number.isFinite(amount) || amount < SINK_CONFIG.minContribution) {
-      return { ok: false, title: "燃料が薄い", lines: [`最低 ${fmt(SINK_CONFIG.minContribution)} から。ケチな火はすぐ消えます。`] };
-    }
-    if (user.wallet < amount) {
-      return { ok: false, title: "財布が足りない", lines: [`燃やせるのは ${fmt(user.wallet)} まで。`, this.moneyLine(user)] };
-    }
-
-    user.wallet -= amount;
-    user.lifetimeLost += amount;
-    this.state.sink.pool += amount;
-    this.state.sink.totalBurned += amount;
-    this.log(user, "sink", -amount, this.state.sink.name);
-
-    const lines = [
-      `${user.name} が ${fmt(amount)} を鍋に落としました。音がよくない。`,
-      `鍋: ${fmt(this.state.sink.pool)} / ${fmt(this.state.sink.target)}`,
-      this.moneyLine(user)
-    ];
-
-    let event = null;
-    while (this.state.sink.pool >= this.state.sink.target) {
-      this.state.sink.pool -= this.state.sink.target;
-      event = this.triggerSinkEvent(user);
-      lines.splice(2, 0, `発火: ${event.name}。${event.description}`);
-    }
-
-    return {
-      ok: true,
-      title: event ? "シンク発火" : "シンク投入",
-      lines
-    };
-  }
-
-  triggerSinkEvent(user) {
-    const events = [
-      { id: "voice_rush", name: "通話バブル", description: "VC報酬が少し太ります。今だけ声に利息がつく。" },
-      { id: "kabu_wind", name: "カブ屋の横風", description: "カブ価に変な風が吹きます。勝つかは知らん。" },
-      { id: "tax_smoke", name: "税務署スモーク", description: "税務署の目が少し泳ぎます。領収書はまだ見られてます。" },
-      { id: "card_glow", name: "カード発光", description: "カードが少し偉そうになります。財布は戻りません。" }
-    ];
-    const event = {
-      ...pick(this.rng, events),
-      by: user.id,
-      byName: user.name,
-      atCommand: this.state.commandCount,
-      expiresAtCommand: this.state.commandCount + SINK_CONFIG.eventDurationCommands
-    };
-
-    this.state.sink.level += 1;
-    this.state.sink.target = this.costAmount(Math.floor(this.state.sink.target * SINK_CONFIG.targetGrowth));
-    this.state.sink.activeEvent = event;
-    this.state.sink.history.push(event);
-    this.state.sink.history = this.state.sink.history.slice(-12);
-
-    if (event.id === "kabu_wind") {
-      this.state.market.kabu.trend = "spike";
-      this.state.market.kabu.trendAge = 0;
-      this.state.market.kabu.news = "誰かが鍋を燃やしたせいでカブ屋が急に強気です。";
-    }
-
-    this.state.market.news.push(`Sink: ${event.name} by ${user.name}.`);
-    this.state.market.news = this.state.market.news.slice(-25);
-    return event;
-  }
-
-  activeSinkEvent() {
-    const event = this.state.sink.activeEvent;
-    if (!event) return null;
-    if (this.state.commandCount >= event.expiresAtCommand) {
-      this.state.sink.activeEvent = null;
-      return null;
-    }
-    return event;
   }
 
   inviteReport(user) {
@@ -1139,9 +654,9 @@ class EconomyEngine {
       title: "招待台帳",
       lines: [
         this.inviteLine(user),
-        `成立報酬: ${fmt(this.inviteReward(user))} / 相手ボーナス ${fmt(this.rewardAmount(INVITE_CONFIG.inviteeBonus))}`,
+        `成立報酬: ${fmt(this.inviteReward(user))} / 相手ボーナス ${fmt(INVITE_CONFIG.inviteeBonus)}`,
         `今日の有償招待: ${user.invites.dailyPaid}/${INVITE_CONFIG.dailyPaidLimit}`,
-        `全体: tracked ${this.state.invites.totalTracked} / qualified ${this.state.invites.totalQualified}`,
+        `全体: 追跡 ${this.state.invites.totalTracked} / 成立 ${this.state.invites.totalQualified}`,
         "招待で入った人が `/eco join` したら成立。即抜け農場は冷めるのでやめ。"
       ]
     };
@@ -1153,7 +668,7 @@ class EconomyEngine {
   }
 
   inviteReward(user) {
-    return this.rewardAmount(INVITE_CONFIG.rewardBase + Math.min(user.invites.qualified, 20) * 45);
+    return INVITE_CONFIG.rewardBase + Math.min(user.invites.qualified, 20) * 45;
   }
 
   resetInviteDay(user) {
@@ -1210,7 +725,7 @@ class EconomyEngine {
     inviter.invites.qualified += 1;
     this.state.invites.totalQualified += 1;
 
-    const inviteeBonus = this.rewardAmount(INVITE_CONFIG.inviteeBonus);
+    const inviteeBonus = INVITE_CONFIG.inviteeBonus;
     user.wallet += inviteeBonus;
     user.lifetimeEarned += inviteeBonus;
 
@@ -1228,16 +743,24 @@ class EconomyEngine {
     return { inviter, reward, inviteeBonus };
   }
 
+  inn() {
+    return {
+      ok: true,
+      title: "二人宿",
+      lines: [
+        "二人宿はDiscordの固定パネルから使います。",
+        "運営が `/管理` からカテゴリ内のテキストチャンネルにパネルを送信します。",
+        "公開宿は無料。シークレット宿は10,000 Risで、選んだ相手と自分だけが見えるVCです。",
+        "宿名と人数は、作成後に宿内の管理パネルから変更できます。追加人数は1人ごとに5,000 Risです。"
+      ]
+    };
+  }
+
   cardScore(user) {
-    const casinoScore = user.casino.profit >= 25000 ? 4 : user.casino.profit >= 8000 ? 3 : user.casino.profit > 0 ? 2 : user.casino.wins >= 10 ? 1 : 0;
-    const sinkBonus = this.activeSinkEvent()?.id === "card_glow" ? 2 : 0;
     return (
       rankIndex(ECONOMY_RANKS, this.netWorth(user)) +
       rankIndex(TEXT_RANKS, user.activity.textXp) +
-      rankIndex(VC_RANKS, user.activity.vcXp) +
-      rankIndex(RPG_RANKS, user.rpg.xp) +
-      casinoScore +
-      sinkBonus
+      rankIndex(VC_RANKS, user.activity.vcXp)
     );
   }
 
@@ -1246,228 +769,16 @@ class EconomyEngine {
     return CARD_STYLES.reduce((best, style) => (score >= style.minScore ? style : best), CARD_STYLES[0]);
   }
 
-  cpiLabel() {
-    return `${(this.state.policy.cpi / 10).toFixed(1)}`;
-  }
-
-  policyLabel() {
-    const labels = {
-      stimulus: "stimulus",
-      neutral: "neutral",
-      watch: "watch",
-      tightening: "tightening",
-      emergency: "emergency"
-    };
-    return labels[this.state.policy.stance] || "neutral";
-  }
-
-  priceFactor() {
-    return clamp(this.state.policy.cpi / POLICY_CONFIG.baseCpi, 0.65, 6);
-  }
-
-  rewardFactor() {
-    const cpiFactor = Math.pow(this.priceFactor(), 0.72);
-    const stance = this.state.policy.stance;
-    const policyFactor = stance === "emergency" ? 0.78 : stance === "tightening" ? 0.88 : stance === "watch" ? 0.94 : stance === "stimulus" ? 1.08 : 1;
-    return clamp(cpiFactor * policyFactor, 0.55, 4.5);
-  }
-
-  costFactor() {
-    const stance = this.state.policy.stance;
-    const policyFactor = stance === "emergency" ? 1.16 : stance === "tightening" ? 1.08 : stance === "stimulus" ? 0.96 : 1;
-    return clamp(this.priceFactor() * policyFactor, 0.7, 7);
-  }
-
-  rewardAmount(baseAmount) {
-    return Math.max(1, Math.floor(baseAmount * this.rewardFactor()));
-  }
-
-  costAmount(baseAmount) {
-    return Math.max(1, Math.floor(baseAmount * this.costFactor()));
-  }
-
   itemPrice(id) {
     const item = SHOP_ITEMS[id];
-    return item ? this.costAmount(item.price) : 0;
-  }
-
-  trainingCost(current) {
-    return this.costAmount(450 + current * current * 35);
-  }
-
-  restCost(user) {
-    return Math.min(user.wallet, this.costAmount(120 + this.rpgLevel(user) * 25));
-  }
-
-  minimumBet() {
-    return Math.max(10, this.costAmount(10));
-  }
-
-  maximumBet(user) {
-    const base = 5000 + this.level(user) * 500;
-    const inflationLimit = Math.floor(base * Math.sqrt(this.priceFactor()));
-    const stance = this.state.policy.stance;
-    const policyLimit = stance === "emergency" ? 0.55 : stance === "tightening" ? 0.7 : stance === "watch" ? 0.85 : 1;
-    return Math.max(500, Math.floor(inflationLimit * policyLimit));
-  }
-
-  house(user, args = []) {
-    const action = String(args[0] || "status").toLowerCase();
-    if (["status", "view", "見る", "確認"].includes(action)) {
-      return {
-        ok: true,
-        title: "アイリス地下卓 釘設定",
-        lines: [
-          this.houseLine(),
-          "profile: `house profile sweet|middle|max|festival`",
-          "manual: `house set kugi 105`, `house set return 96`, `house set volatility 120`, `house set jackpot 110`",
-          "リリス: 釘を触る顔してる。こわ。そういう支配欲、嫌いじゃないけど。"
-        ]
-      };
-    }
-
-    if (action === "profile") {
-      const profileId = String(args[1] || "").toLowerCase();
-      const profile = HOUSE_PROFILES[profileId];
-      if (!profile) {
-        return { ok: false, title: "設定がない", lines: [`使える設定: ${Object.keys(HOUSE_PROFILES).join(", ")}`] };
-      }
-      this.state.house = {
-        ...this.state.house,
-        profile: profileId,
-        kugi: profile.kugi,
-        returnRate: profile.returnRate,
-        volatility: profile.volatility,
-        jackpot: profile.jackpot,
-        updatedBy: user.id,
-        updatedAt: this.now().toISOString()
-      };
-      return {
-        ok: true,
-        title: `釘変更: ${profile.name}`,
-        lines: [profile.description, this.houseLine()]
-      };
-    }
-
-    if (action === "set") {
-      const key = normalizeHouseKey(args[1]);
-      const value = Number(args[2]);
-      if (!key || !Number.isFinite(value)) {
-        return {
-          ok: false,
-          title: "釘の触り方が雑",
-          lines: ["例: `house set kugi 105`, `house set return 96`, `house set volatility 120`, `house set jackpot 110`"]
-        };
-      }
-      const ranges = {
-        kugi: [75, 125],
-        returnRate: [82, 105],
-        volatility: [65, 160],
-        jackpot: [70, 150]
-      };
-      const [min, max] = ranges[key];
-      this.state.house[key] = clamp(Math.round(value), min, max);
-      this.state.house.profile = "manual";
-      this.state.house.updatedBy = user.id;
-      this.state.house.updatedAt = this.now().toISOString();
-      return {
-        ok: true,
-        title: "釘を触りました",
-        lines: [`${key}: ${this.state.house[key]}`, this.houseLine()]
-      };
-    }
-
-    return { ok: false, title: "釘コマンド不明", lines: ["`house` で今の設定、`house profile middle` で一括変更。"] };
-  }
-
-  houseLine() {
-    const house = this.state.house;
-    const profile = HOUSE_PROFILES[house.profile]?.name || "手打ち";
-    return `${profile} / 釘 ${house.kugi} / 還元 ${house.returnRate}% / 荒さ ${house.volatility} / 大当たり ${house.jackpot}`;
-  }
-
-  casinoChance(base, options = {}) {
-    const house = this.state.house;
-    const mode = options.jackpot ? house.jackpot / 100 : 1;
-    const factor = (house.kugi / 100) * Math.sqrt(house.returnRate / 94) * mode;
-    return clamp(base * factor, 0.01, 0.92);
-  }
-
-  casinoPayout(betAmount, multiplier, options = {}) {
-    const house = this.state.house;
-    const volatility = options.jackpot ? house.volatility / 100 : 1;
-    const payoutScale = house.returnRate / 94;
-    return Math.floor(betAmount * multiplier * payoutScale * volatility);
-  }
-
-  casinoVolatility() {
-    return this.state.house.volatility / 100;
-  }
-
-  casinoSafety(user) {
-    this.resetCasinoDay(user);
-    const now = this.now();
-    const lockedUntil = user.casino.lockedUntil ? new Date(user.casino.lockedUntil) : null;
-    const cooldownMs = lockedUntil ? Math.max(0, lockedUntil - now) : 0;
-    const dailyLossLimit = this.dailyLossLimit(user);
-    const blockedByLoss = user.casino.dailyLoss >= dailyLossLimit;
-    const blockedByPlays = user.casino.dailyPlays >= SAFETY_CONFIG.casinoDailyPlayLimit;
-    const blocked = cooldownMs > 0 || blockedByLoss || blockedByPlays;
-    const reasons = [];
-    if (cooldownMs > 0) reasons.push(`cooldown ${formatDuration(cooldownMs)}`);
-    if (blockedByLoss) reasons.push("daily loss limit");
-    if (blockedByPlays) reasons.push("daily play limit");
-
-    return {
-      blocked,
-      reasons,
-      cooldownMs,
-      dailyLoss: user.casino.dailyLoss,
-      dailyLossLimit,
-      dailyPlays: user.casino.dailyPlays,
-      summary: blocked
-        ? `今日は止めどころです: ${reasons.join(", ")}。RPGか通話パネルに逃がしましょう。`
-        : `OK: 今日の損失 ${fmt(user.casino.dailyLoss)} / ${fmt(dailyLossLimit)}、プレイ ${user.casino.dailyPlays}/${SAFETY_CONFIG.casinoDailyPlayLimit}。`
-    };
-  }
-
-  safetyReport(user) {
-    const safety = this.casinoSafety(user);
-    return {
-      ok: !safety.blocked,
-      title: "Safety Report",
-      lines: [
-        safety.summary,
-        `カジノ日次損失: ${fmt(safety.dailyLoss)} / ${fmt(safety.dailyLossLimit)}`,
-        `カジノ日次プレイ: ${safety.dailyPlays}/${SAFETY_CONFIG.casinoDailyPlayLimit}`,
-        `連敗ストリーク: ${Math.abs(Math.min(0, user.casino.streak))}/${SAFETY_CONFIG.casinoLossStreakLimit}`,
-        `最大ベット: ${fmt(this.maximumBet(user))} / 最低ベット: ${fmt(this.minimumBet())}`,
-        "このボットは実マネー、換金、課金連動、DM煽り通知を想定していません。"
-      ]
-    };
-  }
-
-  resetCasinoDay(user) {
-    const today = dayKey(this.now());
-    if (user.casino.day === today) return;
-    user.casino.day = today;
-    user.casino.dailyLoss = 0;
-    user.casino.dailyPlays = 0;
-    user.casino.lockedUntil = null;
-  }
-
-  dailyLossLimit(user) {
-    const rankBonus = this.level(user) * 120;
-    return this.costAmount(SAFETY_CONFIG.casinoDailyLossBase + rankBonus);
+    return item ? item.price : 0;
   }
 
   loopSuggestion(user) {
     const suggestions = [];
     if (!user.joined) suggestions.push("まず `参加` で初期資本を受け取る");
     if (!user.lastDaily || cooldownRemaining(user.lastDaily, this.now(), 20 * 60 * 60 * 1000) === 0) suggestions.push("ログボを取る");
-    if (user.rpg.energy >= 4) suggestions.push("RPGを1回だけ回す");
-    if (this.casinoSafety(user).blocked) suggestions.push("カジノは休んで通話/RPGへ");
-    if (suggestions.length === 0) suggestions.push("カードを見る、VCに入る、市場を眺める");
+    if (suggestions.length === 0) suggestions.push("カードを見る、VCに入る、マーケットを眺める");
     return suggestions.slice(0, 3).join("\n");
   }
 
@@ -1487,7 +798,7 @@ class EconomyEngine {
     user.streak = keptStreak ? user.streak + 1 : 1;
 
     const stampBonus = user.inventory.stamp ? 250 : 0;
-    const amount = this.rewardAmount(600 + Math.min(user.streak * 120, 1800) + stampBonus + randInt(this.rng, 0, 180));
+    const amount = 600 + Math.min(user.streak * 120, 1800) + stampBonus + randInt(this.rng, 0, 180);
     user.wallet += amount;
     user.lifetimeEarned += amount;
     user.lastDaily = now.toISOString();
@@ -1500,7 +811,7 @@ class EconomyEngine {
       lines: [
         `${fmt(amount)} を受け取りました。`,
         `連続 ${user.streak}日。継続は金利より強い。`,
-        stampBonus ? "謎スタンプカードが光りました。意味は分かりません。" : null,
+        stampBonus ? "常連カードが光りました。" : null,
         this.moneyLine(user)
       ].filter(Boolean)
     };
@@ -1520,25 +831,23 @@ class EconomyEngine {
     const job = pick(this.rng, WORKS);
     const hasChair = Boolean(user.inventory.chair);
     const multiplier = hasChair ? 1.15 : 1;
-    const amount = this.rewardAmount(Math.floor(randInt(this.rng, job.min, job.max) * multiplier));
+    const amount = Math.floor(randInt(this.rng, job.min, job.max) * multiplier);
     user.wallet += amount;
     user.lifetimeEarned += amount;
     user.workCount += 1;
     user.xp += job.xp;
-    user.heat = clamp(user.heat + job.heat + randInt(this.rng, 0, 3), 0, 100);
     user.lastWork = now.toISOString();
     this.log(user, "work", amount, job.text);
 
     const lines = [
       `${job.text}。`,
       `報酬 ${fmt(amount)} を獲得。`,
-      hasChair ? "社長のイス効果で報酬がちょっと偉そうに増えました。" : null,
-      `税務署ヘイト: ${user.heat}/100`,
+      hasChair ? "深座りの椅子で報酬が少し増えました。" : null,
       this.moneyLine(user)
     ].filter(Boolean);
 
     if (this.rng() < 0.12) {
-      const bonus = this.rewardAmount(randInt(this.rng, 80, 260));
+      const bonus = randInt(this.rng, 80, 260);
       user.wallet += bonus;
       user.lifetimeEarned += bonus;
       lines.splice(2, 0, `謎の残業代 ${fmt(bonus)} が机の隙間から出ました。`);
@@ -1562,10 +871,9 @@ class EconomyEngine {
     user.xp += 5;
     const roll = this.rng();
     if (roll < 0.18) {
-      const fee = Math.min(user.wallet, this.costAmount(randInt(this.rng, 20, 160)));
+      const fee = Math.min(user.wallet, randInt(this.rng, 20, 160));
       user.wallet -= fee;
       user.lifetimeLost += fee;
-      user.heat = clamp(user.heat + 2, 0, 100);
       return {
         ok: false,
         title: "申請書が迷子",
@@ -1573,7 +881,7 @@ class EconomyEngine {
       };
     }
 
-    const amount = this.rewardAmount(randInt(this.rng, 80, 380));
+    const amount = randInt(this.rng, 80, 380);
     user.wallet += amount;
     user.lifetimeEarned += amount;
     return {
@@ -1583,20 +891,1205 @@ class EconomyEngine {
     };
   }
 
-  shop() {
+  marketplace(user) {
     return {
       ok: true,
-      title: `${CURRENCY.name} 商店`,
-      lines: Object.entries(SHOP_ITEMS).map(([id, item]) => {
-        return `\`${id}\` ${item.name} - ${fmt(this.itemPrice(id))}: ${item.description}`;
-      })
+      title: "マーケット",
+      lines: [
+        "買う、見る、入札する場所です。",
+        this.moneyLine(user)
+      ],
+      panel: this.marketplacePanel(user)
     };
+  }
+
+  marketplaceCommand(user, args = []) {
+    const action = String(args[0] || "top").toLowerCase();
+    if (["top", "home"].includes(action)) return this.marketplace(user);
+    if (["official", "official-shop"].includes(action)) return this.panelResult(this.officialShopPanel(user));
+    if (["shops", "user-shops"].includes(action)) return this.panelResult(this.userShopsPanel(user));
+    if (["auction", "auctions"].includes(action)) return this.panelResult(this.officialAuctionsPanel(user));
+    if (["inventory", "history"].includes(action)) return this.panelResult(this.marketInventoryPanel(user));
+    if (["my", "my-shop"].includes(action)) return this.myShop(user);
+    if (action === "product") return this.panelResult(this.officialProductPanel(user, args[1]));
+    if (action === "confirm") return this.panelResult(this.officialConfirmPanel(user, args[1]));
+    if (action === "buy") return this.buyItem(user, args[1]);
+    if (action === "listing") return this.panelResult(this.userListingPanel(user, args[1]));
+    if (action === "listing-confirm") return this.panelResult(this.userListingConfirmPanel(user, args[1]));
+    if (action === "listing-buy") return this.buyUserListing(user, args[1]);
+    if (action === "auction") return this.panelResult(this.auctionDetailPanel(user, args[1]));
+    if (action === "auction-history") return this.panelResult(this.auctionHistoryPanel(user, args[1]));
+    if (action === "auction-end") return this.forceEndAuction(user, args[1]);
+    if (action === "review") return this.panelResult(this.reviewListingPanel(user, args[1]));
+    if (action === "order") return this.panelResult(this.adminOrderPanel(user, args[1]));
+    if (action === "open-shop") return this.openShop(user);
+    if (action === "listing-type") return this.setListingDraft(user, { type: args[1] });
+    if (action === "listing-mode") return this.setListingDraft(user, { mode: args[1] });
+    if (action === "stop-listing") return this.stopListing(user, args[1]);
+    if (action === "complete-order") return this.completeOrder(user, args[1]);
+    if (action === "report-order") return this.reportOrder(user, args[1]);
+    return this.marketplace(user);
+  }
+
+  panelResult(panel) {
+    return {
+      ok: true,
+      title: panel.title,
+      lines: [
+        panel.description || panel.title,
+        ...(panel.fields || []).map((field) => `${field.name}: ${String(field.value || "-").replace(/\n/g, " / ")}`)
+      ],
+      panel
+    };
+  }
+
+  marketplacePanel(user) {
+    return {
+      title: "マーケット",
+      description: "商品購入、民営ショップ、公式オークションを利用できます。",
+      color: 0x7c3aed,
+      fields: [
+        { name: "残高", value: this.moneyLine(user), inline: true },
+        { name: "民営出品", value: `${this.activeListings().length}件`, inline: true },
+        { name: "入口", value: "買う人は上段、売る人は自分の店へ。迷ったらトップへ戻れます。", inline: false }
+      ],
+      components: [
+        buttons([
+          panelButton("公式ショップ", "official-shop", "primary"),
+          panelButton("民営ショップ", "user-shops", "primary"),
+          panelButton("公式オークション", "official-auctions"),
+          panelButton("自分の店", "my-shop", "success"),
+          panelButton("持ち物", "market-inventory")
+        ])
+      ]
+    };
+  }
+
+  officialShopPanel(user) {
+    const fields = Object.entries(SHOP_ITEMS).map(([id, item]) => ({
+      name: `${item.name}（${item.type}）`,
+      value: `${fmt(this.itemPrice(id))} / ${item.kind === "consumable" ? "使い切り" : "常時発動"}\n効果: ${item.effect}\n所持 ${this.officialStockLine(user, id)}`,
+      inline: true
+    }));
+    return {
+      title: "公式ショップ",
+      description: "Botが自動で付与する公式商品です。**常時発動** は所持中ずっと効果が出る、**使い切り** は `使う` コマンドまたはパネルで消費します。購入前に必ず確認画面を挟みます。",
+      color: 0x8b5cf6,
+      fields,
+      components: [
+        select("公式商品を選ぶ", Object.entries(SHOP_ITEMS).map(([id, item]) =>
+          option(item.name, `run:marketplace product ${id}`, `${fmt(this.itemPrice(id))} / ${item.type} / ${item.effect}`.slice(0, 100))
+        )),
+        buttons([
+          panelButton("マーケット", "marketplace"),
+          panelButton("持ち物", "market-inventory"),
+          panelButton("自分の店", "my-shop", "success")
+        ])
+      ]
+    };
+  }
+
+  officialProductPanel(user, id) {
+    const item = SHOP_ITEMS[id];
+    if (!item) return this.marketplacePanel(user);
+    const owned = user.inventory[id] || 0;
+    const soldOut = owned >= item.max;
+    return {
+      title: item.name,
+      description: item.description,
+      color: 0x8b5cf6,
+      fields: [
+        { name: "価格", value: fmt(this.itemPrice(id)), inline: true },
+        { name: "種別", value: item.type, inline: true },
+        { name: "所持", value: `${owned}/${item.max}`, inline: true },
+        { name: "効果", value: item.effect, inline: false },
+        { name: "使い方", value: item.usage, inline: false },
+        { name: "販売方式", value: item.kind === "consumable" ? "使い切り（消費型）" : "常時発動（所持型）", inline: false }
+      ],
+      components: [
+        buttons([
+          runButton("購入確認", `marketplace confirm ${id}`, "primary", soldOut),
+          panelButton("公式ショップ", "official-shop"),
+          panelButton("マーケット", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  officialConfirmPanel(user, id) {
+    const item = SHOP_ITEMS[id];
+    if (!item) return this.marketplacePanel(user);
+    const price = this.itemPrice(id);
+    const shortage = Math.max(0, price - user.wallet);
+    return {
+      title: "購入確認",
+      description: "内容を確認してから購入してください。",
+      color: 0xf59e0b,
+      fields: [
+        { name: "商品", value: item.name, inline: true },
+        { name: "価格", value: fmt(price), inline: true },
+        { name: "販売者", value: "公式", inline: true },
+        { name: "残高", value: `${fmt(user.wallet)}${shortage ? `\n不足 ${fmt(shortage)}` : ""}`, inline: false }
+      ],
+      components: [
+        buttons([
+          runButton("購入する", `marketplace buy ${id}`, "success", shortage > 0),
+          panelButton("やめる", "official-shop"),
+          panelButton("マーケット", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  userShopsPanel(user) {
+    const listings = this.activeListings().slice(0, 25);
+    return {
+      title: "民営ショップ",
+      description: listings.length ? "ユーザーが出品している商品です。購入前に詳細と確認を挟みます。" : "出品中の商品はまだありません。",
+      color: 0x0f766e,
+      fields: listings.slice(0, 6).map((listing) => ({
+        name: listing.name,
+        value: `${fmt(listing.price)} / ${saleModeLabel(listing.mode)} / 在庫 ${listing.stock}\n販売者 ${listing.sellerName}`,
+        inline: true
+      })),
+      components: [
+        listings.length
+          ? select("商品を選ぶ", listings.map((listing) =>
+            option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`)))
+          : buttons([panelButton("自分の店", "my-shop", "success"), panelButton("マーケット", "marketplace")]),
+        buttons([
+          panelButton("マーケット", "marketplace"),
+          panelButton("自分の店", "my-shop", "success"),
+          panelButton("持ち物", "market-inventory")
+        ])
+      ]
+    };
+  }
+
+  userListingPanel(user, id) {
+    const listing = this.findListing(id);
+    if (!listing || listing.status !== "active") return this.userShopsPanel(user);
+    return {
+      title: listing.name,
+      description: listing.description || "説明はありません。",
+      color: 0x0f766e,
+      fields: [
+        { name: "価格", value: fmt(listing.price), inline: true },
+        { name: "方式", value: saleModeLabel(listing.mode), inline: true },
+        { name: "種類", value: productTypeLabel(listing.type), inline: true },
+        { name: "在庫", value: `${listing.stock}`, inline: true },
+        { name: "販売者", value: listing.sellerName, inline: true },
+        { name: "注意", value: listing.manual ? "この商品は手動対応です。購入後、取引中に入ります。" : "購入後、自動で持ち物に記録されます。", inline: false }
+      ],
+      components: [
+        buttons([
+          runButton("購入確認", `marketplace listing-confirm ${listing.id}`, "primary", listing.sellerId === user.id),
+          panelButton("民営ショップ", "user-shops"),
+          panelButton("マーケット", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  userListingConfirmPanel(user, id) {
+    const listing = this.findListing(id);
+    if (!listing || listing.status !== "active") return this.userShopsPanel(user);
+    const shortage = Math.max(0, listing.price - user.wallet);
+    return {
+      title: "購入確認",
+      description: "民営商品です。内容と販売者を確認してください。",
+      color: 0xf59e0b,
+      fields: [
+        { name: "商品", value: listing.name, inline: true },
+        { name: "価格", value: fmt(listing.price), inline: true },
+        { name: "販売者", value: listing.sellerName, inline: true },
+        { name: "方式", value: saleModeLabel(listing.mode), inline: true },
+        { name: "残高", value: `${fmt(user.wallet)}${shortage ? `\n不足 ${fmt(shortage)}` : ""}`, inline: false }
+      ],
+      components: [
+        buttons([
+          runButton("購入する", `marketplace listing-buy ${listing.id}`, "success", shortage > 0 || listing.sellerId === user.id),
+          panelButton("やめる", "user-shops"),
+          panelButton("マーケット", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  marketInventoryPanel(user) {
+    const official = Object.entries(user.inventory || {})
+      .filter(([, count]) => count > 0)
+      .map(([id, count]) => `${SHOP_ITEMS[id]?.name || id} x${count}`);
+    const marketItems = (user.marketplace.inventory || []).slice(-8).reverse().map((item) =>
+      `${item.name} / ${item.expiresAt ? `期限 ${shortDate(item.expiresAt)}` : "買い切り"}`
+    );
+    const orders = this.userOrders(user.id).slice(0, 5).map((order) =>
+      `#${order.id} ${order.itemName} / ${order.status === "open" ? "対応待ち" : "完了"}`
+    );
+    return {
+      title: "購入履歴・持ち物",
+      description: "公式商品、民営商品、手動対応中の取引を確認できます。",
+      color: 0x475569,
+      fields: [
+        { name: "公式持ち物", value: official.join("\n") || "まだありません。", inline: false },
+        { name: "民営持ち物", value: marketItems.join("\n") || "まだありません。", inline: false },
+        { name: "取引中", value: orders.join("\n") || "対応待ちの取引はありません。", inline: false }
+      ],
+      components: [
+        buttons([
+          panelButton("マーケット", "marketplace"),
+          panelButton("公式ショップ", "official-shop", "primary"),
+          panelButton("民営ショップ", "user-shops", "primary")
+        ])
+      ]
+    };
+  }
+
+  myShop(user) {
+    return this.panelResult(this.myShopPanel(user));
+  }
+
+  myShopPanel(user) {
+    const shop = this.ensureShopShape(user);
+    const active = this.sellerListings(user.id).filter((listing) => listing.status === "active").length;
+    const pending = this.sellerListings(user.id).filter((listing) => listing.status === "pending").length;
+    const openOrders = this.sellerOrders(user.id).filter((order) => order.status === "open").length;
+    return {
+      title: "自分の店",
+      description: shop.shopOpened ? `${shop.shopName}\n${shop.shopDescription || "説明はまだありません。"}` : "店を開くと、商品を出品できるようになります。",
+      color: 0x14b8a6,
+      fields: [
+        { name: "売上", value: fmt(shop.sales || 0), inline: true },
+        { name: "出品中", value: `${active}件`, inline: true },
+        { name: "審査待ち", value: `${pending}件`, inline: true },
+        { name: "取引中", value: `${openOrders}件`, inline: true }
+      ],
+      components: [
+        buttons([
+          runButton(shop.shopOpened ? "店を確認" : "店を開く", "marketplace open-shop", "success"),
+          customButton("店の設定", "eco:market:shop-settings", "primary", !shop.shopOpened),
+          panelButton("商品を出す", "listing-new", "primary", !shop.shopOpened),
+          panelButton("商品を管理", "my-listings"),
+          panelButton("売上を見る", "my-sales")
+        ]),
+        buttons([
+          panelButton("取引中の商品", "my-sales"),
+          panelButton("民営ショップ", "user-shops"),
+          panelButton("マーケット", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  listingNewPanel(user) {
+    const shop = this.ensureShopShape(user);
+    const draft = shop.listingDraft || { type: "item", mode: "permanent" };
+    return {
+      title: "商品を出す",
+      description: "種類と販売方式を選んでから、内容入力に進んでください。",
+      color: 0x14b8a6,
+      fields: [
+        { name: "商品タイプ", value: productTypeLabel(draft.type), inline: true },
+        { name: "販売方式", value: saleModeLabel(draft.mode), inline: true },
+        { name: "審査", value: "高額商品、権利、サービス、ロールは審査待ちになる場合があります。", inline: false }
+      ],
+      components: [
+        select("商品タイプ", Object.entries(MARKET_PRODUCT_TYPES).map(([id, label]) =>
+          option(label, `run:marketplace listing-type ${id}`, `${label}として出品`)
+        )),
+        select("販売方式", Object.entries(MARKET_SALE_MODES).map(([id, label]) =>
+          option(label, `run:marketplace listing-mode ${id}`, id === "timed" ? "期限付き商品" : "永続所持")
+        )),
+        buttons([
+          customButton("内容入力", "eco:market:listing-create", "primary", !shop.shopOpened),
+          panelButton("自分の店", "my-shop"),
+          panelButton("マーケット", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  myListingsPanel(user) {
+    const listings = this.sellerListings(user.id).slice(0, 10);
+    return {
+      title: "商品管理",
+      description: listings.length ? "出品中、審査待ち、停止済みの商品を確認できます。" : "まだ出品がありません。",
+      color: 0x14b8a6,
+      fields: listings.map((listing) => ({
+        name: `#${listing.id} ${listing.name}`,
+        value: `${listingStatusLabel(listing.status)} / ${fmt(listing.price)} / 在庫 ${listing.stock}\n${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}`,
+        inline: false
+      })),
+      components: [
+        listings.some((listing) => listing.status !== "stopped")
+          ? select("停止する商品", listings.filter((listing) => listing.status !== "stopped").map((listing) =>
+            option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace stop-listing ${listing.id}`, "出品を停止する")
+          ))
+          : buttons([panelButton("商品を出す", "listing-new", "primary"), panelButton("自分の店", "my-shop")]),
+        buttons([
+          panelButton("商品を出す", "listing-new", "primary"),
+          panelButton("自分の店", "my-shop"),
+          panelButton("民営ショップ", "user-shops")
+        ])
+      ]
+    };
+  }
+
+  mySalesPanel(user) {
+    const orders = this.sellerOrders(user.id).slice(0, 10);
+    return {
+      title: "売上・取引",
+      description: "売上と手動対応中の商品を確認できます。",
+      color: 0x14b8a6,
+      fields: [
+        { name: "売上", value: fmt(user.marketplace.sales || 0), inline: true },
+        { name: "取引", value: orders.length ? orders.map((order) => `#${order.id} ${order.itemName} / ${order.status === "open" ? "対応待ち" : "完了"}`).join("\n") : "まだ取引はありません。", inline: false }
+      ],
+      components: [
+        orders.some((order) => order.status === "open")
+          ? select("完了報告する取引", orders.filter((order) => order.status === "open").map((order) =>
+            option(`#${order.id} ${order.itemName}`.slice(0, 90), `run:marketplace complete-order ${order.id}`, "手動対応を完了にする")
+          ))
+          : buttons([panelButton("自分の店", "my-shop")]),
+        buttons([
+          panelButton("自分の店", "my-shop"),
+          panelButton("商品管理", "my-listings"),
+          panelButton("マーケット", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  officialAuctionsPanel(user) {
+    this.closeEndedAuctions();
+    const auctions = this.state.marketplace.auctions.filter((auction) => ["open", "scheduled"].includes(auction.status));
+    return {
+      title: "公式オークション",
+      description: auctions.length ? "公式競売です。入札額は一時的に拘束されます。" : "開催中の公式オークションはありません。",
+      color: 0xf59e0b,
+      fields: auctions.map((auction) => ({
+        name: `#${auction.id} ${auction.name}`,
+        value: `現在価格 ${fmt(auction.currentBid || auction.startPrice)}\n最低入札 ${fmt(this.minimumAuctionBid(auction))}\n終了 ${auction.endsAt ? shortDate(auction.endsAt) : "未設定"} / 入札 ${auction.bidCount || 0}件`,
+        inline: true
+      })),
+      components: [
+        auctions.length
+          ? select("オークションを選ぶ", auctions.map((auction) =>
+            option(`#${auction.id} ${auction.name}`.slice(0, 90), `run:marketplace auction ${auction.id}`, `${fmt(auction.currentBid || auction.startPrice)} / 最低 ${fmt(this.minimumAuctionBid(auction))}`)
+          ))
+          : buttons([panelButton("マーケット", "marketplace")]),
+        buttons([
+          panelButton("マーケット", "marketplace"),
+          panelButton("公式ショップ", "official-shop", "primary"),
+          panelButton("民営ショップ", "user-shops")
+        ])
+      ]
+    };
+  }
+
+  auctionDetailPanel(user, id) {
+    this.closeEndedAuctions();
+    const auction = this.findAuction(id);
+    if (!auction) return this.officialAuctionsPanel(user);
+    const isOpen = auction.status === "open" && !this.isAuctionExpired(auction);
+    const highest = auction.highestBidderName || "まだなし";
+    return {
+      title: `公式オークション #${auction.id}`,
+      description: auction.description || "公式競売です。即決はありません。",
+      color: isOpen ? 0xf59e0b : 0x64748b,
+      fields: [
+        { name: "商品", value: auction.name, inline: true },
+        { name: "現在価格", value: fmt(auction.currentBid || auction.startPrice), inline: true },
+        { name: "最低入札", value: fmt(this.minimumAuctionBid(auction)), inline: true },
+        { name: "最高入札者", value: highest, inline: true },
+        { name: "終了", value: auction.endsAt ? shortDate(auction.endsAt) : "未設定", inline: true },
+        { name: "入札数", value: `${auction.bidCount || 0}`, inline: true },
+        { name: "入札増分", value: fmt(auction.bidIncrement || Math.max(100, Math.ceil((auction.startPrice || 0) * 0.05))), inline: true },
+        { name: "即決価格", value: auction.buyoutPrice ? fmt(auction.buyoutPrice) : "なし", inline: true },
+        { name: "​", value: "​", inline: true },
+        { name: "拘束", value: "入札額は一時的に財布から引かれます。上書きされた人には自動返金されます。即決価格に達すると即クローズします。", inline: false }
+      ],
+      components: [
+        buttons([
+          customButton("入札する", `eco:market:auction-bid:${auction.id}`, "primary", !isOpen),
+          runButton("入札履歴", `marketplace auction-history ${auction.id}`),
+          panelButton("公式オークション", "official-auctions"),
+          panelButton("マーケット", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  auctionHistoryPanel(user, id) {
+    const auction = this.findAuction(id);
+    if (!auction) return this.officialAuctionsPanel(user);
+    const bids = (auction.bids || []).slice(-10).reverse();
+    return {
+      title: `入札履歴 #${auction.id}`,
+      description: auction.name,
+      color: 0xf59e0b,
+      fields: [
+        {
+          name: "履歴",
+          value: bids.length
+            ? bids.map((bid) => `${shortDate(bid.at)} ${bid.bidderName} / ${fmt(bid.amount)}`).join("\n")
+            : "まだ入札はありません。",
+          inline: false
+        }
+      ],
+      components: [
+        buttons([
+          runButton("詳細へ戻る", `marketplace auction ${auction.id}`, "primary"),
+          panelButton("公式オークション", "official-auctions"),
+          panelButton("マーケット", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  marketAdminPanel(user) {
+    const settings = this.state.marketplace.settings;
+    const pending = this.state.marketplace.listings.filter((listing) => listing.status === "pending").length;
+    const openOrders = this.state.marketplace.orders.filter((order) => order.status === "open").length;
+    const openAuctions = this.state.marketplace.auctions.filter((auction) => auction.status === "open");
+    return {
+      title: "マーケット管理",
+      description: "公式商品、公式オークション、民営出品、取引トラブルを管理します。",
+      color: 0x334155,
+      fields: [
+        { name: "民営出品", value: `公開 ${this.activeListings().length}件 / 審査待ち ${pending}件`, inline: true },
+        { name: "取引対応", value: `対応待ち ${openOrders}件`, inline: true },
+        { name: "公式オークション", value: `開催中 ${openAuctions.length}件`, inline: true },
+        { name: "手数料", value: `${(settings.feeBps / 100).toFixed(1)}%`, inline: true },
+        { name: "制限", value: `高額審査 ${fmt(settings.reviewPrice)} / 出品上限 ${settings.maxActiveListings}件`, inline: false }
+      ],
+      components: [
+        buttons([
+          panelButton("公式商品管理", "official-shop", "primary"),
+          panelButton("公式オークション管理", "official-auctions"),
+          panelButton("民営ショップ管理", "user-shops"),
+          panelButton("出品審査", "market-review"),
+          panelButton("取引対応", "market-trades")
+        ]),
+        buttons([
+          customButton("競売を作る", "eco:market:auction-create", "success"),
+          panelButton("ログ確認", "market-logs"),
+          panelButton("運営パネル", "admin"),
+          panelButton("マーケット", "marketplace")
+        ]),
+        openAuctions.length
+          ? select("強制終了する競売", openAuctions.slice(0, 25).map((auction) =>
+            option(`#${auction.id} ${auction.name}`.slice(0, 90), `run:marketplace auction-end ${auction.id}`, `現在 ${fmt(auction.currentBid || auction.startPrice)}`)
+          ))
+          : buttons([panelButton("公式オークション", "official-auctions")])
+      ]
+    };
+  }
+
+  marketReviewPanel() {
+    const pending = this.state.marketplace.listings.filter((listing) => listing.status === "pending").slice(0, 10);
+    const rejected = this.state.marketplace.listings.filter((listing) => listing.status === "rejected").slice(-3);
+    return {
+      title: "出品審査",
+      description: pending.length ? "審査待ちの商品です。1件を選んで承認/却下してください。" : "審査待ちの商品はありません。",
+      color: 0x334155,
+      fields: [
+        ...pending.map((listing) => ({
+          name: `#${listing.id} ${listing.name}`,
+          value: `${fmt(listing.price)} / ${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}\n販売者: ${listing.sellerName}\n${listing.description || "説明なし"}`,
+          inline: false
+        })),
+        ...(rejected.length
+          ? [{
+              name: "直近の却下",
+              value: rejected.map((listing) => `#${listing.id} ${listing.name}${listing.reviewNote ? `（${listing.reviewNote.slice(0, 40)}）` : ""}`).join("\n"),
+              inline: false
+            }]
+          : [])
+      ],
+      components: [
+        pending.length
+          ? select("審査する商品を選ぶ", pending.map((listing) =>
+              option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace review ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`)
+            ))
+          : buttons([panelButton("マーケット管理", "market-admin")]),
+        buttons([panelButton("マーケット管理", "market-admin"), panelButton("運営パネル", "admin")])
+      ]
+    };
+  }
+
+  reviewListingPanel(user, id) {
+    const listing = this.findListing(id);
+    if (!listing || listing.status !== "pending") return this.marketReviewPanel();
+    return {
+      title: `審査 #${listing.id} ${listing.name}`,
+      description: listing.description || "説明はありません。",
+      color: 0xf59e0b,
+      fields: [
+        { name: "販売者", value: listing.sellerName, inline: true },
+        { name: "価格", value: fmt(listing.price), inline: true },
+        { name: "在庫", value: `${listing.stock}`, inline: true },
+        { name: "種類", value: productTypeLabel(listing.type), inline: true },
+        { name: "販売方式", value: saleModeLabel(listing.mode), inline: true },
+        { name: "手動対応", value: listing.manual ? "はい（購入後は取引中に入る）" : "いいえ（自動付与）", inline: true },
+        { name: "提出日時", value: listing.createdAt ? shortDate(listing.createdAt) : "-", inline: false }
+      ],
+      components: [
+        buttons([
+          customButton("承認する", `eco:review:approve:${listing.id}`, "success"),
+          customButton("却下する（理由入力）", `eco:review:reject:${listing.id}`, "danger"),
+          panelButton("審査一覧に戻る", "market-review"),
+          panelButton("マーケット管理", "market-admin")
+        ])
+      ]
+    };
+  }
+
+  marketTradesPanel() {
+    const openOrders = this.state.marketplace.orders
+      .filter((order) => order.status === "open" || order.status === "reported")
+      .slice(0, 10);
+    return {
+      title: "取引対応",
+      description: openOrders.length ? "手動対応中または報告中の取引です。1件を選んで対応してください。" : "対応待ちの取引はありません。",
+      color: 0x334155,
+      fields: openOrders.map((order) => ({
+        name: `#${order.id} ${order.itemName}${order.status === "reported" ? " ⚠問題報告" : ""}`,
+        value: `購入者 ${order.buyerName} / 販売者 ${order.sellerName}\n${fmt(order.price)} / 手数料 ${fmt(order.fee || 0)} / ${productTypeLabel(order.type)}`,
+        inline: false
+      })),
+      components: [
+        openOrders.length
+          ? select("この取引を管理", openOrders.map((order) =>
+              option(`#${order.id} ${order.itemName}`.slice(0, 90), `run:marketplace order ${order.id}`, `${order.buyerName} <- ${order.sellerName}`)
+            ))
+          : buttons([panelButton("マーケット管理", "market-admin")]),
+        buttons([panelButton("マーケット管理", "market-admin"), panelButton("運営パネル", "admin")])
+      ]
+    };
+  }
+
+  adminOrderPanel(user, id) {
+    const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
+    if (!order) return this.marketTradesPanel();
+    const statusLabel = order.status === "open" ? "対応待ち" : order.status === "reported" ? "問題報告あり" : order.status === "refunded" ? "返金済み" : "完了";
+    return {
+      title: `取引対応 #${order.id} ${order.itemName}`,
+      description: `販売者 ${order.sellerName} → 購入者 ${order.buyerName}`,
+      color: order.status === "reported" ? 0xef4444 : 0x334155,
+      fields: [
+        { name: "商品", value: order.itemName, inline: true },
+        { name: "種類", value: productTypeLabel(order.type), inline: true },
+        { name: "販売方式", value: saleModeLabel(order.mode), inline: true },
+        { name: "金額", value: fmt(order.price), inline: true },
+        { name: "手数料", value: fmt(order.fee || 0), inline: true },
+        { name: "状態", value: statusLabel, inline: true },
+        { name: "手動対応", value: order.manual ? "はい" : "いいえ", inline: true },
+        { name: "作成日時", value: order.createdAt ? shortDate(order.createdAt) : "-", inline: true }
+      ],
+      components: [
+        buttons([
+          customButton("完了扱いにする", `eco:order:complete:${order.id}`, "success", ["complete", "refunded"].includes(order.status)),
+          customButton("返金する", `eco:order:refund:${order.id}`, "danger", order.status === "refunded"),
+          panelButton("取引対応に戻る", "market-trades"),
+          panelButton("マーケット管理", "market-admin")
+        ])
+      ]
+    };
+  }
+
+  marketLogsPanel() {
+    return {
+      title: "ログ確認",
+      description: "直近のマーケットログです。",
+      color: 0x334155,
+      fields: [
+        { name: "ログ", value: this.state.marketplace.logs.slice(-10).reverse().join("\n") || "まだログはありません。", inline: false }
+      ],
+      components: [buttons([panelButton("マーケット管理", "market-admin"), panelButton("運営パネル", "admin")])]
+    };
+  }
+
+  shop(user) {
+    return this.marketplace(user);
+  }
+
+  ensureShopShape(user) {
+    user.marketplace = {
+      shopOpened: false,
+      shopName: "",
+      shopDescription: "",
+      sales: 0,
+      inventory: [],
+      listingDraft: { type: "item", mode: "permanent" },
+      ...(user.marketplace || {})
+    };
+    user.marketplace.inventory = Array.isArray(user.marketplace.inventory) ? user.marketplace.inventory : [];
+    user.marketplace.listingDraft = { type: "item", mode: "permanent", ...(user.marketplace.listingDraft || {}) };
+    return user.marketplace;
+  }
+
+  openShop(user) {
+    const shop = this.ensureShopShape(user);
+    if (!shop.shopOpened) {
+      shop.shopOpened = true;
+      shop.shopName = shop.shopName || `${user.name}の店`;
+      shop.shopDescription = shop.shopDescription || "まだ何を売るか決まっていない店。";
+      this.state.marketplace.shops[user.id] = {
+        ownerId: user.id,
+        ownerName: user.name,
+        name: shop.shopName,
+        description: shop.shopDescription,
+        openedAt: new Date().toISOString()
+      };
+      this.marketLog(`${user.name} が店を開きました。`);
+    }
+    return this.myShop(user);
+  }
+
+  updateShopSettings(user, data = {}) {
+    const shop = this.ensureShopShape(user);
+    shop.shopOpened = true;
+    shop.shopName = cleanMarketText(data.name, 40) || shop.shopName || `${user.name}の店`;
+    shop.shopDescription = cleanMarketText(data.description, 120) || shop.shopDescription || "説明はまだありません。";
+    this.state.marketplace.shops[user.id] = {
+      ownerId: user.id,
+      ownerName: user.name,
+      name: shop.shopName,
+      description: shop.shopDescription,
+      openedAt: this.state.marketplace.shops[user.id]?.openedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.marketLog(`${user.name} が店の設定を更新しました。`);
+    return this.myShop(user);
+  }
+
+  setListingDraft(user, patch = {}) {
+    const shop = this.ensureShopShape(user);
+    if (patch.type && MARKET_PRODUCT_TYPES[patch.type]) shop.listingDraft.type = patch.type;
+    if (patch.mode && MARKET_SALE_MODES[patch.mode]) shop.listingDraft.mode = patch.mode;
+    return this.panelResult(this.listingNewPanel(user));
+  }
+
+  createUserListing(user, data = {}) {
+    const shop = this.ensureShopShape(user);
+    if (!shop.shopOpened) return { ok: false, title: "店がありません", lines: ["先に「店を開く」を押してください。"] };
+    const activeCount = this.sellerListings(user.id).filter((listing) => ["active", "pending"].includes(listing.status)).length;
+    const maxActive = this.state.marketplace.settings.maxActiveListings;
+    if (activeCount >= maxActive) {
+      return { ok: false, title: "出品上限", lines: [`同時に出せる商品は ${maxActive}件までです。`] };
+    }
+    const name = cleanMarketText(data.name, 48);
+    const description = cleanMarketText(data.description, 240);
+    const price = parsePositiveInt(data.price);
+    const stock = clamp(parsePositiveInt(data.stock) || 1, 1, 99);
+    const draft = shop.listingDraft || {};
+    const type = MARKET_PRODUCT_TYPES[data.type] ? data.type : (MARKET_PRODUCT_TYPES[draft.type] ? draft.type : "item");
+    const mode = MARKET_SALE_MODES[data.mode] ? data.mode : (MARKET_SALE_MODES[draft.mode] ? draft.mode : "permanent");
+    const durationDays = mode === "timed" ? clamp(parsePositiveInt(data.durationDays) || MARKETPLACE_CONFIG.defaultDurationDays, 1, 365) : null;
+    if (!name) return { ok: false, title: "商品名が空です", lines: ["商品名を入力してください。"] };
+    if (!Number.isFinite(price) || price <= 0) return { ok: false, title: "価格が変です", lines: ["価格は1以上の数字で入力してください。"] };
+
+    const needsReview = price >= this.state.marketplace.settings.reviewPrice || ["role", "title", "right", "service", "bundle"].includes(type);
+    const manual = ["role", "title", "right", "service", "bundle"].includes(type);
+    const listing = {
+      id: this.state.marketplace.nextListingId++,
+      sellerId: user.id,
+      sellerName: user.name,
+      shopName: shop.shopName || `${user.name}の店`,
+      name,
+      type,
+      mode,
+      price,
+      stock,
+      sold: 0,
+      description: description || "説明はありません。",
+      durationDays,
+      manual,
+      status: needsReview ? "pending" : "active",
+      createdAt: new Date().toISOString()
+    };
+    this.state.marketplace.listings.push(listing);
+    this.marketLog(`${user.name} が ${listing.name} を出品しました。${needsReview ? "審査待ち。" : ""}`);
+    return {
+      ok: true,
+      title: needsReview ? "出品しました（審査待ち）" : "出品しました",
+      lines: [
+        `${listing.name} / ${fmt(price)} / 在庫 ${stock}`,
+        needsReview ? "高額または要注意タイプのため、運営確認後に公開されます。" : "民営ショップに公開されました。"
+      ],
+      panel: this.myListingsPanel(user)
+    };
+  }
+
+  buyUserListing(user, id) {
+    const listing = this.findListing(id);
+    if (!listing || listing.status !== "active") return { ok: false, title: "買えません", lines: ["この商品は現在販売されていません。"] };
+    if (listing.sellerId === user.id) return { ok: false, title: "自分の商品です", lines: ["自分の商品は購入できません。"] };
+    if (listing.stock <= 0) return { ok: false, title: "在庫切れ", lines: ["この商品は売り切れました。"] };
+    if (user.wallet < listing.price) {
+      return {
+        ok: false,
+        title: "残高が足りません",
+        lines: [
+          `必要: ${fmt(listing.price)}`,
+          `現在: ${fmt(user.wallet)}`,
+          `不足: ${fmt(listing.price - user.wallet)}`
+        ]
+      };
+    }
+
+    const seller = this.getUser(listing.sellerId, listing.sellerName);
+    const fee = Math.floor(listing.price * this.state.marketplace.settings.feeBps / 10000);
+    const sellerReceive = listing.price - fee;
+    user.wallet -= listing.price;
+    user.lifetimeLost += listing.price;
+    seller.wallet += sellerReceive;
+    seller.lifetimeEarned += sellerReceive;
+    this.ensureShopShape(seller).sales += sellerReceive;
+    listing.stock -= 1;
+    listing.sold += 1;
+    if (listing.stock <= 0) listing.status = "soldout";
+
+    const order = {
+      id: this.state.marketplace.nextOrderId++,
+      listingId: listing.id,
+      itemName: listing.name,
+      buyerId: user.id,
+      buyerName: user.name,
+      sellerId: seller.id,
+      sellerName: seller.name,
+      price: listing.price,
+      fee,
+      mode: listing.mode,
+      type: listing.type,
+      manual: listing.manual,
+      status: listing.manual ? "open" : "complete",
+      createdAt: new Date().toISOString(),
+      expiresAt: listing.mode === "timed" ? new Date(Date.now() + listing.durationDays * 86400000).toISOString() : null
+    };
+    this.state.marketplace.orders.push(order);
+    this.ensureShopShape(user).inventory.push({
+      orderId: order.id,
+      name: listing.name,
+      type: listing.type,
+      mode: listing.mode,
+      sellerName: seller.name,
+      acquiredAt: order.createdAt,
+      expiresAt: order.expiresAt,
+      status: order.status
+    });
+    this.marketLog(`${user.name} が ${seller.name} から ${listing.name} を購入しました。`);
+    return {
+      ok: true,
+      title: listing.manual ? "購入完了（対応待ち）" : "購入完了",
+      lines: [
+        `商品: ${listing.name}`,
+        `支払い: ${fmt(listing.price)}`,
+        `残高: ${fmt(user.wallet)}`,
+        listing.manual ? "この商品は販売者の手動対応が必要です。取引中の商品から確認できます。" : "付与が完了しました。"
+      ],
+      panel: listing.manual ? this.marketInventoryPanel(user) : this.userShopsPanel(user)
+    };
+  }
+
+  approveListing(adminUser, id) {
+    const listing = this.findListing(id);
+    if (!listing) return { ok: false, title: "商品が見つかりません", lines: [`#${id} は台帳に載っていません。`] };
+    if (listing.status !== "pending") return { ok: false, title: "審査できません", lines: [`#${listing.id} は現在 ${listingStatusLabel(listing.status)} です。`] };
+    listing.status = "active";
+    listing.reviewedAt = new Date().toISOString();
+    listing.reviewedBy = adminUser.id;
+    listing.reviewedByName = adminUser.name;
+    this.marketLog(`${adminUser.name} が #${listing.id} ${listing.name} を承認しました。`);
+    return {
+      ok: true,
+      title: "承認しました",
+      lines: [`#${listing.id} ${listing.name} を公開しました。`, `販売者: ${listing.sellerName}`, `価格: ${fmt(listing.price)}`],
+      panel: this.marketReviewPanel()
+    };
+  }
+
+  rejectListing(adminUser, id, reason = "") {
+    const listing = this.findListing(id);
+    if (!listing) return { ok: false, title: "商品が見つかりません", lines: [`#${id} は台帳に載っていません。`] };
+    if (listing.status !== "pending") return { ok: false, title: "審査できません", lines: [`#${listing.id} は現在 ${listingStatusLabel(listing.status)} です。`] };
+    const trimmed = String(reason || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    listing.status = "rejected";
+    listing.reviewedAt = new Date().toISOString();
+    listing.reviewedBy = adminUser.id;
+    listing.reviewedByName = adminUser.name;
+    listing.reviewNote = trimmed;
+    this.marketLog(`${adminUser.name} が #${listing.id} ${listing.name} を却下${trimmed ? `（${trimmed.slice(0, 40)}）` : ""}しました。`);
+    return {
+      ok: true,
+      title: "却下しました",
+      lines: [`#${listing.id} ${listing.name} を却下しました。`, `販売者: ${listing.sellerName}`, `理由: ${trimmed || "記入なし"}`],
+      panel: this.marketReviewPanel()
+    };
+  }
+
+  stopListing(user, id) {
+    const listing = this.findListing(id);
+    if (!listing || listing.sellerId !== user.id) return { ok: false, title: "商品が見つかりません", lines: ["自分の出品だけ停止できます。"] };
+    listing.status = "stopped";
+    listing.stoppedAt = new Date().toISOString();
+    this.marketLog(`${user.name} が ${listing.name} を停止しました。`);
+    return { ok: true, title: "出品停止", lines: [`${listing.name} を停止しました。`], panel: this.myListingsPanel(user) };
+  }
+
+  completeOrder(user, id) {
+    const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
+    if (!order || (order.sellerId !== user.id && order.buyerId !== user.id)) {
+      return { ok: false, title: "取引が見つかりません", lines: ["関係者だけが完了報告できます。"] };
+    }
+    order.status = "complete";
+    order.completedAt = new Date().toISOString();
+    this.marketLog(`#${order.id} ${order.itemName} が完了しました。`);
+    return { ok: true, title: "完了報告", lines: [`#${order.id} ${order.itemName} を完了にしました。`], panel: this.mySalesPanel(user) };
+  }
+
+  reportOrder(user, id) {
+    const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
+    if (!order || (order.sellerId !== user.id && order.buyerId !== user.id)) {
+      return { ok: false, title: "取引が見つかりません", lines: ["関係者だけが報告できます。"] };
+    }
+    order.status = "reported";
+    order.reportedAt = new Date().toISOString();
+    this.marketLog(`#${order.id} ${order.itemName} に問題報告が入りました。`);
+    return { ok: true, title: "問題を報告しました", lines: ["運営の取引対応に残ります。"], panel: this.marketInventoryPanel(user) };
+  }
+
+  adminCompleteOrder(adminUser, id) {
+    const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
+    if (!order) return { ok: false, title: "取引が見つかりません", lines: [`#${id} は台帳に載っていません。`] };
+    if (order.status === "complete") return { ok: false, title: "既に完了", lines: [`#${order.id} はすでに完了しています。`] };
+    if (order.status === "refunded") return { ok: false, title: "返金済み", lines: [`#${order.id} は返金済みのため完了にできません。`] };
+    order.status = "complete";
+    order.completedAt = new Date().toISOString();
+    order.completedBy = adminUser.id;
+    order.completedByName = adminUser.name;
+    order.completedByAdmin = true;
+    this.marketLog(`${adminUser.name} が #${order.id} ${order.itemName} を運営完了にしました。`);
+    return {
+      ok: true,
+      title: "運営完了処理",
+      lines: [`#${order.id} ${order.itemName} を完了扱いにしました。`, `販売者: ${order.sellerName} / 購入者: ${order.buyerName}`],
+      panel: this.marketTradesPanel()
+    };
+  }
+
+  adminRefundOrder(adminUser, id) {
+    const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
+    if (!order) return { ok: false, title: "取引が見つかりません", lines: [`#${id} は台帳に載っていません。`] };
+    if (order.status === "refunded") return { ok: false, title: "返金済み", lines: [`#${order.id} はすでに返金済みです。`] };
+
+    const buyer = this.getUser(order.buyerId, order.buyerName);
+    buyer.wallet += order.price;
+    buyer.lifetimeEarned += order.price;
+
+    if (order.sellerId !== "official") {
+      const seller = this.getUser(order.sellerId, order.sellerName);
+      const sellerReceive = Math.max(0, order.price - (order.fee || 0));
+      seller.wallet = Math.max(0, seller.wallet - sellerReceive);
+      seller.lifetimeLost += sellerReceive;
+      const shop = this.ensureShopShape(seller);
+      shop.sales = Math.max(0, (shop.sales || 0) - sellerReceive);
+
+      const listing = this.findListing(order.listingId);
+      if (listing) {
+        listing.stock = (listing.stock || 0) + 1;
+        listing.sold = Math.max(0, (listing.sold || 0) - 1);
+        if (listing.status === "soldout" && listing.stock > 0) listing.status = "active";
+      }
+    }
+
+    const buyerShop = this.ensureShopShape(buyer);
+    buyerShop.inventory = buyerShop.inventory.filter((item) => String(item.orderId) !== String(order.id));
+
+    order.status = "refunded";
+    order.refundedAt = new Date().toISOString();
+    order.refundedBy = adminUser.id;
+    order.refundedByName = adminUser.name;
+    this.marketLog(`${adminUser.name} が #${order.id} ${order.itemName} を返金しました（${fmt(order.price)}）。`);
+    return {
+      ok: true,
+      title: "返金完了",
+      lines: [
+        `#${order.id} ${order.itemName} を返金しました。`,
+        `購入者 ${buyer.name} に ${fmt(order.price)} を戻し、購入品を持ち物から削除しました。`,
+        order.sellerId === "official" ? "販売者は公式のため、売上調整は不要です。" : `販売者 ${order.sellerName} の売上と在庫を巻き戻しました。`
+      ],
+      panel: this.marketTradesPanel()
+    };
+  }
+
+  createOfficialAuction(adminUser, data = {}) {
+    const name = cleanMarketText(data.name, 48);
+    const description = cleanMarketText(data.description, 240);
+    const startPrice = parsePositiveInt(data.startPrice);
+    const durationMinutes = clamp(parsePositiveInt(data.durationMinutes) || 60, 5, 10080);
+    const type = MARKET_PRODUCT_TYPES[data.type] ? data.type : "title";
+    if (!name) return { ok: false, title: "商品名が空です", lines: ["商品名を入力してください。"] };
+    if (!Number.isFinite(startPrice) || startPrice <= 0) return { ok: false, title: "開始価格が変です", lines: ["開始価格は1以上の数字で入力してください。"] };
+
+    const bidIncrementRaw = parsePositiveInt(data.bidIncrement);
+    const bidIncrement = Number.isFinite(bidIncrementRaw) ? bidIncrementRaw : Math.max(100, Math.ceil(startPrice * 0.05));
+    const buyoutRaw = parsePositiveInt(data.buyoutPrice);
+    const buyoutPrice = Number.isFinite(buyoutRaw) ? buyoutRaw : null;
+    if (buyoutPrice !== null && buyoutPrice <= startPrice) {
+      return { ok: false, title: "即決価格が低すぎ", lines: ["即決価格は開始価格より大きくしてください。"] };
+    }
+
+    const now = new Date();
+    const auction = {
+      id: this.state.marketplace.nextAuctionId++,
+      name,
+      type,
+      mode: "permanent",
+      description: description || "公式オークション商品です。",
+      startPrice,
+      currentBid: 0,
+      bidIncrement,
+      buyoutPrice,
+      highestBidderId: null,
+      highestBidderName: null,
+      bidCount: 0,
+      bids: [],
+      status: "open",
+      createdBy: adminUser.id,
+      createdByName: adminUser.name,
+      createdAt: now.toISOString(),
+      endsAt: new Date(now.getTime() + durationMinutes * 60000).toISOString()
+    };
+    this.state.marketplace.auctions.push(auction);
+    this.marketLog(`${adminUser.name} が公式オークション #${auction.id} ${auction.name} を開始しました。`);
+    return {
+      ok: true,
+      title: "公式オークション作成",
+      lines: [
+        `商品: ${auction.name}`,
+        `開始価格: ${fmt(startPrice)}`,
+        `入札増分: ${fmt(bidIncrement)}`,
+        buyoutPrice ? `即決価格: ${fmt(buyoutPrice)}` : "即決価格: なし",
+        `終了: ${shortDate(auction.endsAt)}`
+      ],
+      panel: this.auctionDetailPanel(adminUser, auction.id)
+    };
+  }
+
+  placeAuctionBid(user, id, amountRaw) {
+    this.closeEndedAuctions();
+    const auction = this.findAuction(id);
+    if (!auction || auction.status !== "open") return { ok: false, title: "入札できません", lines: ["このオークションは開催中ではありません。"] };
+    if (this.isAuctionExpired(auction)) {
+      this.closeAuction(auction, "expired");
+      return { ok: false, title: "終了済み", lines: ["このオークションは終了しました。"], panel: this.auctionDetailPanel(user, id) };
+    }
+    const amount = parsePositiveInt(amountRaw);
+    const minimum = this.minimumAuctionBid(auction);
+    if (!Number.isFinite(amount) || amount < minimum) {
+      return {
+        ok: false,
+        title: "入札額が足りません",
+        lines: [`最低入札: ${fmt(minimum)}`, amount ? `入力: ${fmt(amount)}` : "数字で入力してください。"],
+        panel: this.auctionDetailPanel(user, id)
+      };
+    }
+    const previousOwnBid = auction.highestBidderId === user.id ? auction.currentBid : 0;
+    const required = amount - previousOwnBid;
+    if (required <= 0) {
+      return { ok: false, title: "入札額が変です", lines: ["現在の自分の入札額より高くしてください。"], panel: this.auctionDetailPanel(user, id) };
+    }
+    if (user.wallet < required) {
+      return {
+        ok: false,
+        title: "残高が足りません",
+        lines: [`必要: ${fmt(required)}`, `現在: ${fmt(user.wallet)}`, `不足: ${fmt(required - user.wallet)}`],
+        panel: this.auctionDetailPanel(user, id)
+      };
+    }
+
+    if (auction.highestBidderId && auction.highestBidderId !== user.id && auction.currentBid > 0) {
+      const previous = this.getUser(auction.highestBidderId, auction.highestBidderName);
+      previous.wallet += auction.currentBid;
+      this.marketLog(`${previous.name} に #${auction.id} の上書き返金 ${fmt(auction.currentBid)}。`);
+    }
+
+    user.wallet -= required;
+    user.lifetimeLost += required;
+    auction.currentBid = amount;
+    auction.highestBidderId = user.id;
+    auction.highestBidderName = user.name;
+    auction.bidCount = (auction.bidCount || 0) + 1;
+    auction.bids = Array.isArray(auction.bids) ? auction.bids : [];
+    auction.bids.push({ bidderId: user.id, bidderName: user.name, amount, at: new Date().toISOString() });
+    auction.bids = auction.bids.slice(-50);
+
+    if (auction.buyoutPrice && amount >= auction.buyoutPrice) {
+      this.marketLog(`${user.name} が #${auction.id} ${auction.name} を即決価格 ${fmt(auction.buyoutPrice)} で落札しました。`);
+      const closeResult = this.closeAuction(auction, "buyout");
+      return {
+        ok: true,
+        title: "即決落札",
+        lines: [
+          `商品: ${auction.name}`,
+          `即決価格 ${fmt(auction.buyoutPrice)} に達したため即落札しました。`,
+          ...closeResult.lines
+        ],
+        panel: this.auctionDetailPanel(user, id)
+      };
+    }
+
+    const extended = this.extendAuctionIfNeeded(auction);
+    this.marketLog(`${user.name} が #${auction.id} ${auction.name} に ${fmt(amount)} で入札しました。`);
+    return {
+      ok: true,
+      title: "入札しました",
+      lines: [
+        `商品: ${auction.name}`,
+        `入札額: ${fmt(amount)}`,
+        auction.buyoutPrice ? `即決価格: ${fmt(auction.buyoutPrice)}` : null,
+        `残高: ${fmt(user.wallet)}`,
+        extended ? `終了直前のため ${MARKETPLACE_CONFIG.auctionExtendMinutes}分延長しました。` : `終了: ${shortDate(auction.endsAt)}`
+      ].filter(Boolean),
+      panel: this.auctionDetailPanel(user, id)
+    };
+  }
+
+  forceEndAuction(user, id) {
+    const auction = this.findAuction(id);
+    if (!auction) return { ok: false, title: "競売が見つかりません", lines: ["指定された公式オークションはありません。"] };
+    if (auction.status !== "open") return { ok: false, title: "終了済み", lines: ["このオークションはすでに終了しています。"], panel: this.auctionDetailPanel(user, id) };
+    const result = this.closeAuction(auction, "forced");
+    return {
+      ok: true,
+      title: "公式オークション終了",
+      lines: result.lines,
+      panel: this.auctionDetailPanel(user, id)
+    };
+  }
+
+  closeEndedAuctions() {
+    const closed = [];
+    for (const auction of this.state.marketplace.auctions) {
+      if (auction.status === "open" && this.isAuctionExpired(auction)) {
+        closed.push(this.closeAuction(auction, "expired"));
+      }
+    }
+    return closed;
+  }
+
+  closeAuction(auction, reason = "expired") {
+    auction.status = "ended";
+    auction.endedAt = new Date().toISOString();
+    auction.endReason = reason;
+    if (!auction.highestBidderId || !auction.currentBid) {
+      this.marketLog(`#${auction.id} ${auction.name} は入札なしで終了しました。`);
+      return { lines: [`${auction.name} は入札なしで終了しました。`] };
+    }
+
+    const winner = this.getUser(auction.highestBidderId, auction.highestBidderName);
+    const acquiredAt = new Date().toISOString();
+    this.ensureShopShape(winner).inventory.push({
+      orderId: `auction-${auction.id}`,
+      name: auction.name,
+      type: auction.type,
+      mode: auction.mode || "permanent",
+      sellerName: "公式オークション",
+      acquiredAt,
+      expiresAt: null,
+      status: "complete"
+    });
+    const order = {
+      id: this.state.marketplace.nextOrderId++,
+      listingId: `auction-${auction.id}`,
+      itemName: auction.name,
+      buyerId: winner.id,
+      buyerName: winner.name,
+      sellerId: "official",
+      sellerName: "公式オークション",
+      price: auction.currentBid,
+      fee: 0,
+      mode: auction.mode || "permanent",
+      type: auction.type,
+      manual: false,
+      status: "complete",
+      createdAt: acquiredAt,
+      completedAt: acquiredAt,
+      expiresAt: null
+    };
+    this.state.marketplace.orders.push(order);
+    this.marketLog(`#${auction.id} ${auction.name} を ${winner.name} が ${fmt(auction.currentBid)} で落札しました。`);
+    return { lines: [`落札者: ${winner.name}`, `落札額: ${fmt(auction.currentBid)}`, `商品: ${auction.name}`] };
+  }
+
+  minimumAuctionBid(auction) {
+    const base = auction.currentBid || 0;
+    if (base <= 0) return auction.startPrice || 1;
+    return base + (auction.bidIncrement || Math.max(100, Math.ceil(base * 0.05)));
+  }
+
+  extendAuctionIfNeeded(auction) {
+    const endsAt = new Date(auction.endsAt).getTime();
+    if (!Number.isFinite(endsAt)) return false;
+    const extendMs = (this.state.marketplace.settings.auctionExtendMinutes || MARKETPLACE_CONFIG.auctionExtendMinutes) * 60000;
+    const now = Date.now();
+    if (endsAt - now > extendMs) return false;
+    auction.endsAt = new Date(now + extendMs).toISOString();
+    return true;
+  }
+
+  isAuctionExpired(auction) {
+    const endsAt = new Date(auction.endsAt).getTime();
+    return Number.isFinite(endsAt) && endsAt <= Date.now();
+  }
+
+  findAuction(id) {
+    return this.state.marketplace.auctions.find((auction) => String(auction.id) === String(id));
+  }
+
+  activeListings() {
+    return this.state.marketplace.listings.filter((listing) => listing.status === "active" && listing.stock > 0);
+  }
+
+  sellerListings(userId) {
+    return this.state.marketplace.listings
+      .filter((listing) => listing.sellerId === userId)
+      .sort((a, b) => b.id - a.id);
+  }
+
+  sellerOrders(userId) {
+    return this.state.marketplace.orders
+      .filter((order) => order.sellerId === userId)
+      .sort((a, b) => b.id - a.id);
+  }
+
+  userOrders(userId) {
+    return this.state.marketplace.orders
+      .filter((order) => order.buyerId === userId || order.sellerId === userId)
+      .sort((a, b) => b.id - a.id);
+  }
+
+  findListing(id) {
+    return this.state.marketplace.listings.find((listing) => String(listing.id) === String(id));
+  }
+
+  officialStockLine(user, id) {
+    const item = SHOP_ITEMS[id];
+    if (!item) return "-";
+    return `${user.inventory[id] || 0}/${item.max}`;
+  }
+
+  marketLog(line) {
+    this.state.marketplace.logs.push(`${shortDate(new Date().toISOString())} ${line}`);
+    this.state.marketplace.logs = this.state.marketplace.logs.slice(-80);
   }
 
   buyItem(user, id) {
     const item = SHOP_ITEMS[id];
     if (!item) {
-      return { ok: false, title: "棚にない商品", lines: ["`shop` で買えるものを確認してください。"] };
+      return { ok: false, title: "棚にない商品", lines: ["マーケットの公式ショップで買えるものを確認してください。"] };
     }
 
     const owned = user.inventory[id] || 0;
@@ -1606,7 +2099,7 @@ class EconomyEngine {
 
     const price = this.itemPrice(id);
     if (user.wallet < price) {
-      return { ok: false, title: "KCが足りない", lines: [`${item.name} には ${fmt(price)} 必要です。`, this.moneyLine(user)] };
+      return { ok: false, title: "Risが足りない", lines: [`${item.name} には ${fmt(price)} 必要です。`, this.moneyLine(user)] };
     }
 
     user.wallet -= price;
@@ -1624,7 +2117,7 @@ class EconomyEngine {
   useItem(user, id) {
     const item = SHOP_ITEMS[id];
     if (!item) {
-      return { ok: false, title: "未確認アイテム", lines: ["`shop` で使えるものを確認してください。"] };
+      return { ok: false, title: "未確認アイテム", lines: ["マーケットの持ち物で使えるものを確認してください。"] };
     }
 
     if (!user.inventory[id]) {
@@ -1638,26 +2131,15 @@ class EconomyEngine {
     user.inventory[id] -= 1;
     if (user.inventory[id] <= 0) delete user.inventory[id];
 
-    if (id === "shredder") {
-      const before = user.heat;
-      user.heat = clamp(user.heat - 25, 0, 100);
-      return {
-        ok: true,
-        title: "シュレッダー起動",
-        lines: [`税務署ヘイトが ${before} から ${user.heat} になりました。`, "音だけはやけに爽快です。"]
-      };
-    }
-
     if (id === "coupon") {
-      const rawSwing = randInt(this.rng, -450, 700);
-      const swing = rawSwing >= 0 ? this.rewardAmount(rawSwing) : -this.costAmount(Math.abs(rawSwing));
+      const swing = randInt(this.rng, -450, 700);
       user.wallet = Math.max(0, user.wallet + swing);
       if (swing >= 0) user.lifetimeEarned += swing;
       else user.lifetimeLost += Math.abs(swing);
 
       return {
         ok: swing >= 0,
-        title: swing >= 0 ? "逆クーポンが逆に勝ち" : "逆クーポンが順当に負け",
+        title: swing >= 0 ? "封筒の中身は当たり" : "封筒の中身はため息",
         lines: [
           `${swing >= 0 ? fmt(swing) : fmt(Math.abs(swing))} ${swing >= 0 ? "増えました" : "減りました"}。`,
           "会計ソフトは黙りました。",
@@ -1666,644 +2148,7 @@ class EconomyEngine {
       };
     }
 
-    if (id === "tonic") {
-      const hp = randInt(this.rng, 8, 16);
-      const energy = randInt(this.rng, 2, 4);
-      user.rpg.hp = clamp(user.rpg.hp + hp, 0, user.rpg.maxHp);
-      user.rpg.energy = clamp(user.rpg.energy + energy, 0, user.rpg.maxEnergy);
-      return {
-        ok: true,
-        title: "集中トニック使用",
-        lines: [`HP +${hp} / Energy +${energy}`, this.rpgLine(user)]
-      };
-    }
-
     return { ok: false, title: "何も起きない", lines: ["そのアイテムはまだ効果が実装されていません。"] };
-  }
-
-  market() {
-    const lines = Object.entries(this.state.market.assets).map(([symbol, asset]) => {
-      const change = asset.price - asset.previousPrice;
-      const pct = asset.previousPrice > 0 ? (change / asset.previousPrice) * 100 : 0;
-      const sign = change >= 0 ? "+" : "";
-      return `\`${symbol}\` ${asset.name}: ${fmt(asset.price)} (${sign}${pct.toFixed(1)}%) - ${asset.description}`;
-    });
-
-    return {
-      ok: true,
-      title: `KC Market Day ${this.state.market.day}`,
-      lines: [
-        ...lines,
-        "",
-        `KABU: ${fmt(this.state.market.kabu.price)} (${kabuChangeLabel(this.state.market.kabu)}) - 腐る前に売るだけの胃痛商品。`,
-        `CPI ${this.cpiLabel()} / Policy ${this.policyLabel()}`,
-        "例: `invest NEON 1000`, `sell NEON all`, `kabu buy 1000`, `kabu sell all`"
-      ]
-    };
-  }
-
-  hotBoard() {
-    return Object.entries(this.state.market.assets)
-      .map(([symbol, asset]) => {
-        const pct = asset.previousPrice > 0 ? ((asset.price - asset.previousPrice) / asset.previousPrice) * 100 : 0;
-        return { symbol, pct, price: asset.price };
-      })
-      .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
-      .slice(0, 4)
-      .map((item) => {
-        const sign = item.pct >= 0 ? "+" : "";
-        return `${item.symbol} ${fmt(item.price)} (${sign}${item.pct.toFixed(1)}%)`;
-      })
-      .join("\n");
-  }
-
-  kabu(user, args = []) {
-    this.applyKabuSpoilage(user);
-    const action = String(args[0] || "price").toLowerCase();
-    const kabu = this.state.market.kabu;
-
-    if (["buy", "買う"].includes(action)) {
-      const amount = parseAmount(args[1], user.wallet);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        return { ok: false, title: "カブ買い注文が雑", lines: ["例: `kabu buy 1000`。胃痛は買えます。"] };
-      }
-      if (user.wallet < amount) {
-        return { ok: false, title: "財布が薄い", lines: [`買えるのは ${fmt(user.wallet)} までです。`] };
-      }
-
-      const units = Math.floor(amount / kabu.price);
-      if (units <= 0) {
-        return { ok: false, title: "カブが買えない", lines: [`今のカブ価は ${fmt(kabu.price)}。もう少しKCが必要です。`] };
-      }
-
-      const cost = units * kabu.price;
-      const oldValue = user.kabu.units * user.kabu.avgCost;
-      user.wallet -= cost;
-      user.lifetimeLost += cost;
-      user.kabu.units += units;
-      user.kabu.avgCost = Math.floor((oldValue + cost) / user.kabu.units);
-      user.kabu.boughtDay = this.state.market.day;
-      this.log(user, "kabu_buy", -cost, `${units} KABU`);
-
-      return {
-        ok: true,
-        title: "カブを抱えました",
-        lines: [
-          `${units} カブを ${fmt(cost)} で購入。平均 ${fmt(user.kabu.avgCost)}。`,
-          `賞味期限: Market Day ${user.kabu.boughtDay + KABU_CONFIG.shelfLifeDays} まで。`,
-          "リリス: 株じゃないよ、カブ。腐るほう。かわいそうに、胃だけ先物取引してる。",
-          this.moneyLine(user)
-        ]
-      };
-    }
-
-    if (["sell", "売る"].includes(action)) {
-      if (user.kabu.units <= 0) {
-        return { ok: false, title: "売るカブなし", lines: ["手元が空です。胃も空ならログボへ。"] };
-      }
-
-      const units = parseShares(args[1] || "all", user.kabu.units);
-      if (!Number.isFinite(units) || units <= 0 || units > user.kabu.units) {
-        return { ok: false, title: "売却数が変", lines: [`保有は ${user.kabu.units} カブ。例: \`kabu sell all\``] };
-      }
-
-      const wholeUnits = Math.floor(units);
-      const payout = wholeUnits * kabu.price;
-      const costBasis = wholeUnits * user.kabu.avgCost;
-      const profit = payout - costBasis;
-      user.kabu.units -= wholeUnits;
-      if (user.kabu.units <= 0) {
-        user.kabu.units = 0;
-        user.kabu.avgCost = 0;
-        user.kabu.boughtDay = null;
-      }
-      user.wallet += payout;
-      user.lifetimeEarned += payout;
-      this.log(user, "kabu_sell", payout, `${wholeUnits} KABU`);
-
-      return {
-        ok: profit >= 0,
-        title: profit >= 0 ? "カブ利確" : "カブ損切り",
-        lines: [
-          `${wholeUnits} カブを ${fmt(payout)} で売却。損益 ${fmt(profit)}。`,
-          profit >= 0 ? "売り抜けた。今日は少しだけ賢い顔でいい。" : "腐る前に逃げた。負けではなく撤退、たぶん。",
-          this.moneyLine(user)
-        ]
-      };
-    }
-
-    return {
-      ok: true,
-      title: "カブ価",
-      lines: [
-        `現在価格: ${fmt(kabu.price)} (${kabuChangeLabel(kabu)})`,
-        `保有: ${user.kabu.units} カブ / 平均 ${fmt(user.kabu.avgCost || 0)} / 評価 ${fmt(this.kabuValue(user))}`,
-        user.kabu.boughtDay ? `腐る目安: Market Day ${user.kabu.boughtDay + KABU_CONFIG.shelfLifeDays}` : "手元は空。胃はまだ静か。",
-        kabu.news,
-        "例: `kabu buy 1000`, `kabu sell all`"
-      ]
-    };
-  }
-
-  invest(user, symbolRaw, amountRaw) {
-    const symbol = normalizeSymbol(symbolRaw);
-    const asset = this.state.market.assets[symbol];
-    if (!asset) {
-      return { ok: false, title: "存在しない銘柄", lines: ["`market` で銘柄コードを確認してください。"] };
-    }
-
-    const amount = parseAmount(amountRaw, user.wallet);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      return { ok: false, title: "投資額が変", lines: ["例: `invest RAMEN 1000` または `invest OSHI all`"] };
-    }
-
-    if (user.wallet < amount) {
-      return { ok: false, title: "財布が薄い", lines: [`投資可能額は ${fmt(user.wallet)} です。`] };
-    }
-
-    const shares = amount / asset.price;
-    user.wallet -= amount;
-    user.holdings[symbol] = roundShares((user.holdings[symbol] || 0) + shares);
-    user.lifetimeLost += amount;
-    user.xp += 10;
-    user.heat = clamp(user.heat + randInt(this.rng, 0, 2), 0, 100);
-    this.log(user, "invest", -amount, `${symbol} ${shares.toFixed(4)}`);
-
-    return {
-      ok: true,
-      title: "約定しました",
-      lines: [
-        `${asset.name} を ${fmt(amount)} 分、${shares.toFixed(4)} 口買いました。`,
-        "購入理由: なんとなく。市場では十分な根拠です。",
-        this.moneyLine(user)
-      ]
-    };
-  }
-
-  sell(user, symbolRaw, sharesRaw) {
-    const symbol = normalizeSymbol(symbolRaw);
-    const asset = this.state.market.assets[symbol];
-    if (!asset) {
-      return { ok: false, title: "存在しない銘柄", lines: ["`market` で銘柄コードを確認してください。"] };
-    }
-
-    const owned = user.holdings[symbol] || 0;
-    if (owned <= 0) {
-      return { ok: false, title: "保有ゼロ", lines: [`${asset.name} は持っていません。`] };
-    }
-
-    const shares = parseShares(sharesRaw, owned);
-    if (!Number.isFinite(shares) || shares <= 0 || shares > owned + 0.000001) {
-      return { ok: false, title: "売却数量が変", lines: [`保有数は ${owned.toFixed(4)} 口です。例: \`sell ${symbol} all\``] };
-    }
-
-    const amount = Math.floor(shares * asset.price);
-    user.holdings[symbol] = roundShares(owned - shares);
-    if (user.holdings[symbol] <= 0.000001) delete user.holdings[symbol];
-    user.wallet += amount;
-    user.lifetimeEarned += amount;
-    user.xp += 8;
-    this.log(user, "sell", amount, `${symbol} ${shares.toFixed(4)}`);
-
-    return {
-      ok: true,
-      title: "売却完了",
-      lines: [
-        `${asset.name} を ${shares.toFixed(4)} 口売って ${fmt(amount)} を受け取りました。`,
-        "利益か損かは、心が決めます。",
-        this.moneyLine(user)
-      ]
-    };
-  }
-
-  portfolio(user) {
-    const entries = Object.entries(user.holdings);
-    if (entries.length === 0 && user.kabu.units <= 0) {
-      return {
-        ok: true,
-        title: "ポートフォリオ",
-        lines: ["保有銘柄はありません。現金こそ最大のポジション。"]
-      };
-    }
-
-    const lines = entries.map(([symbol, shares]) => {
-      const asset = this.state.market.assets[symbol];
-      const value = Math.floor(shares * asset.price);
-      return `\`${symbol}\` ${asset.name}: ${shares.toFixed(4)}口 / 評価額 ${fmt(value)}`;
-    });
-    if (user.kabu.units > 0) {
-      lines.push(`\`KABU\` カブ: ${user.kabu.units}個 / 評価額 ${fmt(Math.floor(this.kabuValue(user)))}`);
-    }
-
-    return {
-      ok: true,
-      title: "ポートフォリオ",
-      lines: [...lines, `合計評価額: ${fmt(Math.floor(this.holdingsValue(user) + this.kabuValue(user)))}`]
-    };
-  }
-
-  loan(user, amountRaw) {
-    const amount = parsePositiveInt(amountRaw);
-    if (!amount) {
-      return { ok: false, title: "借入額が変", lines: ["例: `loan 1000`"] };
-    }
-
-    const maxLoan = 12000 + this.level(user) * 1500;
-    if (user.debt + amount > maxLoan) {
-      return {
-        ok: false,
-        title: "与信が限界",
-        lines: [`今の上限は ${fmt(maxLoan)} です。すでに借金 ${fmt(user.debt)}。金融機関も眉間に力が入っています。`]
-      };
-    }
-
-    user.wallet += amount;
-    user.debt += Math.ceil(amount * 1.08);
-    user.xp += 6;
-    user.heat = clamp(user.heat + 3, 0, 100);
-    this.log(user, "loan", amount, "借入");
-
-    return {
-      ok: true,
-      title: "借入完了",
-      lines: [
-        `${fmt(amount)} を借りました。返済額は手数料込みで ${fmt(Math.ceil(amount * 1.08))} 増えました。`,
-        "未来の自分にDMを送っておきましょう。",
-        this.moneyLine(user)
-      ]
-    };
-  }
-
-  repay(user, amountRaw) {
-    if (user.debt <= 0) {
-      return { ok: true, title: "借金なし", lines: ["今だけは胸を張っていいです。"] };
-    }
-
-    const amount = Math.min(parseAmount(amountRaw, user.wallet), user.wallet, user.debt);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      return { ok: false, title: "返済額が変", lines: ["例: `repay 500` または `repay all`"] };
-    }
-
-    user.wallet -= amount;
-    user.debt -= amount;
-    user.xp += 10;
-    this.log(user, "repay", -amount, "返済");
-
-    return {
-      ok: true,
-      title: "返済しました",
-      lines: [`${fmt(amount)} 返済。残り借金 ${fmt(user.debt)}。`, user.debt === 0 ? "完済です。空気が少し甘い。" : this.moneyLine(user)]
-    };
-  }
-
-  rpgStatus(user) {
-    this.regenerateRpg(user);
-    return {
-      ok: true,
-      title: `${user.name} のRPGステータス`,
-      lines: [
-        `RPGランク: ${rankFor(RPG_RANKS, user.rpg.xp).name} / Lv ${this.rpgLevel(user)} (${user.rpg.xp} XP)`,
-        this.rpgLine(user),
-        `ATK ${user.rpg.attack} / DEF ${user.rpg.defense} / FOCUS ${user.rpg.focus} / LUCK ${user.rpg.luck}`,
-        `クエスト: ${user.rpg.wins}勝 ${user.rpg.losses}敗`
-      ]
-    };
-  }
-
-  quests() {
-    return {
-      ok: true,
-      title: "クエスト一覧",
-      lines: Object.entries(QUESTS).map(([id, quest]) => {
-        return `\`${id}\` ${quest.name} - Energy ${quest.cost}: ${quest.description}`;
-      })
-    };
-  }
-
-  quest(user, questIdRaw) {
-    this.regenerateRpg(user);
-    const questId = String(questIdRaw || "task").toLowerCase();
-    const quest = QUESTS[questId];
-    if (!quest) {
-      return { ok: false, title: "未登録クエスト", lines: ["`quests` で行き先を確認してください。"] };
-    }
-
-    if (user.rpg.hp <= 0) {
-      return { ok: false, title: "HPゼロ", lines: ["`rest` で立て直しましょう。財布より先に体力です。"] };
-    }
-
-    if (user.rpg.energy < quest.cost) {
-      return { ok: false, title: "エナジー不足", lines: [`必要 Energy は ${quest.cost}。`, "`rest` か `use tonic` で回復できます。"] };
-    }
-
-    user.rpg.energy -= quest.cost;
-
-    const level = this.rpgLevel(user);
-    const attackScore =
-      user.rpg.attack * 2 +
-      user.rpg.defense +
-      user.rpg.focus * 1.4 +
-      user.rpg.luck * randFloat(this.rng, 1.4, 3.2) +
-      level * 2 +
-      randInt(this.rng, 0, 24);
-    const challenge = quest.power + randInt(this.rng, 0, 24);
-    const success = attackScore >= challenge;
-    const damage = success
-      ? Math.max(1, randInt(this.rng, 2, 8) - Math.floor(user.rpg.defense / 4))
-      : Math.max(3, randInt(this.rng, 7, 18) - Math.floor(user.rpg.defense / 5));
-    user.rpg.hp = clamp(user.rpg.hp - damage, 0, user.rpg.maxHp);
-
-    if (success) {
-      const reward = this.rewardAmount(randInt(this.rng, quest.rewardMin, quest.rewardMax) + user.rpg.luck * 8);
-      const xp = randInt(this.rng, quest.xpMin, quest.xpMax);
-      user.wallet += reward;
-      user.lifetimeEarned += reward;
-      user.rpg.xp += xp;
-      user.rpg.wins += 1;
-      user.xp += Math.floor(xp / 3);
-      this.log(user, "quest", reward, quest.name);
-
-      const lines = [
-        `${quest.name} を突破しました。`,
-        `報酬 ${fmt(reward)} / RPG XP +${xp} / ダメージ ${damage}`,
-        this.rpgLine(user),
-        this.moneyLine(user)
-      ];
-
-      if (this.rng() < 0.12) {
-        user.inventory.tonic = (user.inventory.tonic || 0) + 1;
-        lines.splice(2, 0, "集中トニックを拾いました。何かの福利厚生です。");
-      }
-
-      return { ok: true, title: "クエスト成功", lines };
-    }
-
-    const consolation = this.rewardAmount(randInt(this.rng, 20, 90));
-    const xp = randInt(this.rng, 8, 22);
-    user.wallet += consolation;
-    user.lifetimeEarned += consolation;
-    user.rpg.xp += xp;
-    user.rpg.losses += 1;
-
-    return {
-      ok: false,
-      title: "クエスト撤退",
-      lines: [
-        `${quest.name} はまだ硬かった。`,
-        `参加賞 ${fmt(consolation)} / RPG XP +${xp} / ダメージ ${damage}`,
-        this.rpgLine(user)
-      ]
-    };
-  }
-
-  train(user, statRaw) {
-    const stat = String(statRaw || "").toLowerCase();
-    const aliases = { atk: "attack", def: "defense", con: "focus", foc: "focus", luck: "luck" };
-    const key = aliases[stat] || stat;
-    if (!["attack", "defense", "focus", "luck"].includes(key)) {
-      return {
-        ok: false,
-        title: "鍛錬メニュー不明",
-        lines: ["例: `train attack`, `train defense`, `train focus`, `train luck`"]
-      };
-    }
-
-    const current = user.rpg[key];
-    const cost = this.trainingCost(current);
-    if (user.wallet < cost) {
-      return { ok: false, title: "鍛錬費不足", lines: [`${key} を上げるには ${fmt(cost)} 必要です。`, this.moneyLine(user)] };
-    }
-
-    user.wallet -= cost;
-    user.lifetimeLost += cost;
-    user.rpg[key] += 1;
-    user.rpg.xp += 18;
-    if (key === "defense" && current % 3 === 0) user.rpg.maxHp += 2;
-    if (key === "focus" && current % 3 === 0) user.rpg.maxEnergy += 1;
-    this.log(user, "train", -cost, key);
-
-    return {
-      ok: true,
-      title: "鍛錬完了",
-      lines: [`${key.toUpperCase()} が ${current} から ${user.rpg[key]} に上がりました。`, this.rpgLine(user), this.moneyLine(user)]
-    };
-  }
-
-  rest(user) {
-    const cost = this.restCost(user);
-    user.wallet -= cost;
-    user.lifetimeLost += cost;
-    user.rpg.hp = user.rpg.maxHp;
-    user.rpg.energy = Math.min(user.rpg.maxEnergy, user.rpg.energy + 5);
-    user.rpg.lastRegenAt = this.now().toISOString();
-
-    return {
-      ok: true,
-      title: "休息完了",
-      lines: [`${fmt(cost)} で休みました。いい投資です。`, this.rpgLine(user), this.moneyLine(user)]
-    };
-  }
-
-  slots(user, amountRaw) {
-    const bet = this.validateBet(user, amountRaw);
-    if (bet.error) return bet.error;
-
-    user.wallet -= bet.amount;
-    const reels = [pick(this.rng, CASINO_SYMBOLS), pick(this.rng, CASINO_SYMBOLS), pick(this.rng, CASINO_SYMBOLS)];
-    let multiplier = 0;
-    const unique = new Set(reels);
-    if (unique.size === 1) multiplier = reels[0] === "7" ? 12 : 8;
-    else if (unique.size === 2) multiplier = 2;
-    else if (reels.includes("KC") && reels.includes("UP")) multiplier = 1.3;
-
-    const payout = multiplier > 0 ? this.casinoPayout(bet.amount, multiplier, { jackpot: multiplier >= 8 }) : 0;
-    user.wallet += payout;
-    this.recordCasino(user, payout - bet.amount);
-
-    return {
-      ok: payout > bet.amount,
-      title: "KC Slots",
-      lines: [
-        CASINO_MASCOT.opener,
-        `[ ${reels.join(" | ")} ]`,
-        payout > 0 ? `払い戻し ${fmt(payout)} / 収支 ${fmt(payout - bet.amount)}` : `払い戻し 0 / 収支 -${fmt(bet.amount)}`,
-        mascotLine(this.rng, payout > bet.amount ? "win" : "lose"),
-        this.moneyLine(user)
-      ]
-    };
-  }
-
-  coinflip(user, amountRaw, choiceRaw) {
-    const bet = this.validateBet(user, amountRaw);
-    if (bet.error) return bet.error;
-
-    const choice = String(choiceRaw || "heads").toLowerCase();
-    if (!["heads", "tails", "表", "裏"].includes(choice)) {
-      return { ok: false, title: "表か裏か", lines: ["例: `coinflip 100 heads` または `coinflip 100 tails`"] };
-    }
-
-    const normalized = ["heads", "表"].includes(choice) ? "heads" : "tails";
-    const win = this.rng() < this.casinoChance(0.5);
-    const actual = win ? normalized : normalized === "heads" ? "tails" : "heads";
-    user.wallet -= bet.amount;
-    const payout = win ? this.casinoPayout(bet.amount, 1.95) : 0;
-    user.wallet += payout;
-    this.recordCasino(user, payout - bet.amount);
-
-    return {
-      ok: win,
-      title: "コイントス",
-      lines: [
-        `予想: ${normalized === "heads" ? "表" : "裏"} / 結果: ${actual === "heads" ? "表" : "裏"}`,
-        win ? `勝ち。払い戻し ${fmt(payout)}。` : `負け。-${fmt(bet.amount)}。`,
-        mascotLine(this.rng, win ? "win" : "lose"),
-        this.moneyLine(user)
-      ]
-    };
-  }
-
-  dice(user, amountRaw, guessRaw) {
-    const bet = this.validateBet(user, amountRaw);
-    if (bet.error) return bet.error;
-
-    const guess = Number(guessRaw);
-    if (!Number.isInteger(guess) || guess < 1 || guess > 6) {
-      return { ok: false, title: "ダイス予想が変", lines: ["例: `dice 100 4`"] };
-    }
-
-    const win = this.rng() < this.casinoChance(1 / 6, { jackpot: true });
-    const actual = win ? guess : pick(this.rng, [1, 2, 3, 4, 5, 6].filter((value) => value !== guess));
-    user.wallet -= bet.amount;
-    const payout = win ? this.casinoPayout(bet.amount, 5.5, { jackpot: true }) : 0;
-    user.wallet += payout;
-    this.recordCasino(user, payout - bet.amount);
-
-    return {
-      ok: win,
-      title: "ダイス",
-      lines: [
-        `予想: ${guess} / 結果: ${actual}`,
-        win ? `的中。払い戻し ${fmt(payout)}。` : `外れ。-${fmt(bet.amount)}。`,
-        mascotLine(this.rng, win ? "win" : "lose"),
-        this.moneyLine(user)
-      ]
-    };
-  }
-
-  blackjack(user, amountRaw) {
-    const bet = this.validateBet(user, amountRaw);
-    if (bet.error) return bet.error;
-
-    user.wallet -= bet.amount;
-    const deck = createDeck(this.rng);
-    const player = [deck.pop(), deck.pop()];
-    const dealer = [deck.pop(), deck.pop()];
-
-    while (handScore(player) < 16) player.push(deck.pop());
-    while (handScore(dealer) < 17) dealer.push(deck.pop());
-
-    const playerScore = handScore(player);
-    const dealerScore = handScore(dealer);
-    const playerBust = playerScore > 21;
-    const dealerBust = dealerScore > 21;
-    const natural = player.length === 2 && playerScore === 21;
-
-    let outcome = "lose";
-    if (!playerBust && (dealerBust || playerScore > dealerScore)) outcome = "win";
-    else if (!playerBust && playerScore === dealerScore) outcome = "push";
-
-    let payout = 0;
-    if (outcome === "push") payout = bet.amount;
-    if (outcome === "win") payout = this.casinoPayout(bet.amount, natural ? 2.5 : 2, { jackpot: natural });
-    user.wallet += payout;
-    this.recordCasino(user, payout - bet.amount);
-
-    const ok = outcome === "win";
-    return {
-      ok,
-      title: "Blackjack",
-      lines: [
-        `あなた: ${formatHand(player)} = ${playerScore}`,
-        `ディーラー: ${formatHand(dealer)} = ${dealerScore}`,
-        outcome === "win" ? `勝ち。払い戻し ${fmt(payout)}。` : outcome === "push" ? "引き分け。ベット返却。" : `負け。-${fmt(bet.amount)}。`,
-        mascotLine(this.rng, outcome === "win" ? "win" : outcome === "push" ? "win" : "lose"),
-        this.moneyLine(user)
-      ]
-    };
-  }
-
-  crash(user, amountRaw, targetRaw) {
-    const bet = this.validateBet(user, amountRaw);
-    if (bet.error) return bet.error;
-
-    const target = clamp(Number(targetRaw || 2), 1.2, 5);
-    if (!Number.isFinite(target)) {
-      return { ok: false, title: "倍率が変", lines: ["例: `crash 100 2.0`。欲張るほど床が抜けます。"] };
-    }
-
-    user.wallet -= bet.amount;
-    const volatility = this.casinoVolatility();
-    const playerLean = (this.state.house.kugi / 100) * Math.sqrt(this.state.house.returnRate / 94);
-    const instantRug = this.rng() < clamp(0.08 / Math.max(0.65, playerLean), 0.02, 0.2);
-    const baseCurve = 0.93 * (this.state.house.kugi / 100) * Math.sqrt(this.state.house.returnRate / 94);
-    const crashAt = instantRug ? randFloat(this.rng, 1.0, 1.18) : Math.min(9.99, Math.max(1.01, baseCurve / Math.max(0.08, 1 - this.rng() * volatility)));
-    const roundedCrash = Math.floor(crashAt * 100) / 100;
-    const win = target <= roundedCrash;
-    const payout = win ? this.casinoPayout(bet.amount, target, { jackpot: target >= 3 }) : 0;
-    user.wallet += payout;
-    this.recordCasino(user, payout - bet.amount);
-
-    const track = crashTrack(target, roundedCrash);
-    return {
-      ok: win,
-      title: "Crash",
-      lines: [
-        track,
-        `逃げたい倍率: x${target.toFixed(2)} / 墜落: x${roundedCrash.toFixed(2)}`,
-        win ? `生還。${fmt(payout)} 回収。手汗だけ残りました。` : `床、抜けました。-${fmt(bet.amount)}。`,
-        mascotLine(this.rng, win ? "win" : "lose"),
-        this.moneyLine(user)
-      ]
-    };
-  }
-
-  roulette(user, amountRaw, choiceRaw) {
-    const bet = this.validateBet(user, amountRaw);
-    if (bet.error) return bet.error;
-
-    const choice = String(choiceRaw || "red").toLowerCase();
-    if (!["red", "black", "odd", "even", "zero", "赤", "黒", "奇数", "偶数", "0"].includes(choice)) {
-      return { ok: false, title: "置き場所が変", lines: ["例: `roulette 100 red`, `roulette 100 odd`, `roulette 100 zero`"] };
-    }
-
-    const normalized = normalizeRouletteChoice(choice);
-    const hitChance = normalized === "zero" ? this.casinoChance(1 / 37, { jackpot: true }) : this.casinoChance(18 / 37);
-    const forcedHit = this.rng() < hitChance;
-    const number = forcedRouletteNumber(this.rng, normalized, forcedHit);
-    const color = rouletteColor(number);
-    const hit =
-      (normalized === "red" && color === "red") ||
-      (normalized === "black" && color === "black") ||
-      (normalized === "odd" && number !== 0 && number % 2 === 1) ||
-      (normalized === "even" && number !== 0 && number % 2 === 0) ||
-      (normalized === "zero" && number === 0);
-    const multiplier = normalized === "zero" ? 18 : 1.95;
-
-    user.wallet -= bet.amount;
-    const payout = hit ? this.casinoPayout(bet.amount, multiplier, { jackpot: normalized === "zero" }) : 0;
-    user.wallet += payout;
-    this.recordCasino(user, payout - bet.amount);
-
-    return {
-      ok: hit,
-      title: "Roulette",
-      lines: [
-        `置いた場所: ${rouletteLabel(normalized)} / 出目: ${number} ${rouletteLabel(color)}`,
-        hit ? `刺さりました。払い戻し ${fmt(payout)}。` : `外れ。玉だけが涼しい顔をしています。-${fmt(bet.amount)}。`,
-        mascotLine(this.rng, hit ? "win" : "lose"),
-        this.moneyLine(user)
-      ]
-    };
   }
 
   leaderboard(typeRaw = "net") {
@@ -2314,25 +2159,17 @@ class EconomyEngine {
     let label = (value) => fmt(value);
 
     if (["text", "txt"].includes(type)) {
-      title = "Textランクランキング";
+      title = "発言ランクランキング";
       score = (user) => user.activity.textXp;
-      label = (value) => `${value} XP`;
+      label = (value) => `経験値 ${value}`;
     } else if (["vc", "voice"].includes(type)) {
       title = "VCランクランキング";
       score = (user) => user.activity.vcXp;
-      label = (value) => `${value} XP`;
-    } else if (type === "rpg") {
-      title = "RPGランキング";
-      score = (user) => user.rpg.xp;
-      label = (value) => `${value} XP`;
-    } else if (type === "casino") {
-      title = "カジノ収支ランキング";
-      score = (user) => user.casino.profit;
-      label = (value) => fmt(value);
+      label = (value) => `経験値 ${value}`;
     } else if (["invite", "invites", "招待"].includes(type)) {
       title = "招待ランキング";
       score = (user) => user.invites.qualified;
-      label = (value) => `${value} invited`;
+      label = (value) => `${value}人`;
     }
 
     const ranked = users
@@ -2347,15 +2184,7 @@ class EconomyEngine {
     return {
       ok: true,
       title,
-      lines: ranked.map((entry, index) => `${index + 1}. ${entry.user.name} - ${label(entry.value)}`)
-    };
-  }
-
-  news() {
-    return {
-      ok: true,
-      title: "市場ニュース",
-      lines: this.state.market.news.slice(-8).reverse()
+      lines: ranked.map((entry, index) => `${index + 1}. ${entry.user.name} - ${label(entry.value, entry.user)}`)
     };
   }
 
@@ -2368,21 +2197,37 @@ class EconomyEngine {
 
     const before = rankFor(TEXT_RANKS, user.activity.textXp);
     const xp = randInt(this.rng, 8, 15);
-    const drip = this.rewardAmount(randInt(this.rng, 2, 8));
+    const drip = randInt(this.rng, 2, 8);
     user.activity.textXp += xp;
     user.activity.textMessages += 1;
     user.activity.lastTextAt = now.toISOString();
     user.wallet += drip;
     user.lifetimeEarned += drip;
-    this.observeSupplyDelta(drip);
 
     const after = rankFor(TEXT_RANKS, user.activity.textXp);
     if (after.name !== before.name) {
+      const progress = rankWithProgress(TEXT_RANKS, user.activity.textXp);
       return {
         ok: true,
         kind: "text_rank_up",
-        title: "Textランク昇格",
-        lines: [`${user.name} が ${after.name} になりました。`, `会話報酬 +${fmt(drip)} / Text XP +${xp}`]
+        title: "発言ランク昇格",
+        lines: [`${user.name} が ${after.name} になりました。`, `発言レベル ${this.textLevel(user)} / 会話報酬 +${fmt(drip)} / 発言経験値 +${xp}`],
+        meta: {
+          axis: "text",
+          userName: user.name,
+          previousRank: before.name,
+          newRank: after.name,
+          nextRank: progress.nextMin !== null ? this.nextRankName(TEXT_RANKS, after.name) : null,
+          nextRankAt: progress.nextMin,
+          progressPercent: rankProgressPercent(progress),
+          serverPosition: this.serverPositionByTextXp(user.id),
+          serverTotal: this.joinedUserCount(),
+          totalMessages: user.activity.textMessages,
+          xpTotal: user.activity.textXp,
+          xpGained: xp,
+          drip,
+          level: this.textLevel(user)
+        }
       };
     }
 
@@ -2451,10 +2296,10 @@ class EconomyEngine {
     const before = rankFor(VC_RANKS, user.activity.vcXp);
     const cappedMinutes = Math.min(minutes, VOICE_REWARD_CONFIG.maxClaimMinutes);
     const xp = cappedMinutes * VOICE_REWARD_CONFIG.xpPerMinute;
-    const voiceRush = this.activeSinkEvent()?.id === "voice_rush" ? 1.25 : 1;
-    const rawDrip = Math.floor(cappedMinutes * VOICE_REWARD_CONFIG.kcPerMinute * voiceRush);
+    const salaryPerMinute = this.voiceSalaryPerMinute(user);
+    const rawDrip = Math.floor(cappedMinutes * salaryPerMinute);
     const remaining = Math.max(0, this.voiceDailyCap(user) - user.activity.vcDailyEarned);
-    const drip = Math.min(this.rewardAmount(rawDrip), remaining);
+    const drip = Math.min(rawDrip, remaining);
     user.activity.vcMinutes += cappedMinutes;
     user.activity.vcDailyMinutes += cappedMinutes;
     user.activity.vcXp += xp;
@@ -2462,18 +2307,36 @@ class EconomyEngine {
       user.wallet += drip;
       user.lifetimeEarned += drip;
       user.activity.vcDailyEarned += drip;
-      this.observeSupplyDelta(drip);
     }
 
     const after = rankFor(VC_RANKS, user.activity.vcXp);
-    const capLine = drip <= 0 ? "今日のVC KCは上限。ランクだけ伸びます。" : this.voiceRewardLine(user);
+    const capLine = drip <= 0 ? "今日のVC Risは上限。ランクだけ伸びます。" : this.voiceRewardLine(user);
     if (after.name !== before.name) {
+      const progress = rankWithProgress(VC_RANKS, user.activity.vcXp);
       return {
         ok: true,
         kind: "vc_rank_up",
-        title: "VCランク昇格",
+        title: "通話ランク昇格",
         silent: Boolean(options.silent),
-        lines: [`${user.name} が ${after.name} になりました。`, `VC ${cappedMinutes}分 / +${xp} XP / +${fmt(drip)}`, capLine]
+        lines: [`${user.name} が ${after.name} になりました。`, `通話レベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, capLine],
+        meta: {
+          axis: "vc",
+          userName: user.name,
+          previousRank: before.name,
+          newRank: after.name,
+          nextRank: progress.nextMin !== null ? this.nextRankName(VC_RANKS, after.name) : null,
+          nextRankAt: progress.nextMin,
+          progressPercent: rankProgressPercent(progress),
+          serverPosition: this.serverPositionByVcXp(user.id),
+          serverTotal: this.joinedUserCount(),
+          totalMinutes: user.activity.vcMinutes,
+          xpTotal: user.activity.vcXp,
+          xpGained: xp,
+          drip,
+          minutesThisClaim: cappedMinutes,
+          salaryPerMinute: this.voiceSalaryPerMinute(user),
+          level: this.vcLevel(user)
+        }
       };
     }
 
@@ -2482,8 +2345,32 @@ class EconomyEngine {
       kind: "vc_reward",
       title: "VC報酬",
       silent: Boolean(options.silent),
-      lines: [`VC ${cappedMinutes}分 / +${xp} XP / +${fmt(drip)}`, capLine]
+      lines: [`通話レベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, capLine]
     };
+  }
+
+  serverPositionByTextXp(userId) {
+    const users = Object.values(this.state.users).filter((u) => u.joined);
+    users.sort((a, b) => (b.activity?.textXp || 0) - (a.activity?.textXp || 0));
+    const index = users.findIndex((u) => u.id === userId);
+    return index >= 0 ? index + 1 : users.length;
+  }
+
+  serverPositionByVcXp(userId) {
+    const users = Object.values(this.state.users).filter((u) => u.joined);
+    users.sort((a, b) => (b.activity?.vcXp || 0) - (a.activity?.vcXp || 0));
+    const index = users.findIndex((u) => u.id === userId);
+    return index >= 0 ? index + 1 : users.length;
+  }
+
+  joinedUserCount() {
+    return Object.values(this.state.users).filter((u) => u.joined).length;
+  }
+
+  nextRankName(ranks, currentName) {
+    const idx = ranks.findIndex((rank) => rank.name === currentName);
+    if (idx < 0 || idx + 1 >= ranks.length) return null;
+    return ranks[idx + 1].name;
   }
 
   resetVoiceDay(user) {
@@ -2495,7 +2382,28 @@ class EconomyEngine {
   }
 
   voiceDailyCap(user) {
-    return this.rewardAmount(VOICE_REWARD_CONFIG.dailyCapBase + this.level(user) * VOICE_REWARD_CONFIG.dailyCapPerLevel);
+    return VOICE_REWARD_CONFIG.dailyCapBase + this.vcLevel(user) * VOICE_REWARD_CONFIG.dailyCapPerLevel;
+  }
+
+  textLevel(user) {
+    return activityLevel(user.activity.textXp);
+  }
+
+  vcLevel(user) {
+    return activityLevel(user.activity.vcXp);
+  }
+
+  textRank(user) {
+    return rankFor(TEXT_RANKS, user.activity.textXp);
+  }
+
+  vcRank(user) {
+    return rankFor(VC_RANKS, user.activity.vcXp);
+  }
+
+  voiceSalaryPerMinute(user) {
+    const tier = Math.floor((this.vcLevel(user) - 1) / VOICE_REWARD_CONFIG.salaryStepLevels);
+    return VOICE_REWARD_CONFIG.kcPerMinute + tier * VOICE_REWARD_CONFIG.salaryKcPerStep;
   }
 
   voiceRewardLine(user) {
@@ -2503,22 +2411,21 @@ class EconomyEngine {
     const cap = this.voiceDailyCap(user);
     const remaining = Math.max(0, cap - user.activity.vcDailyEarned);
     const state = user.activity.voiceJoinedAt ? "在室中" : "未接続";
-    return `${state} / 今日 ${fmt(user.activity.vcDailyEarned)} / ${fmt(cap)} / 残り ${fmt(remaining)}`;
+    return `${state} / VCレベル ${this.vcLevel(user)} / 給与 ${fmt(this.voiceSalaryPerMinute(user))}/分 / 今日 ${fmt(user.activity.vcDailyEarned)} / ${fmt(cap)} / 残り ${fmt(remaining)}`;
   }
 
   simulateText(user, countRaw) {
     const count = clamp(parsePositiveInt(countRaw) || 1, 1, 200);
     const xp = count * 12;
-    const money = this.rewardAmount(count * 5);
+    const money = count * 5;
     user.activity.textMessages += count;
     user.activity.textXp += xp;
     user.wallet += money;
     user.lifetimeEarned += money;
-    this.observeSupplyDelta(money);
     return {
       ok: true,
       title: "Text活動をシミュレート",
-      lines: [`${count}メッセージ / Text XP +${xp} / +${fmt(money)}`, `Textランク: ${rankFor(TEXT_RANKS, user.activity.textXp).name}`]
+      lines: [`${count}メッセージ / 発言経験値 +${xp} / +${fmt(money)}`, `発言ランク: ${rankFor(TEXT_RANKS, user.activity.textXp).name}`]
     };
   }
 
@@ -2538,264 +2445,12 @@ class EconomyEngine {
     return this.state.users[id];
   }
 
-  moneySupply() {
-    return Object.values(this.state.users || {}).reduce((sum, rawUser) => {
-      const user = migrateUser(rawUser);
-      return sum + Math.max(0, user.wallet) + Math.max(0, this.holdingsValue(user)) + Math.max(0, this.kabuValue(user));
-    }, 0);
-  }
-
-  kabuValue(user) {
-    const units = user.kabu?.units || 0;
-    return units * (this.state.market.kabu?.price || 0);
-  }
-
-  applyKabuSpoilage(user) {
-    if (!user.kabu?.units || !user.kabu.boughtDay) return null;
-    const age = this.state.market.day - user.kabu.boughtDay;
-    if (age < KABU_CONFIG.shelfLifeDays) return null;
-
-    const lostValue = this.kabuValue(user);
-    const units = user.kabu.units;
-    user.kabu.units = 0;
-    user.kabu.avgCost = 0;
-    user.kabu.boughtDay = null;
-    user.lifetimeLost += lostValue;
-    this.log(user, "kabu_spoil", -lostValue, `${units} KABU`);
-    return `カブが腐りました。${units} カブ、評価 ${fmt(lostValue)} が台所の闇へ。`;
-  }
-
-  observeSupplyDelta(delta) {
-    const rounded = Math.floor(Math.abs(delta));
-    if (rounded <= 0) return;
-    const policy = this.state.policy;
-    if (delta > 0) {
-      policy.issued += rounded;
-      policy.cycleIssued += rounded;
-    } else {
-      policy.sunk += rounded;
-      policy.cycleSunk += rounded;
-    }
-  }
-
-  maybeRunPolicyCycle() {
-    const policy = this.state.policy;
-    if (this.state.commandCount - policy.lastPolicyCommand < POLICY_CONFIG.policyCycleCommands) return null;
-    return this.runPolicyCycle();
-  }
-
-  runPolicyCycle() {
-    const policy = this.state.policy;
-    const supply = this.moneySupply();
-    const joinedUsers = Math.max(1, Object.values(this.state.users).filter((user) => user.joined).length);
-    const cpiFactor = this.priceFactor();
-    const targetSupply = joinedUsers * 9000 * Math.pow(cpiFactor, 0.35);
-    const supplyPressure = clamp((supply - targetSupply) / Math.max(1, targetSupply), -0.6, 2.4);
-    const netFlowPressure = (policy.cycleIssued - policy.cycleSunk) / Math.max(1000, supply || 1);
-    const marketPressure = this.marketHeat();
-    const rawBps =
-      policy.targetInflationBps +
-      supplyPressure * 85 +
-      netFlowPressure * 5200 +
-      marketPressure * 20;
-    const inflationBps = Math.round(clamp(rawBps, POLICY_CONFIG.maxDeflationBps, POLICY_CONFIG.maxInflationBps));
-
-    policy.previousCpi = policy.cpi;
-    policy.inflationBps = inflationBps;
-    policy.cpi = Math.round(clamp(policy.cpi * (1 + inflationBps / 10000), 650, 6500));
-    policy.moneySupply = Math.floor(supply);
-    policy.stance = policyStance(inflationBps, supplyPressure);
-    policy.lastPolicyCommand = this.state.commandCount;
-    policy.history.push({
-      at: this.now().toISOString(),
-      command: this.state.commandCount,
-      cpi: policy.cpi,
-      inflationBps,
-      stance: policy.stance,
-      supply: Math.floor(supply),
-      issued: policy.cycleIssued,
-      sunk: policy.cycleSunk
-    });
-    policy.history = policy.history.slice(-24);
-    policy.cycleIssued = 0;
-    policy.cycleSunk = 0;
-
-    this.state.market.news.push(`Policy ${policy.history.length}: CPI ${this.cpiLabel()} / ${this.policyLabel()} / ${signedPercent(inflationBps)}.`);
-    this.state.market.news = this.state.market.news.slice(-25);
-    return policy;
-  }
-
-  marketHeat() {
-    const changes = Object.values(this.state.market.assets).map((asset) => {
-      if (!asset.previousPrice) return 0;
-      return (asset.price - asset.previousPrice) / asset.previousPrice;
-    });
-    if (changes.length === 0) return 0;
-    return changes.reduce((sum, value) => sum + value, 0) / changes.length;
-  }
-
-  maybeAdvanceMarket() {
-    const shouldAdvance = this.state.commandCount % 5 === 0 || this.rng() < 0.08;
-    if (!shouldAdvance) return;
-
-    this.state.market.day += 1;
-    let news = pick(this.rng, MARKET_NEWS);
-    const crash = this.rng() < 0.08;
-    const boom = !crash && this.rng() < 0.09;
-
-    if (crash) news = "市場が急落しました。理由は『なんか怖い』です。";
-    if (boom) news = "市場が急騰しました。理由は『なんかいけそう』です。";
-
-    for (const asset of Object.values(this.state.market.assets)) {
-      asset.previousPrice = asset.price;
-      let drift = randFloat(this.rng, -asset.volatility, asset.volatility);
-      if (crash) drift -= randFloat(this.rng, 0.08, 0.22);
-      if (boom) drift += randFloat(this.rng, 0.08, 0.22);
-      asset.price = Math.max(10, Math.floor(asset.price * (1 + drift)));
-    }
-
-    this.advanceKabuMarket(crash, boom);
-    this.state.market.news.push(`Day ${this.state.market.day}: ${news}`);
-    this.state.market.news = this.state.market.news.slice(-25);
-
-    if (crash) {
-      for (const user of Object.values(this.state.users).map(migrateUser)) {
-        if (user.inventory.helmet && this.holdingsValue(user) > 0) {
-          const rebate = randInt(this.rng, 40, 160);
-          user.wallet += rebate;
-          user.lifetimeEarned += rebate;
-        }
-      }
-    }
-  }
-
-  advanceKabuMarket(crash, boom) {
-    const kabu = this.state.market.kabu;
-    kabu.previousPrice = kabu.price;
-    kabu.trendAge += 1;
-
-    if (kabu.trendAge > 4 || this.rng() < 0.22) {
-      kabu.trend = pick(this.rng, ["flat", "wave", "spike", "bleed"]);
-      kabu.trendAge = 0;
-    }
-
-    let drift = randFloat(this.rng, -0.06, 0.06);
-    if (kabu.trend === "wave") drift = randFloat(this.rng, -0.14, 0.24);
-    if (kabu.trend === "spike") drift = randFloat(this.rng, 0.12, 0.48) - kabu.trendAge * 0.05;
-    if (kabu.trend === "bleed") drift = randFloat(this.rng, -0.28, -0.04);
-    if (boom) drift += randFloat(this.rng, 0.06, 0.18);
-    if (crash) drift -= randFloat(this.rng, 0.08, 0.24);
-
-    kabu.price = clamp(Math.floor(kabu.price * (1 + drift)), KABU_CONFIG.minPrice, KABU_CONFIG.maxPrice);
-    if (kabu.price > kabu.previousPrice * 1.25) {
-      kabu.news = "カブ価が跳ねました。今だけ全員ちょっと賢そうです。";
-    } else if (kabu.price < kabu.previousPrice * 0.82) {
-      kabu.news = "カブ価が沈みました。台所から変な匂いがします。";
-    } else {
-      kabu.news = "カブ屋は涼しい顔。胃だけが少し動いています。";
-    }
-  }
-
-  maybeTaxRaid(user) {
-    if (!user.joined || user.heat < 55) return null;
-    const chance = (user.heat - 45) / 180;
-    if (this.rng() > chance) return null;
-
-    const smoke = this.activeSinkEvent()?.id === "tax_smoke" ? 0.5 : 1;
-    const shield = (user.inventory.shredder ? 0.65 : 1) * smoke;
-    const fine = Math.min(user.wallet, this.costAmount(Math.floor((80 + user.heat * randInt(this.rng, 4, 10)) * shield)));
-    user.wallet -= fine;
-    user.lifetimeLost += fine;
-    user.heat = clamp(user.heat - randInt(this.rng, 18, 35), 0, 100);
-
-    return {
-      lines: [
-        "税務署イベント発生。",
-        `「ちょっとお話いいですか？」で ${fmt(fine)} 持っていかれました。ヘイトは ${user.heat}/100 に低下。`
-      ]
-    };
-  }
-
-  regenerateRpg(user) {
-    const now = this.now();
-    const last = user.rpg.lastRegenAt ? new Date(user.rpg.lastRegenAt) : now;
-    const ticks = Math.floor((now - last) / (10 * 60 * 1000));
-    if (ticks <= 0) return;
-    user.rpg.energy = clamp(user.rpg.energy + ticks, 0, user.rpg.maxEnergy);
-    user.rpg.hp = clamp(user.rpg.hp + Math.floor(ticks / 2), 0, user.rpg.maxHp);
-    user.rpg.lastRegenAt = new Date(last.getTime() + ticks * 10 * 60 * 1000).toISOString();
-  }
-
-  validateBet(user, amountRaw) {
-    const safety = this.casinoSafety(user);
-    if (safety.blocked) {
-      return { error: { ok: false, title: "カジノ休憩中", lines: [mascotLine(this.rng, "block"), safety.summary, "RPG、通話、カード育成に逃がしましょう。"] } };
-    }
-
-    const amount = parseAmount(amountRaw, user.wallet);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      return { error: { ok: false, title: "ベット額が変", lines: ["例: `slots 100`, `bj 250`, `coinflip 100 heads`"] } };
-    }
-    const minBet = this.minimumBet();
-    if (amount < minBet) {
-      return { error: { ok: false, title: "ベットが小さすぎ", lines: [`最低ベットは ${fmt(minBet)} です。`] } };
-    }
-    const maxBet = this.maximumBet(user);
-    if (amount > maxBet) {
-      return { error: { ok: false, title: "ベット上限", lines: [`今の上限は ${fmt(maxBet)} です。熱くなりすぎ防止。`] } };
-    }
-    const remainingLossBudget = Math.max(0, safety.dailyLossLimit - safety.dailyLoss);
-    if (amount > remainingLossBudget) {
-      return { error: { ok: false, title: "日次損失上限ガード", lines: [`今日の残り損失枠は ${fmt(remainingLossBudget)} です。ベットを下げるかRPGへ。`] } };
-    }
-    if (user.wallet < amount) {
-      return { error: { ok: false, title: "財布が薄い", lines: [`所持金は ${fmt(user.wallet)} です。`] } };
-    }
-    return { amount };
-  }
-
-  recordCasino(user, profit) {
-    this.resetCasinoDay(user);
-    user.casino.plays += 1;
-    user.casino.dailyPlays += 1;
-    user.casino.lastPlayAt = this.now().toISOString();
-    user.casino.profit += profit;
-    if (profit > 0) {
-      user.casino.wins += 1;
-      user.casino.streak = Math.max(1, user.casino.streak + 1);
-      user.lifetimeEarned += profit;
-    } else if (profit < 0) {
-      user.casino.losses += 1;
-      user.casino.streak = Math.min(-1, user.casino.streak - 1);
-      user.casino.dailyLoss += Math.abs(profit);
-      user.lifetimeLost += Math.abs(profit);
-      if (
-        Math.abs(user.casino.streak) >= SAFETY_CONFIG.casinoLossStreakLimit ||
-        user.casino.dailyLoss >= this.dailyLossLimit(user)
-      ) {
-        user.casino.lockedUntil = new Date(this.now().getTime() + SAFETY_CONFIG.casinoCooldownMs).toISOString();
-      }
-    }
-    user.xp += 2;
-  }
-
-  holdingsValue(user) {
-    return Object.entries(user.holdings).reduce((sum, [symbol, shares]) => {
-      const asset = this.state.market.assets[symbol];
-      return sum + (asset ? shares * asset.price : 0);
-    }, 0);
-  }
-
   netWorth(user) {
-    return user.wallet + this.holdingsValue(user) + this.kabuValue(user) - user.debt;
+    return user.wallet;
   }
 
   moneyLine(user) {
     return `財布 ${fmt(user.wallet)} / 純資産 ${fmt(Math.floor(this.netWorth(user)))}`;
-  }
-
-  rpgLine(user) {
-    return `HP ${user.rpg.hp}/${user.rpg.maxHp} / Energy ${user.rpg.energy}/${user.rpg.maxEnergy}`;
   }
 
   inventoryLine(user) {
@@ -2808,21 +2463,14 @@ class EconomyEngine {
     return Math.floor(Math.sqrt(user.xp / 40)) + 1;
   }
 
-  rpgLevel(user) {
-    return Math.floor(Math.sqrt(user.rpg.xp / 55)) + 1;
-  }
-
   updateTitle(user) {
     const net = this.netWorth(user);
-    if (user.debt > 20000) user.title = "未来を担保にした人";
-    else if (net >= 200000) user.title = "K-Credit 財閥";
+    if (net >= 200000) user.title = "アイリス財閥";
     else if (net >= 80000) user.title = "経済圏の中枢";
     else if (net >= 25000) user.title = "値動きの支配人";
     else if (user.activity.vcXp >= 2600) user.title = "深夜VC責任者";
     else if (user.activity.textXp >= 1500) user.title = "タイムライン統括";
-    else if (user.rpg.xp >= 1000) user.title = "領域守護者";
     else if (user.workCount >= 25) user.title = "労働市場そのもの";
-    else if (user.heat >= 80) user.title = "領収書に追われる者";
   }
 
   log(user, type, amount, note) {
@@ -2836,25 +2484,62 @@ class EconomyEngine {
     });
     this.state.ledger = this.state.ledger.slice(-200);
   }
+
+  distributeSalary(adminUser, { entries, perUser, roleLabel }) {
+    const amount = parsePositiveInt(perUser);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return { ok: false, title: "配布額が変です", lines: ["1人あたりの額は1以上の数字で入力してください。"] };
+    }
+    if (!Array.isArray(entries) || entries.length === 0) {
+      return { ok: false, title: "対象がいません", lines: ["ロール保持者が0人でした。"] };
+    }
+
+    const seen = new Set();
+    const paid = [];
+    for (const entry of entries) {
+      if (!entry?.id) continue;
+      const key = String(entry.id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const user = this.getUser(entry.id, entry.name || "名無し");
+      user.wallet += amount;
+      user.lifetimeEarned += amount;
+      this.log(user, "salary", amount, roleLabel || "給与配布");
+      paid.push({ id: user.id, name: user.name });
+    }
+
+    const total = amount * paid.length;
+    this.log(adminUser, "salary_admin", total, `${roleLabel || "給与配布"} / ${paid.length}人`);
+
+    return {
+      ok: true,
+      title: "給与配布完了",
+      lines: [
+        `対象: ${roleLabel || "選択したロール"}`,
+        `配布: ${paid.length}人 × ${fmt(amount)} = 合計 ${fmt(total)}`,
+        "中央台帳から発行しました。管理者の財布は減っていません。"
+      ],
+      paid,
+      amount,
+      total
+    };
+  }
 }
 
 function renderPlayerCardLines(data) {
   const width = data.style.width;
-  const header = `${CURRENCY.code} ${data.style.name} CARD`;
+  const header = `${CURRENCY.code} ${data.style.name}カード`;
   const common = [
     `${data.user.name}`,
     `${data.subtitle}`,
-    `NET ${fmt(data.net)} / WALLET ${fmt(data.wallet)} / DEBT ${fmt(data.debt)}`,
-    `CPI ${data.cpiLine}`
+    `純資産 ${fmt(data.net)} / 財布 ${fmt(data.wallet)}`
   ];
 
   if (data.style.layout === "compact") {
     return frameLines(width, header, [
       ...common,
-      `Economy ${data.econRank.name}`,
-      `Text ${data.textRank.name} / VC ${data.vcRank.name}`,
-      `RPG ${data.rpgRank.name} / ${data.rpgLine}`,
-      `Casino ${data.casinoLine}`
+      `経済 ${data.econRank.name}`,
+      `テキスト ${data.textRank.name} / VC ${data.vcRank.name}`
     ]);
   }
 
@@ -2862,11 +2547,9 @@ function renderPlayerCardLines(data) {
     return frameLines(width, header, [
       ...common,
       divider(width),
-      twoCol("Economy", `${data.econRank.name} ${progressText(data.econRank)}`, width),
-      twoCol("Text", `${data.textRank.name} ${progressText(data.textRank)}`, width),
-      twoCol("VC", `${data.vcRank.name} ${progressText(data.vcRank)}`, width),
-      twoCol("RPG", `${data.rpgRank.name} ${progressText(data.rpgRank)}`, width),
-      `Casino ${data.casinoLine}`
+      twoCol("経済", `${data.econRank.name} ${progressText(data.econRank)}`, width),
+      twoCol("テキスト", `${data.textRank.name} ${progressText(data.textRank)}`, width),
+      twoCol("VC", `${data.vcRank.name} ${progressText(data.vcRank)}`, width)
     ]);
   }
 
@@ -2874,94 +2557,115 @@ function renderPlayerCardLines(data) {
     return frameLines(width, header, [
       `${data.user.name} :: ${data.subtitle}`,
       divider(width),
-      twoCol("Net Worth", fmt(data.net), width),
-      twoCol("Wallet", fmt(data.wallet), width),
-      twoCol("Debt", fmt(data.debt), width),
-      twoCol("Tax Heat", `${bar(data.heat, 100)} ${data.heat}/100`, width),
+      twoCol("純資産", fmt(data.net), width),
+      twoCol("財布", fmt(data.wallet), width),
       divider(width),
-      `Economy ${data.econRank.name} ${progressText(data.econRank)}`,
-      `Text    ${data.textRank.name} ${progressText(data.textRank)}`,
-      `VC      ${data.vcRank.name} ${progressText(data.vcRank)}`,
-      `RPG     ${data.rpgRank.name} ${progressText(data.rpgRank)}`,
-      divider(width),
-      `Casino ${data.casinoLine}`,
-      `Policy ${data.cpiLine}`
+      `経済     ${data.econRank.name} ${progressText(data.econRank)}`,
+      `テキスト ${data.textRank.name} ${progressText(data.textRank)}`,
+      `VC       ${data.vcRank.name} ${progressText(data.vcRank)}`
     ]);
   }
 
   if (data.style.layout === "matrix") {
     return frameLines(width, header, [
       `${data.user.name} :: ${data.subtitle}`,
-      `Card Score ${data.score} / Style ${data.style.name}`,
+      `カード値 ${data.score} / 型 ${data.style.name}`,
       divider(width),
-      metricRow(["NET", fmt(data.net)], ["WALLET", fmt(data.wallet)], width),
-      metricRow(["DEBT", fmt(data.debt)], ["HEAT", `${data.heat}/100`], width),
+      metricRow(["純資産", fmt(data.net)], ["財布", fmt(data.wallet)], width),
       divider(width),
-      matrixRow("ECO", data.econRank, width),
-      matrixRow("TXT", data.textRank, width),
-      matrixRow("VOC", data.vcRank, width),
-      matrixRow("RPG", data.rpgRank, width),
-      divider(width),
-      `RPG ${data.rpgLine}`,
-      `Casino ${data.casinoLine}`,
-      `Policy ${data.cpiLine}`
+      matrixRow("経済", data.econRank, width),
+      matrixRow("文", data.textRank, width),
+      matrixRow("声", data.vcRank, width)
     ]);
   }
 
   return frameLines(width, header, [
     `${data.user.name} :: ${data.subtitle}`,
-    `${data.style.tagline} / Score ${data.score}`,
+    `${data.style.tagline} / 値 ${data.score}`,
     divider(width),
-    metricRow(["NET", fmt(data.net)], ["WALLET", fmt(data.wallet)], width),
-    metricRow(["DEBT", fmt(data.debt)], ["CPI", data.cpiLine], width),
-    metricRow(["RPG", data.rpgLine], ["CASINO", data.casinoLine], width),
+    metricRow(["純資産", fmt(data.net)], ["財布", fmt(data.wallet)], width),
     divider(width),
-    matrixRow("ECONOMY", data.econRank, width),
-    matrixRow("TEXT", data.textRank, width),
-    matrixRow("VOICE", data.vcRank, width),
-    matrixRow("RPG", data.rpgRank, width),
+    matrixRow("経済", data.econRank, width),
+    matrixRow("テキスト", data.textRank, width),
+    matrixRow("通話", data.vcRank, width),
     divider(width),
-    "BLACK layout unlock: the ledger is no longer asking politely."
+    "黒札解放: 台帳はもう遠慮してくれない。"
   ]);
 }
 
-function buildDiscordCard(data) {
+function buildDiscordProfileCard(data) {
+  const textProgress = progressText(data.textRank) || "(初期)";
+  const vcProgress = progressText(data.vcRank) || "(初期)";
+  const econProgress = progressText(data.econRank) || "(初期)";
   return {
     color: data.style.color,
-    title: data.title,
-    description: `${data.subtitle}\n${data.style.tagline}`,
+    title: data.user.name,
+    description: data.subtitle,
     fields: [
       {
-        name: "Ledger",
-        value: [`Net: ${fmt(data.net)}`, `Wallet: ${fmt(data.wallet)}`, `Debt: ${fmt(data.debt)}`, `CPI: ${data.cpiLine}`].join("\n"),
+        name: "WALLET",
+        value: [`財布 ${fmt(data.wallet)}`, `純資産 ${fmt(data.net)}`].join("\n"),
         inline: true
       },
       {
-        name: "Ranks",
-        value: [
-          `Economy: ${data.econRank.name}`,
-          `Text: ${data.textRank.name}`,
-          `VC: ${data.vcRank.name}`,
-          `RPG: ${data.rpgRank.name}`
-        ].join("\n"),
+        name: "TEXT",
+        value: [`${data.textRank.name}`, `経験値 ${data.user.activity.textXp}`, textProgress].join("\n"),
         inline: true
       },
       {
-        name: "Progress",
-        value: [
-          `Economy ${progressText(data.econRank) || "(base)"}`,
-          `Text ${progressText(data.textRank)}`,
-          `VC ${progressText(data.vcRank)}`,
-          `RPG ${progressText(data.rpgRank)}`
-        ].join("\n")
+        name: "VOICE",
+        value: [`${data.vcRank.name}`, `${data.user.activity.vcMinutes}分 / 経験値 ${data.user.activity.vcXp}`, vcProgress].join("\n"),
+        inline: true
       },
       {
-        name: "Activity",
-        value: [`RPG: ${data.rpgLine}`, `Casino: ${data.casinoLine}`, `Tax Heat: ${data.heat}/100`].join("\n")
+        name: "STATUS",
+        value: [`経済 ${data.econRank.name} ${econProgress}`].join("\n"),
+        inline: false
       }
     ],
-    footer: `Layout ${data.style.name} / Card Score ${data.score}`
+    footer: `型 ${data.style.name} / CARD ${data.score}`
   };
+}
+
+function buildProfileImageData(data) {
+  return {
+    name: data.user.name,
+    title: data.subtitle,
+    styleName: data.style.name,
+    styleTagline: data.style.tagline,
+    premiumFrame: Boolean(data.user.inventory.frame),
+    color: data.style.color,
+    score: data.score,
+    wallet: data.wallet,
+    net: data.net,
+    text: {
+      name: data.textRank.name,
+      level: data.textLevel,
+      xp: data.user.activity.textXp,
+      messages: data.user.activity.textMessages,
+      progress: rankProgressPercent(data.textRank)
+    },
+    voice: {
+      name: data.vcRank.name,
+      level: data.vcLevel,
+      salaryPerMinute: data.vcSalaryPerMinute,
+      xp: data.user.activity.vcXp,
+      minutes: data.user.activity.vcMinutes,
+      progress: rankProgressPercent(data.vcRank)
+    },
+    economy: {
+      name: data.econRank.name,
+      progress: rankProgressPercent(data.econRank)
+    }
+  };
+}
+
+function rankProgressPercent(rank) {
+  if (!Number.isFinite(rank.currentMin)) return 0;
+  if (!rank.nextMin) return 100;
+  const span = rank.nextMin - rank.currentMin;
+  const current = rank.value - rank.currentMin;
+  return clamp(Math.floor((current / span) * 100), 0, 100);
 }
 
 function frameLines(width, title, body) {
@@ -3004,7 +2708,7 @@ function metricRow(left, right, width) {
 function matrixRow(label, rank, width) {
   const inner = width - 4;
   const text = `${label} ${rank.name}`;
-  const progress = progressText(rank) || "(base)";
+  const progress = progressText(rank) || "(初期)";
   return `${fit(text, 22)} ${fit(progress, inner - 23)}`;
 }
 
@@ -3014,8 +2718,6 @@ function createUser(id, name) {
     name: name || "名無しの資本家",
     joined: false,
     wallet: 0,
-    debt: 0,
-    heat: 0,
     streak: 0,
     title: "未上場の一般人",
     xp: 0,
@@ -3023,12 +2725,6 @@ function createUser(id, name) {
     lifetimeEarned: 0,
     lifetimeLost: 0,
     inventory: {},
-    holdings: {},
-    kabu: {
-      units: 0,
-      avgCost: 0,
-      boughtDay: null
-    },
     invites: {
       qualified: 0,
       pending: 0,
@@ -3058,31 +2754,16 @@ function createUser(id, name) {
       voiceLastClaimAt: null,
       voiceChannelId: null
     },
-    rpg: {
-      xp: 0,
-      hp: 30,
-      maxHp: 30,
-      energy: 10,
-      maxEnergy: 10,
-      attack: 5,
-      defense: 4,
-      focus: 4,
-      luck: 2,
-      wins: 0,
-      losses: 0,
-      lastRegenAt: new Date().toISOString()
-    },
-    casino: {
-      plays: 0,
-      wins: 0,
-      losses: 0,
-      streak: 0,
-      profit: 0,
-      day: dayKey(new Date()),
-      dailyLoss: 0,
-      dailyPlays: 0,
-      lockedUntil: null,
-      lastPlayAt: null
+    marketplace: {
+      shopOpened: false,
+      shopName: "",
+      shopDescription: "",
+      sales: 0,
+      inventory: [],
+      listingDraft: {
+        type: "item",
+        mode: "permanent"
+      }
     },
     lastDaily: null,
     lastWork: null,
@@ -3094,23 +2775,29 @@ function migrateState(state) {
   const base = createInitialState();
   const next = { ...base, ...state };
   next.currency = CURRENCY;
-  next.market = next.market || base.market;
-  next.market.assets = next.market.assets || base.market.assets;
-  next.market.kabu = { ...base.market.kabu, ...(next.market.kabu || {}) };
-  for (const [symbol, asset] of Object.entries(base.market.assets)) {
-    next.market.assets[symbol] = { ...asset, ...(next.market.assets[symbol] || {}) };
-  }
-  next.market.news = Array.isArray(next.market.news) ? next.market.news : base.market.news;
-  next.policy = { ...base.policy, ...(next.policy || {}) };
-  next.policy.history = Array.isArray(next.policy.history) ? next.policy.history : [];
-  next.sink = { ...base.sink, ...(next.sink || {}) };
-  next.sink.history = Array.isArray(next.sink.history) ? next.sink.history : [];
-  next.house = { ...base.house, ...(next.house || {}) };
+  next.marketplace = { ...base.marketplace, ...(next.marketplace || {}) };
+  next.marketplace.shops = { ...base.marketplace.shops, ...(next.marketplace.shops || {}) };
+  next.marketplace.listings = Array.isArray(next.marketplace.listings) ? next.marketplace.listings : [];
+  next.marketplace.orders = Array.isArray(next.marketplace.orders) ? next.marketplace.orders : [];
+  next.marketplace.auctions = Array.isArray(next.marketplace.auctions) ? next.marketplace.auctions : [];
+  next.marketplace.logs = Array.isArray(next.marketplace.logs) ? next.marketplace.logs : [];
+  next.marketplace.settings = { ...base.marketplace.settings, ...(next.marketplace.settings || {}) };
+  next.marketplace.nextListingId = Math.max(1, Number(next.marketplace.nextListingId) || 1);
+  next.marketplace.nextOrderId = Math.max(1, Number(next.marketplace.nextOrderId) || 1);
+  next.marketplace.nextAuctionId = Math.max(1, Number(next.marketplace.nextAuctionId) || 1);
   next.invites = { ...base.invites, ...(next.invites || {}) };
   next.invites.recent = Array.isArray(next.invites.recent) ? next.invites.recent : [];
+  next.inn = { ...base.inn, ...(next.inn || {}) };
+  next.inn.rooms = Array.isArray(next.inn.rooms) ? next.inn.rooms : [];
+  next.inn.history = Array.isArray(next.inn.history) ? next.inn.history : [];
+  next.inn.nextId = Math.max(1, Number(next.inn.nextId) || 1);
   next.ledger = Array.isArray(next.ledger) ? next.ledger : [];
   next.users = Object.fromEntries(Object.entries(next.users || {}).map(([id, user]) => [id, migrateUser(user)]));
-  next.version = 3;
+  delete next.market;
+  delete next.policy;
+  delete next.sink;
+  delete next.house;
+  next.version = 4;
   return next;
 }
 
@@ -3120,14 +2807,23 @@ function migrateUser(user) {
     ...fresh,
     ...user,
     inventory: { ...fresh.inventory, ...(user.inventory || {}) },
-    holdings: { ...fresh.holdings, ...(user.holdings || {}) },
-    kabu: { ...fresh.kabu, ...(user.kabu || {}) },
     invites: { ...fresh.invites, ...(user.invites || {}) },
     invite: { ...fresh.invite, ...(user.invite || {}) },
     activity: { ...fresh.activity, ...(user.activity || {}) },
-    rpg: { ...fresh.rpg, ...(user.rpg || {}) },
-    casino: { ...fresh.casino, ...(user.casino || {}) }
+    marketplace: {
+      ...fresh.marketplace,
+      ...(user.marketplace || {}),
+      listingDraft: { ...fresh.marketplace.listingDraft, ...((user.marketplace || {}).listingDraft || {}) },
+      inventory: Array.isArray((user.marketplace || {}).inventory) ? user.marketplace.inventory : []
+    }
   };
+  delete merged.debt;
+  delete merged.heat;
+  delete merged.holdings;
+  delete merged.kabu;
+  delete merged.rpg;
+  delete merged.casino;
+  delete merged.inn;
   return merged;
 }
 
@@ -3136,25 +2832,6 @@ function parseInput(input) {
   if (!trimmed) return { command: "help", args: [] };
   const parts = trimmed.split(/\s+/);
   return { command: parts[0].toLowerCase(), args: parts.slice(1) };
-}
-
-function normalizeSymbol(value) {
-  return String(value || "").trim().toUpperCase();
-}
-
-function parseAmount(raw, max) {
-  if (!raw) return NaN;
-  const value = String(raw).toLowerCase();
-  if (["all", "max", "全部"].includes(value)) return Math.floor(max);
-  return parsePositiveInt(value);
-}
-
-function parseShares(raw, max) {
-  if (!raw) return NaN;
-  const value = String(raw).toLowerCase();
-  if (["all", "max", "全部"].includes(value)) return max;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : NaN;
 }
 
 function parsePositiveInt(value) {
@@ -3182,20 +2859,12 @@ function randInt(rng, min, max) {
   return Math.floor(rng() * (max - min + 1)) + min;
 }
 
-function randFloat(rng, min, max) {
-  return rng() * (max - min) + min;
-}
-
 function pick(rng, items) {
   return items[Math.floor(rng() * items.length)];
 }
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
-}
-
-function roundShares(value) {
-  return Math.round(value * 1000000) / 1000000;
 }
 
 function fmt(amount) {
@@ -3212,6 +2881,10 @@ function bar(value, max) {
 
 function rankFor(ranks, value) {
   return ranks.reduce((best, rank) => (value >= rank.min ? rank : best), ranks[0]);
+}
+
+function activityLevel(xp) {
+  return Math.max(1, Math.floor(Math.sqrt(Math.max(0, Number(xp) || 0) / VOICE_REWARD_CONFIG.levelXpBase)) + 1);
 }
 
 function rankIndex(ranks, value) {
@@ -3258,6 +2931,10 @@ function panelButton(label, panel, style = "secondary", disabled = false) {
   return { kind: "panel", label, panel, style, disabled };
 }
 
+function customButton(label, customId, style = "secondary", disabled = false) {
+  return { kind: "custom", label, customId, style, disabled };
+}
+
 function select(placeholder, options, disabled = false) {
   return { type: "select", placeholder, options, disabled };
 }
@@ -3266,129 +2943,46 @@ function option(label, value, description) {
   return { label, value, description };
 }
 
-function mascotLine(rng, mood) {
-  const lines = CASINO_MASCOT[mood] || CASINO_MASCOT.lose;
-  return pick(rng, lines);
+function productTypeLabel(type) {
+  return MARKET_PRODUCT_TYPES[type] || "アイテム";
 }
 
-function signedPercent(bps) {
-  const sign = bps >= 0 ? "+" : "";
-  return `${sign}${(bps / 100).toFixed(2)}%`;
+function saleModeLabel(mode) {
+  return MARKET_SALE_MODES[mode] || "買い切り";
 }
 
-function policyStance(inflationBps, supplyPressure) {
-  if (inflationBps >= 170 || supplyPressure >= 1.4) return "emergency";
-  if (inflationBps >= 90) return "tightening";
-  if (inflationBps >= 35) return "watch";
-  if (inflationBps <= -20) return "stimulus";
-  return "neutral";
+function listingStatusLabel(status) {
+  if (status === "active") return "公開中";
+  if (status === "pending") return "審査待ち";
+  if (status === "soldout") return "売り切れ";
+  if (status === "stopped") return "停止";
+  if (status === "rejected") return "却下";
+  return "不明";
+}
+
+function marketItemTypeLabel(id) {
+  return SHOP_ITEMS[id]?.type || "アイテム";
+}
+
+function cleanMarketText(value, max) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+function shortDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "未設定";
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${month}/${day} ${hour}:${minute}`;
 }
 
 function dayKey(date) {
   return date.toISOString().slice(0, 10);
-}
-
-function crashTrack(target, crashAt) {
-  const points = [1, 1.25, 1.5, 2, 3, 4, 5].filter((point) => point <= Math.max(target, crashAt));
-  const trail = points.map((point) => {
-    if (point > crashAt) return "XX";
-    if (Math.abs(point - target) < 0.01 || (point >= target && target <= crashAt)) return `[x${point.toFixed(2)}]`;
-    return `x${point.toFixed(2)}`;
-  });
-  return trail.join(" -> ");
-}
-
-function normalizeRouletteChoice(choice) {
-  if (choice === "赤") return "red";
-  if (choice === "黒") return "black";
-  if (choice === "奇数") return "odd";
-  if (choice === "偶数") return "even";
-  if (choice === "0") return "zero";
-  return choice;
-}
-
-function forcedRouletteNumber(rng, choice, shouldHit) {
-  const all = Array.from({ length: 37 }, (_, index) => index);
-  const hits = all.filter((number) => {
-    const color = rouletteColor(number);
-    return (
-      (choice === "red" && color === "red") ||
-      (choice === "black" && color === "black") ||
-      (choice === "odd" && number !== 0 && number % 2 === 1) ||
-      (choice === "even" && number !== 0 && number % 2 === 0) ||
-      (choice === "zero" && number === 0)
-    );
-  });
-  const misses = all.filter((number) => !hits.includes(number));
-  return pick(rng, shouldHit ? hits : misses);
-}
-
-function rouletteColor(number) {
-  if (number === 0) return "zero";
-  const red = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
-  return red.has(number) ? "red" : "black";
-}
-
-function rouletteLabel(value) {
-  if (value === "red") return "赤";
-  if (value === "black") return "黒";
-  if (value === "odd") return "奇数";
-  if (value === "even") return "偶数";
-  if (value === "zero") return "ゼロ";
-  return String(value);
-}
-
-function normalizeHouseKey(key) {
-  const normalized = String(key || "").toLowerCase();
-  if (["kugi", "釘"].includes(normalized)) return "kugi";
-  if (["return", "returnrate", "rtp", "還元"].includes(normalized)) return "returnRate";
-  if (["volatility", "wave", "荒さ", "波"].includes(normalized)) return "volatility";
-  if (["jackpot", "bonus", "大当たり"].includes(normalized)) return "jackpot";
-  return null;
-}
-
-function kabuChangeLabel(kabu) {
-  const diff = kabu.price - kabu.previousPrice;
-  const sign = diff >= 0 ? "+" : "";
-  const pct = kabu.previousPrice > 0 ? (diff / kabu.previousPrice) * 100 : 0;
-  return `${sign}${diff} KC / ${sign}${pct.toFixed(1)}%`;
-}
-
-function createDeck(rng) {
-  const values = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
-  const deck = [];
-  for (let i = 0; i < 4; i += 1) {
-    for (const value of values) deck.push(value);
-  }
-  for (let i = deck.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(rng() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-  return deck;
-}
-
-function handScore(hand) {
-  let score = 0;
-  let aces = 0;
-  for (const card of hand) {
-    if (card === "A") {
-      score += 11;
-      aces += 1;
-    } else if (["J", "Q", "K"].includes(card)) {
-      score += 10;
-    } else {
-      score += Number(card);
-    }
-  }
-  while (score > 21 && aces > 0) {
-    score -= 10;
-    aces -= 1;
-  }
-  return score;
-}
-
-function formatHand(hand) {
-  return hand.join(" ");
 }
 
 function formatResult(result) {
@@ -3397,10 +2991,8 @@ function formatResult(result) {
 }
 
 module.exports = {
-  ASSETS,
   CURRENCY,
   ECONOMY_RANKS,
-  RPG_RANKS,
   SHOP_ITEMS,
   TEXT_RANKS,
   VC_RANKS,

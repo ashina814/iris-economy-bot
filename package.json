@@ -2,7 +2,7 @@
   "name": "iris-economy-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "A chaotic Japanese Discord economy bot for the Iris server, with panels, VC rewards, casino, stocks, invites, and sinks.",
+  "description": "アイリス向けの独自通貨Ris、通話報酬、二人宿、マーケット、民営ショップ、市場、招待、シンクを持つDiscord経済圏ボット。",
   "main": "src/discord.js",
   "scripts": {
     "start": "node src/discord.js",
@@ -11,6 +11,7 @@
     "smoke": "node src/smoke-test.js"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.80",
     "discord.js": "^14.16.0"
   },
   "engines": {
