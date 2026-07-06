@@ -491,14 +491,20 @@ class EconomyEngine {
         fields: [
           { name: "マーケット", value: "公式商品、民営ショップ、公式オークションを扱います。", inline: true },
           { name: "給与配布", value: "ロールを選んで、保持者全員に一律で Ris を配布します。", inline: true },
+          { name: "ランク", value: "昇格通知先の指定、ランク確認パネルの設置ができます。", inline: true },
           { name: "パネル送信", value: "管理パネルのボタンで、このチャンネルへ常設マーケットを送信します。", inline: false }
         ],
         components: [
           buttons([
             panelButton("マーケット管理", "market-admin", "primary"),
             customButton("給与配布", "eco:admin:salary-start", "success"),
-            customButton("常設パネル送信", "eco:market:post-panel"),
+            customButton("常設マーケット送信", "eco:market:post-panel"),
             panelButton("ホーム", "home")
+          ]),
+          buttons([
+            customButton("ランク確認パネル設置", "eco:admin:rank-panel-post", "primary"),
+            customButton("昇格通知先をここに", "eco:admin:rank-notify-set", "success"),
+            customButton("昇格通知先をクリア", "eco:admin:rank-notify-clear")
           ]),
           select("公開したいパネル", [
             option("ホーム", "panel:home", "入口"),

@@ -214,6 +214,18 @@ async function handleInteraction(interaction) {
       await showSalaryRolePicker(interaction);
       return;
     }
+    if (command === "rank-panel-post") {
+      await postRankPanelFromButton(interaction);
+      return;
+    }
+    if (command === "rank-notify-set") {
+      await setRankNotifyChannel(interaction, interaction.channel);
+      return;
+    }
+    if (command === "rank-notify-clear") {
+      await clearRankNotifyChannel(interaction);
+      return;
+    }
     if (command.startsWith("salary-execute ")) {
       await executeSalaryDistribution(interaction, command.split(/\s+/)[1]);
       return;
@@ -987,6 +999,55 @@ async function placeMarketAuctionBidFromModal(interaction) {
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 
+async function postRankPanelFromButton(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (!interaction.channel?.isTextBased?.()) {
+    await interaction.reply({ content: "テキストチャンネルで使ってください。", ephemeral: true });
+    return;
+  }
+  await postRankPanel(interaction.channel);
+  await interaction.reply({
+    content: `${interaction.channel} にランク確認パネルを設置しました。ここに発言があるたび自動でパネルが下へ戻ります。`,
+    ephemeral: true
+  });
+}
+
+async function setRankNotifyChannel(interaction, channel) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (!channel?.isTextBased?.()) {
+    await interaction.reply({ content: "テキストチャンネルで使ってください。", ephemeral: true });
+    return;
+  }
+  panelState.rankNotifyChannelId = channel.id;
+  panelStore.save(panelState);
+  await interaction.reply({
+    content: `発言/通話ランクの昇格通知先を ${channel} に設定しました。以降、この鯖の昇格通知はここに投稿されます。`,
+    ephemeral: true
+  });
+}
+
+async function clearRankNotifyChannel(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  panelState.rankNotifyChannelId = null;
+  panelStore.save(panelState);
+  const fallback = rankChannelId
+    ? `<#${rankChannelId}>`
+    : "（未設定なので通知はスキップされます）";
+  await interaction.reply({
+    content: `昇格通知先のカスタム設定を解除しました。以後は環境変数の設定先を使います: ${fallback}`,
+    ephemeral: true
+  });
+}
+
 async function handleReviewButton(interaction) {
   if (!isAdmin(interaction)) {
     await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
@@ -1337,16 +1398,17 @@ async function postRankPanel(channel) {
 function buildRankPanelPayload() {
   const embed = new EmbedBuilder()
     .setTitle("ランク確認")
-    .setDescription("自分のカード、TCランキング、VCランキングを確認できます。")
+    .setDescription("発言・通話の経験値とランクを確認できます。ボタンから自分のランクと、サーバー内順位を見られます。")
     .setColor(0x7c3aed)
     .addFields(
-      { name: "TC", value: "発言経験値 / TCレベル / 発言ランク", inline: true },
-      { name: "VC", value: "通話経験値 / VCレベル / 通話給与", inline: true }
+      { name: "発言ランク", value: "サーバー内での発言量に応じて経験値・レベル・ランクが上がります。", inline: true },
+      { name: "通話ランク", value: "VCの滞在時間で経験値・レベル・ランクが上がり、分給も上がります。", inline: true },
+      { name: "使い方", value: "「自分のランク」で自身のカードを確認、「発言ランキング」「通話ランキング」でトップ10を確認できます。", inline: false }
     );
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("eco:rank:me").setLabel("自分のランク").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("eco:rank:tc").setLabel("TCランキング").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("eco:rank:vc").setLabel("VCランキング").setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("eco:rank:tc").setLabel("発言ランキング").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("eco:rank:vc").setLabel("通話ランキング").setStyle(ButtonStyle.Secondary)
   );
   return { embeds: [embed], components: [row] };
 }
@@ -2318,6 +2380,9 @@ function commandFromComponent(interaction) {
     if (parts[1] === "admin" && parts[2] === "salary-start") return "salary-start";
     if (parts[1] === "admin" && parts[2] === "salary-execute") return `salary-execute ${parts[3]}`;
     if (parts[1] === "admin" && parts[2] === "salary-cancel") return `salary-cancel ${parts[3]}`;
+    if (parts[1] === "admin" && parts[2] === "rank-panel-post") return "rank-panel-post";
+    if (parts[1] === "admin" && parts[2] === "rank-notify-set") return "rank-notify-set";
+    if (parts[1] === "admin" && parts[2] === "rank-notify-clear") return "rank-notify-clear";
     return null;
   }
 
