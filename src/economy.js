@@ -439,6 +439,8 @@ class EconomyEngine {
       "market-review": () => this.marketReviewPanel(),
       "market-trades": () => this.marketTradesPanel(),
       "market-logs": () => this.marketLogsPanel(),
+      "admin-balance": () => this.adminBalancePanel(user),
+      "admin-rank": () => this.adminRankPanel(user),
       lounge: () => ({
         title: "通話ラウンジ",
         description: "VC滞在時間と通常チャットの活動状況を確認できます。",
@@ -486,25 +488,21 @@ class EconomyEngine {
       }),
       admin: () => ({
         title: "運営パネル",
-        description: "運営用の確認とパネル送信を行います。",
+        description: "運営機能を目的別のサブパネルに分けています。",
         color: 0x334155,
         fields: [
-          { name: "マーケット", value: "公式商品、民営ショップ、公式オークションを扱います。", inline: true },
-          { name: "給与配布", value: "ロールを選んで、保持者全員に一律で Ris を配布します。", inline: true },
-          { name: "ランク", value: "昇格通知先の指定、ランク確認パネルの設置ができます。", inline: true },
-          { name: "パネル送信", value: "管理パネルのボタンで、このチャンネルへ常設マーケットを送信します。", inline: false }
+          { name: "マーケット管理", value: "公式商品、審査、取引対応、公式オークション", inline: true },
+          { name: "残高操作", value: "個人セット/加算/減算、ロール一括セット、給与配布（一括加算）", inline: true },
+          { name: "ランク設定", value: "昇格通知先の指定、ランク確認パネルの設置", inline: true },
+          { name: "パネル送信", value: "住民向けの常設パネルをこのチャンネルへ送信できます。", inline: false }
         ],
         components: [
           buttons([
             panelButton("マーケット管理", "market-admin", "primary"),
-            customButton("給与配布", "eco:admin:salary-start", "success"),
+            panelButton("残高操作", "admin-balance", "success"),
+            panelButton("ランク設定", "admin-rank"),
             customButton("常設マーケット送信", "eco:market:post-panel"),
             panelButton("ホーム", "home")
-          ]),
-          buttons([
-            customButton("ランク確認パネル設置", "eco:admin:rank-panel-post", "primary"),
-            customButton("昇格通知先をここに", "eco:admin:rank-notify-set", "success"),
-            customButton("昇格通知先をクリア", "eco:admin:rank-notify-clear")
           ]),
           select("公開したいパネル", [
             option("ホーム", "panel:home", "入口"),
@@ -1504,6 +1502,51 @@ class EconomyEngine {
     };
   }
 
+  adminBalancePanel(user) {
+    return {
+      title: "残高操作",
+      description: "個人の残高を直接操作する、ロール保持者の残高を揃える、ロール保持者に一律配布する、の3系統です。中央台帳との入出金として記録されます。",
+      color: 0x0891b2,
+      fields: [
+        { name: "個人操作", value: "1人の残高を セット / 加算 / 減算 します。", inline: true },
+        { name: "ロール一括セット", value: "ロール保持者全員の残高を同じ額に揃えます。", inline: true },
+        { name: "給与配布", value: "ロール保持者全員に同じ額を追加で配布します。", inline: true }
+      ],
+      components: [
+        buttons([
+          customButton("個人セット", "eco:admin:balance-user-set", "primary"),
+          customButton("個人加算", "eco:admin:balance-user-add", "success"),
+          customButton("個人減算", "eco:admin:balance-user-sub", "danger")
+        ]),
+        buttons([
+          customButton("ロール一括セット", "eco:admin:balance-role-set", "primary"),
+          customButton("給与配布（ロール一括加算）", "eco:admin:salary-start", "success"),
+          panelButton("運営パネル", "admin")
+        ])
+      ]
+    };
+  }
+
+  adminRankPanel(user) {
+    return {
+      title: "ランク設定",
+      description: "発言/通話ランクの昇格通知先と、住民向けランク確認パネルを管理します。",
+      color: 0x7c3aed,
+      fields: [
+        { name: "ランク確認パネル", value: "住民が自分のランクと順位を見るための常設パネル。テキストチャンネルに1枚置くだけ。", inline: false },
+        { name: "昇格通知先", value: "発言/通話ランクが上がった時にお祝いメッセージを投稿するチャンネル。未設定なら環境変数を使います。", inline: false }
+      ],
+      components: [
+        buttons([
+          customButton("ランク確認パネル設置", "eco:admin:rank-panel-post", "primary"),
+          customButton("昇格通知先をここに", "eco:admin:rank-notify-set", "success"),
+          customButton("昇格通知先をクリア", "eco:admin:rank-notify-clear"),
+          panelButton("運営パネル", "admin")
+        ])
+      ]
+    };
+  }
+
   marketLogsPanel() {
     return {
       title: "ログ確認",
@@ -2491,6 +2534,181 @@ class EconomyEngine {
     this.state.ledger = this.state.ledger.slice(-200);
   }
 
+  setWallet(adminUser, targetActor, amountRaw, note = "") {
+    const amount = parseNonNegativeInt(amountRaw);
+    if (!Number.isFinite(amount)) {
+      return { ok: false, title: "額が変です", lines: ["セット額は0以上の整数で入力してください。"] };
+    }
+    if (!targetActor?.id) return { ok: false, title: "対象がいません", lines: ["対象ユーザーを指定してください。"] };
+    const target = this.getUser(targetActor.id, targetActor.name);
+    const before = target.wallet;
+    const delta = amount - before;
+    target.wallet = amount;
+    if (delta > 0) target.lifetimeEarned += delta;
+    else if (delta < 0) target.lifetimeLost += -delta;
+    this.log(target, "admin_set", delta, note || `${before} → ${amount}`);
+    this.log(adminUser, "admin_action", delta, `${target.name} のセット (${before} → ${amount})${note ? " / " + note : ""}`);
+    return {
+      ok: true,
+      title: "残高をセットしました",
+      lines: [
+        `対象: ${target.name}`,
+        `前: ${fmt(before)}`,
+        `後: ${fmt(amount)}`,
+        `差分: ${delta >= 0 ? "+" : ""}${fmt(delta)}（${delta >= 0 ? "中央発行" : "中央回収"}）`
+      ],
+      delta,
+      before,
+      after: amount,
+      target: { id: target.id, name: target.name }
+    };
+  }
+
+  addWallet(adminUser, targetActor, amountRaw, note = "") {
+    const amount = parsePositiveInt(amountRaw);
+    if (!Number.isFinite(amount)) {
+      return { ok: false, title: "額が変です", lines: ["加算額は1以上の整数で入力してください。"] };
+    }
+    if (!targetActor?.id) return { ok: false, title: "対象がいません", lines: ["対象ユーザーを指定してください。"] };
+    const target = this.getUser(targetActor.id, targetActor.name);
+    const before = target.wallet;
+    target.wallet += amount;
+    target.lifetimeEarned += amount;
+    this.log(target, "admin_add", amount, note || `+${amount}`);
+    this.log(adminUser, "admin_action", amount, `${target.name} へ +${amount}${note ? " / " + note : ""}`);
+    return {
+      ok: true,
+      title: "残高を加算しました",
+      lines: [
+        `対象: ${target.name}`,
+        `前: ${fmt(before)}`,
+        `後: ${fmt(target.wallet)}`,
+        `加算: +${fmt(amount)}（中央発行）`
+      ],
+      delta: amount,
+      before,
+      after: target.wallet,
+      target: { id: target.id, name: target.name }
+    };
+  }
+
+  subtractWallet(adminUser, targetActor, amountRaw, note = "") {
+    const amount = parsePositiveInt(amountRaw);
+    if (!Number.isFinite(amount)) {
+      return { ok: false, title: "額が変です", lines: ["減算額は1以上の整数で入力してください。"] };
+    }
+    if (!targetActor?.id) return { ok: false, title: "対象がいません", lines: ["対象ユーザーを指定してください。"] };
+    const target = this.getUser(targetActor.id, targetActor.name);
+    const before = target.wallet;
+    const actual = Math.min(amount, Math.max(0, before));
+    target.wallet -= actual;
+    target.lifetimeLost += actual;
+    this.log(target, "admin_sub", -actual, note || `-${actual}`);
+    this.log(adminUser, "admin_action", -actual, `${target.name} から -${actual}${note ? " / " + note : ""}`);
+    return {
+      ok: true,
+      title: "残高を減算しました",
+      lines: [
+        `対象: ${target.name}`,
+        `前: ${fmt(before)}`,
+        `後: ${fmt(target.wallet)}`,
+        `減算: -${fmt(actual)}${actual < amount ? "（残高不足のため上限まで）" : "（中央回収）"}`
+      ],
+      delta: -actual,
+      before,
+      after: target.wallet,
+      target: { id: target.id, name: target.name }
+    };
+  }
+
+  setWalletByRoleMembers(adminUser, { entries, amount: amountRaw, roleLabel }) {
+    const amount = parseNonNegativeInt(amountRaw);
+    if (!Number.isFinite(amount)) {
+      return { ok: false, title: "額が変です", lines: ["セット額は0以上の整数で入力してください。"] };
+    }
+    if (!Array.isArray(entries) || entries.length === 0) {
+      return { ok: false, title: "対象がいません", lines: ["ロール保持者が0人でした。"] };
+    }
+    const seen = new Set();
+    const applied = [];
+    let totalIssued = 0;
+    let totalReclaimed = 0;
+    for (const entry of entries) {
+      if (!entry?.id) continue;
+      const key = String(entry.id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const user = this.getUser(entry.id, entry.name || "名無し");
+      const before = user.wallet;
+      const delta = amount - before;
+      user.wallet = amount;
+      if (delta > 0) {
+        user.lifetimeEarned += delta;
+        totalIssued += delta;
+      } else if (delta < 0) {
+        user.lifetimeLost += -delta;
+        totalReclaimed += -delta;
+      }
+      this.log(user, "admin_role_set", delta, roleLabel || "ロール一括セット");
+      applied.push({ id: user.id, name: user.name, before, after: amount, delta });
+    }
+    this.log(adminUser, "admin_action", totalIssued - totalReclaimed, `${roleLabel || "ロール一括セット"} / ${applied.length}人 → ${amount}`);
+    return {
+      ok: true,
+      title: "ロール一括セット完了",
+      lines: [
+        `対象: ${roleLabel || "選択したロール"}`,
+        `${applied.length}人を ${fmt(amount)} に揃えました。`,
+        `発行合計: ${fmt(totalIssued)} / 回収合計: ${fmt(totalReclaimed)}`,
+        `純増減: ${fmt(totalIssued - totalReclaimed)}`
+      ],
+      applied,
+      amount,
+      totalIssued,
+      totalReclaimed
+    };
+  }
+
+  transferFunds(senderActor, recipientActor, amountRaw) {
+    const amount = parsePositiveInt(amountRaw);
+    if (!Number.isFinite(amount)) {
+      return { ok: false, title: "額が変です", lines: ["送金額は1以上の整数で入力してください。"] };
+    }
+    if (!senderActor?.id || !recipientActor?.id) {
+      return { ok: false, title: "対象が不足", lines: ["送信者と受取人が必要です。"] };
+    }
+    if (String(senderActor.id) === String(recipientActor.id)) {
+      return { ok: false, title: "自分には送れません", lines: ["自分の財布から自分の財布に送金はできません。"] };
+    }
+    const sender = this.getUser(senderActor.id, senderActor.name);
+    if (sender.wallet < amount) {
+      return {
+        ok: false,
+        title: "残高が足りません",
+        lines: [`必要: ${fmt(amount)}`, `現在: ${fmt(sender.wallet)}`, `不足: ${fmt(amount - sender.wallet)}`]
+      };
+    }
+    const recipient = this.getUser(recipientActor.id, recipientActor.name);
+    sender.wallet -= amount;
+    sender.lifetimeLost += amount;
+    recipient.wallet += amount;
+    recipient.lifetimeEarned += amount;
+    this.log(sender, "transfer_out", -amount, `→ ${recipient.name}`);
+    this.log(recipient, "transfer_in", amount, `← ${sender.name}`);
+    return {
+      ok: true,
+      title: "送金完了",
+      lines: [
+        `${sender.name} → ${recipient.name}`,
+        `送金額: ${fmt(amount)}`,
+        `残高: ${fmt(sender.wallet)}`
+      ],
+      sender: { id: sender.id, name: sender.name, wallet: sender.wallet },
+      recipient: { id: recipient.id, name: recipient.name, wallet: recipient.wallet },
+      amount
+    };
+  }
+
   distributeSalary(adminUser, { entries, perUser, roleLabel }) {
     const amount = parsePositiveInt(perUser);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -2843,6 +3061,11 @@ function parseInput(input) {
 function parsePositiveInt(value) {
   const parsed = Math.floor(Number(String(value || "").replace(/,/g, "")));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : NaN;
+}
+
+function parseNonNegativeInt(value) {
+  const parsed = Math.floor(Number(String(value || "").replace(/,/g, "")));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : NaN;
 }
 
 function cooldownRemaining(lastIso, now, durationMs) {

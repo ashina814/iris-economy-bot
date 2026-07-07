@@ -241,6 +241,57 @@ assert.strictEqual(engine.getUser(payeeA.id, payeeA.name).wallet, payeeAWalletBe
 const salaryInvalid = engine.distributeSalary(engine.getUser(admin.id, admin.name), { entries: [], perUser: "500" });
 assert(!salaryInvalid.ok, "対象0人の配布は失敗する必要があります");
 
+// 個人残高操作: セット/加算/減算
+const targetActor = { id: "test:balance", name: "残高テスト対象" };
+const adminOp = engine.getUser(admin.id, admin.name);
+const setResult = engine.setWallet(adminOp, targetActor, "50000", "テスト");
+assert(setResult.ok, "セットが成功する必要があります");
+assert.strictEqual(engine.getUser(targetActor.id, targetActor.name).wallet, 50000, "セット後の残高が正しい");
+const addResult = engine.addWallet(adminOp, targetActor, "20000", "テスト加算");
+assert(addResult.ok, "加算が成功する必要があります");
+assert.strictEqual(engine.getUser(targetActor.id, targetActor.name).wallet, 70000, "加算後の残高が正しい");
+const subResult = engine.subtractWallet(adminOp, targetActor, "30000", "テスト減算");
+assert(subResult.ok, "減算が成功する必要があります");
+assert.strictEqual(engine.getUser(targetActor.id, targetActor.name).wallet, 40000, "減算後の残高が正しい");
+const overSub = engine.subtractWallet(adminOp, targetActor, "999999", "上限テスト");
+assert(overSub.ok, "残高超え減算は成功する（上限クランプ）");
+assert.strictEqual(engine.getUser(targetActor.id, targetActor.name).wallet, 0, "残高超え減算後は0");
+const setInvalid = engine.setWallet(adminOp, targetActor, "-1000");
+assert(!setInvalid.ok, "負の値のセットは失敗する");
+const setZero = engine.setWallet(adminOp, targetActor, "0");
+assert(setZero.ok, "0セットは成功する");
+
+// ロール一括セット
+const roleSet = engine.setWalletByRoleMembers(adminOp, {
+  entries: [
+    { id: "test:member-a", name: "メンバーA" },
+    { id: "test:member-b", name: "メンバーB" },
+    { id: "test:member-a", name: "メンバーA" }
+  ],
+  amount: "100000",
+  roleLabel: "テストロール"
+});
+assert(roleSet.ok, "ロール一括セットが成功");
+assert.strictEqual(roleSet.applied.length, 2, "重複除外後2人");
+assert.strictEqual(engine.getUser("test:member-a", "メンバーA").wallet, 100000, "対象Aの残高がセットされる");
+assert.strictEqual(engine.getUser("test:member-b", "メンバーB").wallet, 100000, "対象Bの残高がセットされる");
+
+// 送金
+const payer = { id: "test:payer", name: "送金者" };
+const payee = { id: "test:payee", name: "受取人" };
+engine.run("join", payer);
+engine.run("join", payee);
+const payerBefore = engine.getUser(payer.id, payer.name).wallet;
+const payeeBefore = engine.getUser(payee.id, payee.name).wallet;
+const transferResult = engine.transferFunds(payer, payee, "3000");
+assert(transferResult.ok, "送金が成功");
+assert.strictEqual(engine.getUser(payer.id, payer.name).wallet, payerBefore - 3000, "送金者の残高減");
+assert.strictEqual(engine.getUser(payee.id, payee.name).wallet, payeeBefore + 3000, "受取人の残高増");
+const selfTransfer = engine.transferFunds(payer, payer, "100");
+assert(!selfTransfer.ok, "自分宛送金は失敗する");
+const overTransfer = engine.transferFunds(payer, payee, "9999999");
+assert(!overTransfer.ok, "残高超え送金は失敗する");
+
 // カジノ関連のコマンドが未知扱いになることを確認
 const casinoRemoved = engine.run("slots 50", actor);
 assert(casinoRemoved.title === "未知の経済行為", `カジノコマンドは削除済み（title: ${casinoRemoved.title}）`);

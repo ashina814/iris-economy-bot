@@ -143,6 +143,14 @@ async function handleInteraction(interaction) {
       await handleReviewRejectModal(interaction);
       return;
     }
+    if (interaction.customId.startsWith("eco:modal:balance:")) {
+      await handleBalanceModal(interaction);
+      return;
+    }
+    if (interaction.customId.startsWith("eco:modal:balance-role-set:")) {
+      await handleBalanceRoleAmountModal(interaction);
+      return;
+    }
   }
 
   if (interaction.isUserSelectMenu()) {
@@ -152,6 +160,11 @@ async function handleInteraction(interaction) {
     }
     if (interaction.customId.startsWith("eco:user:yado-add:")) {
       await addSecretYadoMember(interaction);
+      return;
+    }
+    if (interaction.customId.startsWith("eco:user:balance:")) {
+      await showBalanceAmountModal(interaction);
+      return;
     }
     return;
   }
@@ -159,6 +172,11 @@ async function handleInteraction(interaction) {
   if (interaction.isRoleSelectMenu()) {
     if (interaction.customId === "eco:role:salary") {
       await handleSalaryRoleSelect(interaction);
+      return;
+    }
+    if (interaction.customId === "eco:role:balance-set") {
+      await handleBalanceRoleSelect(interaction);
+      return;
     }
     return;
   }
@@ -226,6 +244,22 @@ async function handleInteraction(interaction) {
       await clearRankNotifyChannel(interaction);
       return;
     }
+    if (command === "balance-user-set" || command === "balance-user-add" || command === "balance-user-sub") {
+      await showBalanceUserPicker(interaction, command.split("-")[2]);
+      return;
+    }
+    if (command === "balance-role-set") {
+      await showBalanceRolePicker(interaction);
+      return;
+    }
+    if (command.startsWith("balance-role-execute ")) {
+      await executeBalanceRoleSet(interaction, command.split(/\s+/)[1]);
+      return;
+    }
+    if (command.startsWith("balance-role-cancel ")) {
+      await cancelBalanceRoleSession(interaction, command.split(/\s+/)[1]);
+      return;
+    }
     if (command.startsWith("salary-execute ")) {
       await executeSalaryDistribution(interaction, command.split(/\s+/)[1]);
       return;
@@ -255,8 +289,8 @@ async function handleInteraction(interaction) {
     await interaction.reply({ content: "そこは運営用です。鍵が違います。", ephemeral: true });
     return;
   }
-  if (slash.adminAction) {
-    await handleAdminAction(interaction, slash.adminAction);
+  if (slash.transfer) {
+    await handleTransferSlash(interaction);
     return;
   }
   const command = slash.command;
@@ -422,6 +456,15 @@ function buildSlashCommands() {
       .setName("自分の店")
       .setDescription("出品、売上、取引中の商品を管理します"),
     new SlashCommandBuilder()
+      .setName("送金")
+      .setDescription("他の住民に Ris を送金します")
+      .addUserOption((option) =>
+        option.setName("相手").setDescription("送金相手").setRequired(true)
+      )
+      .addIntegerOption((option) =>
+        option.setName("金額").setDescription("送金する Ris の額（1以上）").setRequired(true).setMinValue(1)
+      ),
+    new SlashCommandBuilder()
       .setName("管理")
       .setDescription("運営用の管理パネルを開きます")
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
@@ -442,6 +485,8 @@ function commandFromSlash(interaction) {
       return { command: "panel marketplace", ephemeral: false, adminOnly: false };
     case "自分の店":
       return { command: "panel my-shop", ephemeral: true, adminOnly: false };
+    case "送金":
+      return { transfer: true, ephemeral: true, adminOnly: false };
     case "管理":
       return { command: "panel admin", ephemeral: true, adminOnly: true };
     default:
@@ -483,17 +528,14 @@ function actorFromUser(guildId, user) {
 function canRunCommand(context, command) {
   const normalized = String(command || "").trim().toLowerCase();
   const restricted =
-    normalized.startsWith("house profile") ||
-    normalized.startsWith("house set") ||
-    normalized.startsWith("釘 profile") ||
-    normalized.startsWith("釘 set") ||
-    normalized.startsWith("casino-config profile") ||
-    normalized.startsWith("casino-config set") ||
     normalized.startsWith("marketplace auction-end") ||
     normalized === "panel market-admin" ||
     normalized === "panel market-review" ||
     normalized === "panel market-trades" ||
-    normalized === "panel market-logs";
+    normalized === "panel market-logs" ||
+    normalized === "panel admin" ||
+    normalized === "panel admin-balance" ||
+    normalized === "panel admin-rank";
   if (!restricted) return true;
   return isAdmin(context);
 }
@@ -671,58 +713,6 @@ function progressBar(percent) {
   const width = 14;
   const filled = Math.max(0, Math.min(width, Math.round((percent / 100) * width)));
   return `\`${"▰".repeat(filled)}${"▱".repeat(width - filled)}\``;
-}
-
-async function handleAdminAction(interaction, action) {
-  if (action === "rank_notify") {
-    const channel = interaction.options.getChannel("channel") || interaction.channel;
-    if (!channel?.isTextBased?.()) {
-      await interaction.reply({ content: "ランク昇格通知先はテキストチャンネルを指定してください。", ephemeral: true });
-      return;
-    }
-    panelState.rankNotifyChannelId = channel.id;
-    panelStore.save(panelState);
-    await interaction.reply({ content: `ランク昇格通知先を ${channel} に設定しました。`, ephemeral: true });
-    return;
-  }
-
-  if (action === "rank_panel") {
-    const channel = interaction.options.getChannel("channel") || interaction.channel;
-    if (!channel?.isTextBased?.()) {
-      await interaction.reply({ content: "ランク確認パネルはテキストチャンネルに置いてください。", ephemeral: true });
-      return;
-    }
-    await postRankPanel(channel);
-    await interaction.reply({ content: `${channel} にランク確認パネルを設置しました。以後、発言があるたび下へ戻します。`, ephemeral: true });
-    return;
-  }
-
-  const target = interaction.options.getUser("target");
-  const xp = interaction.options.getInteger("xp");
-  if (!target || !Number.isInteger(xp)) {
-    await interaction.reply({ content: "経験値操作には対象ユーザーと数値が必要です。", ephemeral: true });
-    return;
-  }
-
-  const member = await interaction.guild.members.fetch(target.id).catch(() => null);
-  const actor = {
-    id: `${interaction.guildId}:${target.id}`,
-    name: member?.displayName || target.globalName || target.username
-  };
-  const user = engine.getUser(actor.id, actor.name);
-  const type = action.startsWith("tc_") ? "text" : "vc";
-  const mode = action.endsWith("_set") ? "set" : "add";
-  const field = type === "text" ? "textXp" : "vcXp";
-  const before = user.activity[field] || 0;
-  user.activity[field] = mode === "set" ? Math.max(0, xp) : Math.max(0, before + xp);
-  store.save(engine.state);
-  const level = type === "text" ? engine.textLevel(user) : engine.vcLevel(user);
-  const rank = type === "text" ? engine.textRank(user).name : engine.vcRank(user).name;
-  await interaction.reply({
-    content: `${target} の ${type === "text" ? "TC" : "VC"}経験値: ${before} -> ${user.activity[field]} / レベル ${level} / ${rank}`,
-    ephemeral: true,
-    allowedMentions: { users: [] }
-  });
 }
 
 async function handleRankPanelButton(interaction) {
@@ -999,6 +989,39 @@ async function placeMarketAuctionBidFromModal(interaction) {
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 
+async function handleTransferSlash(interaction) {
+  const target = interaction.options.getUser("相手");
+  const amount = interaction.options.getInteger("金額");
+  if (!target || !Number.isInteger(amount) || amount <= 0) {
+    await interaction.reply({ content: "相手と金額（1以上）を指定してください。", ephemeral: true });
+    return;
+  }
+  if (target.bot) {
+    await interaction.reply({ content: "Bot には送金できません。", ephemeral: true });
+    return;
+  }
+  const senderActor = actorFromInteraction(interaction);
+  const targetMember = await interaction.guild?.members.fetch(target.id).catch(() => null);
+  const recipientActor = {
+    id: `${interaction.guildId || "dm"}:${target.id}`,
+    name: targetMember?.displayName || target.globalName || target.username
+  };
+  const result = engine.transferFunds(senderActor, recipientActor, amount);
+  store.save(engine.state);
+  decorateResultForDiscord(result, interaction);
+  await replyDiscord(interaction, result, { ephemeral: true });
+  if (result.ok) {
+    await sendLog({
+      ok: true,
+      title: "送金",
+      lines: [
+        `${result.sender.name} → ${result.recipient.name}`,
+        `金額: ${fmt(amount)}`
+      ]
+    });
+  }
+}
+
 async function postRankPanelFromButton(interaction) {
   if (!isAdmin(interaction)) {
     await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
@@ -1046,6 +1069,288 @@ async function clearRankNotifyChannel(interaction) {
     content: `昇格通知先のカスタム設定を解除しました。以後は環境変数の設定先を使います: ${fallback}`,
     ephemeral: true
   });
+}
+
+async function showBalanceUserPicker(interaction, mode) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (!["set", "add", "sub"].includes(mode)) {
+    await interaction.reply({ content: "モード不明。", ephemeral: true });
+    return;
+  }
+  const label = mode === "set" ? "セット" : mode === "add" ? "加算" : "減算";
+  const menu = new UserSelectMenuBuilder()
+    .setCustomId(`eco:user:balance:${mode}`)
+    .setPlaceholder(`残高を${label}する対象ユーザーを選ぶ`)
+    .setMinValues(1)
+    .setMaxValues(1);
+  const row = new ActionRowBuilder().addComponents(menu);
+  const embed = new EmbedBuilder()
+    .setTitle(`残高操作 - ${label}`)
+    .setColor(mode === "sub" ? 0xef4444 : mode === "add" ? 0x22c55e : 0x2563eb)
+    .setDescription(`対象ユーザーを選ぶと、次に額の入力モーダルが開きます。${mode === "set" ? "「セット」は 0 も指定できます。" : ""}中央台帳との入出金として記録されます。`);
+  await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+}
+
+async function showBalanceAmountModal(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const mode = interaction.customId.split(":")[3];
+  const targetId = interaction.values?.[0];
+  if (!targetId) {
+    await interaction.reply({ content: "対象が選ばれていません。", ephemeral: true });
+    return;
+  }
+  const label = mode === "set" ? "セット" : mode === "add" ? "加算" : "減算";
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:balance:${mode}:${targetId}`)
+    .setTitle(`残高${label}`);
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("amount")
+        .setLabel(mode === "set" ? "セットする額（Ris、0以上）" : `${label}する額（Ris、1以上）`)
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(12)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("note")
+        .setLabel("メモ（ログに残ります・任意）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(80)
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleBalanceModal(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const parts = interaction.customId.split(":");
+  const mode = parts[3];
+  const targetDiscordId = parts[4];
+  const amountRaw = interaction.fields.getTextInputValue("amount");
+  const note = interaction.fields.getTextInputValue("note") || "";
+  const targetUser = await client.users.fetch(targetDiscordId).catch(() => null);
+  const guildMember = interaction.guild
+    ? await interaction.guild.members.fetch(targetDiscordId).catch(() => null)
+    : null;
+  const guildPart = interaction.guildId || "dm";
+  const targetActor = {
+    id: `${guildPart}:${targetDiscordId}`,
+    name: guildMember?.displayName || targetUser?.globalName || targetUser?.username || "名無し"
+  };
+  const adminActor = actorFromInteraction(interaction);
+  const adminUser = engine.getUser(adminActor.id, adminActor.name);
+
+  let result;
+  if (mode === "set") result = engine.setWallet(adminUser, targetActor, amountRaw, note);
+  else if (mode === "add") result = engine.addWallet(adminUser, targetActor, amountRaw, note);
+  else if (mode === "sub") result = engine.subtractWallet(adminUser, targetActor, amountRaw, note);
+  else result = { ok: false, title: "不明モード", lines: [`モード ${mode} は未知です。`] };
+
+  store.save(engine.state);
+  decorateResultForDiscord(result, interaction);
+  await replyDiscord(interaction, result, { ephemeral: true });
+  if (result.ok) {
+    await sendLog({
+      ok: true,
+      title: `残高操作: ${mode === "set" ? "セット" : mode === "add" ? "加算" : "減算"}`,
+      lines: [
+        `実行者: ${adminActor.name}`,
+        `対象: ${targetActor.name}`,
+        `${fmt(result.before)} → ${fmt(result.after)}（差分 ${result.delta >= 0 ? "+" : ""}${fmt(result.delta)}）`,
+        note ? `メモ: ${note}` : null
+      ].filter(Boolean)
+    });
+  }
+}
+
+async function showBalanceRolePicker(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (!interaction.guild) {
+    await interaction.reply({ content: "サーバー内で使ってください。", ephemeral: true });
+    return;
+  }
+  const menu = new RoleSelectMenuBuilder()
+    .setCustomId("eco:role:balance-set")
+    .setPlaceholder("対象ロールを選ぶ（最大10）")
+    .setMinValues(1)
+    .setMaxValues(10);
+  const row = new ActionRowBuilder().addComponents(menu);
+  const embed = new EmbedBuilder()
+    .setTitle("ロール一括セット")
+    .setColor(0x2563eb)
+    .setDescription("選んだロール保持者全員の残高を、指定した額に**揃えます**。差分は中央台帳との入出金として記録されます。（給与配布との違い: 給与配布は一律加算、こちらは一律セット）");
+  await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+}
+
+async function handleBalanceRoleSelect(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (!interaction.guild) {
+    await interaction.reply({ content: "サーバー内で使ってください。", ephemeral: true });
+    return;
+  }
+  const roleIds = interaction.values || [];
+  if (roleIds.length === 0) {
+    await interaction.reply({ content: "ロールが選ばれていません。", ephemeral: true });
+    return;
+  }
+  const sessionId = createSalarySession(interaction.user.id, roleIds);
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:balance-role-set:${sessionId}`)
+    .setTitle("ロール一括セット - 額の入力");
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("amount")
+        .setLabel("セットする額（Ris、0以上）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(12)
+        .setPlaceholder("例: 100000")
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("note")
+        .setLabel("メモ（ログに残ります・任意）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(80)
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleBalanceRoleAmountModal(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (!interaction.guild) {
+    await interaction.reply({ content: "サーバー内で使ってください。", ephemeral: true });
+    return;
+  }
+  const sessionId = interaction.customId.split(":")[3];
+  const session = getSalarySession(sessionId, interaction.user.id);
+  if (!session) {
+    await interaction.reply({ content: "セッションが見つからないか期限切れです。もう一度やり直してください。", ephemeral: true });
+    return;
+  }
+  const amountRaw = interaction.fields.getTextInputValue("amount");
+  const amount = Number.parseInt(String(amountRaw || "").replace(/[^\d]/g, ""), 10);
+  if (!Number.isFinite(amount) || amount < 0) {
+    await interaction.reply({ content: "セット額は0以上の整数で入力してください。", ephemeral: true });
+    return;
+  }
+  const note = String(interaction.fields.getTextInputValue("note") || "").trim();
+  const targets = await collectSalaryTargets(interaction.guild, session.roleIds);
+  const roleNames = await Promise.all(
+    session.roleIds.map(async (id) => {
+      const role = await interaction.guild.roles.fetch(id).catch(() => null);
+      return role?.name || `ロールID:${id}`;
+    })
+  );
+
+  session.mode = "balance-set";
+  session.amount = amount;
+  session.note = note;
+  session.roleNames = roleNames;
+  session.targets = targets;
+
+  if (targets.length === 0) {
+    salarySessions.delete(sessionId);
+    await interaction.reply({ content: "対象ロール保持者が0人でした。", ephemeral: true });
+    return;
+  }
+
+  // 差分プレビュー
+  let issue = 0;
+  let reclaim = 0;
+  for (const t of targets) {
+    const u = engine.state.users?.[t.id];
+    const current = u?.wallet || 0;
+    const delta = amount - current;
+    if (delta > 0) issue += delta;
+    else if (delta < 0) reclaim += -delta;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle("ロール一括セット - 確認")
+    .setColor(0xf59e0b)
+    .setDescription("この内容で全員の残高を揃えます。実行前に確認してください。")
+    .addFields(
+      { name: "対象ロール", value: roleNames.map((n) => `・${n}`).join("\n") || "-", inline: false },
+      { name: "対象人数", value: `${targets.length}人（Bot除外）`, inline: true },
+      { name: "1人あたり", value: `${amount.toLocaleString("ja-JP")} Ris`, inline: true },
+      { name: "純増減見込み", value: `${(issue - reclaim).toLocaleString("ja-JP")} Ris`, inline: true },
+      { name: "発行見込み", value: `${issue.toLocaleString("ja-JP")} Ris`, inline: true },
+      { name: "回収見込み", value: `${reclaim.toLocaleString("ja-JP")} Ris`, inline: true },
+      { name: "メモ", value: note || "（なし）", inline: false }
+    );
+  const buttonsRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`eco:admin:balance-role-execute:${sessionId}`).setLabel("セット実行").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`eco:admin:balance-role-cancel:${sessionId}`).setLabel("キャンセル").setStyle(ButtonStyle.Secondary)
+  );
+  await interaction.reply({ embeds: [embed], components: [buttonsRow], ephemeral: true });
+}
+
+async function executeBalanceRoleSet(interaction, sessionId) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const session = getSalarySession(sessionId, interaction.user.id);
+  if (!session || session.mode !== "balance-set" || !session.targets) {
+    await interaction.reply({ content: "セッションが見つからないか期限切れです。もう一度やり直してください。", ephemeral: true });
+    return;
+  }
+  const adminActor = actorFromInteraction(interaction);
+  const adminUser = engine.getUser(adminActor.id, adminActor.name);
+  const roleLabel = session.roleNames?.join(", ") || "選択したロール";
+  const noteSuffix = session.note ? ` / ${session.note}` : "";
+  const result = engine.setWalletByRoleMembers(adminUser, {
+    entries: session.targets,
+    amount: session.amount,
+    roleLabel: `${roleLabel}${noteSuffix}`
+  });
+  salarySessions.delete(sessionId);
+  store.save(engine.state);
+  decorateResultForDiscord(result, interaction);
+  await replyDiscord(interaction, result, { ephemeral: true });
+  if (result.ok) {
+    await sendLog({
+      ok: true,
+      title: "ロール一括セットログ",
+      lines: [
+        `実行者: ${adminActor.name}`,
+        `対象ロール: ${roleLabel}`,
+        `${result.applied?.length ?? 0}人 → ${result.amount?.toLocaleString("ja-JP") ?? "?"} Ris`,
+        `発行: ${result.totalIssued?.toLocaleString("ja-JP")} / 回収: ${result.totalReclaimed?.toLocaleString("ja-JP")}`,
+        session.note ? `メモ: ${session.note}` : null
+      ].filter(Boolean)
+    });
+  }
+}
+
+async function cancelBalanceRoleSession(interaction, sessionId) {
+  salarySessions.delete(sessionId);
+  await interaction.reply({ content: "ロール一括セットをキャンセルしました。", ephemeral: true });
 }
 
 async function handleReviewButton(interaction) {
@@ -2383,6 +2688,12 @@ function commandFromComponent(interaction) {
     if (parts[1] === "admin" && parts[2] === "rank-panel-post") return "rank-panel-post";
     if (parts[1] === "admin" && parts[2] === "rank-notify-set") return "rank-notify-set";
     if (parts[1] === "admin" && parts[2] === "rank-notify-clear") return "rank-notify-clear";
+    if (parts[1] === "admin" && parts[2] === "balance-user-set") return "balance-user-set";
+    if (parts[1] === "admin" && parts[2] === "balance-user-add") return "balance-user-add";
+    if (parts[1] === "admin" && parts[2] === "balance-user-sub") return "balance-user-sub";
+    if (parts[1] === "admin" && parts[2] === "balance-role-set") return "balance-role-set";
+    if (parts[1] === "admin" && parts[2] === "balance-role-execute") return `balance-role-execute ${parts[3]}`;
+    if (parts[1] === "admin" && parts[2] === "balance-role-cancel") return `balance-role-cancel ${parts[3]}`;
     return null;
   }
 
