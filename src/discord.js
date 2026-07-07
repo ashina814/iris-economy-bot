@@ -108,7 +108,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     await handleInteraction(interaction);
   } catch (error) {
-    console.warn(`インタラクション処理に失敗しました: ${error.stack || error.message}`);
+    const cid = interaction.isButton?.() || interaction.isStringSelectMenu?.() ? interaction.customId : (interaction.commandName || "unknown");
+    console.warn(`インタラクション処理に失敗しました [${cid}]: ${error.stack || error.message}`);
+    if (logChannelId) {
+      try {
+        const channel = await client.channels.fetch(logChannelId).catch(() => null);
+        if (channel?.isTextBased?.()) {
+          const detail = String(error.rawError ? JSON.stringify(error.rawError) : error.message).slice(0, 900);
+          await channel.send({ content: `⚠ interaction fail [${cid}]\n\`\`\`\n${detail}\n\`\`\`` }).catch(() => null);
+        }
+      } catch (_) {}
+    }
     await replyInteractionError(interaction);
   }
 });
