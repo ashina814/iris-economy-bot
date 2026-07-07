@@ -241,6 +241,63 @@ assert.strictEqual(engine.getUser(payeeA.id, payeeA.name).wallet, payeeAWalletBe
 const salaryInvalid = engine.distributeSalary(engine.getUser(admin.id, admin.name), { entries: [], perUser: "500" });
 assert(!salaryInvalid.ok, "対象0人の配布は失敗する必要があります");
 
+// ショップ拡張 PR3: 使うボタン / 購入者通知 / ソート / 設定 / 再提出
+// 購入時に purchase 通知が buyer 宛てにも来る
+const purchaseFresh = engine.createUserListing(engine.getUser(seller.id, seller.name), {
+  name: "PR3 テスト用",
+  type: "item",
+  mode: "permanent",
+  price: "400",
+  stock: "1",
+  description: "PR3 購入通知テスト"
+});
+assert(purchaseFresh.ok);
+const purchaseFreshListing = engine.state.marketplace.listings.find((l) => l.name === "PR3 テスト用");
+const buyRes = engine.buyUserListing(engine.getUser(buyer.id, buyer.name), purchaseFreshListing.id);
+assert(buyRes.ok, "通常購入OK");
+assert(buyRes.notifications.some((n) => n.event === "listing_purchased" && n.userId === buyer.id), "購入者にも通知が発火");
+assert(buyRes.notifications.some((n) => n.event === "listing_sold" && n.userId === seller.id), "販売者にも通知");
+
+// ソート: price_asc で価格昇順
+const sortedAsc = engine.searchListings({ sort: "price_asc" });
+for (let i = 1; i < sortedAsc.length; i++) {
+  assert(sortedAsc[i].price >= sortedAsc[i - 1].price, "price_asc で昇順になる");
+}
+const sortedDesc = engine.searchListings({ sort: "price_desc" });
+for (let i = 1; i < sortedDesc.length; i++) {
+  assert(sortedDesc[i].price <= sortedDesc[i - 1].price, "price_desc で降順になる");
+}
+
+// マーケット設定変更
+const settingsBefore = { ...engine.state.marketplace.settings };
+const settingsUpdate = engine.updateMarketSettings(engine.getUser(admin.id, admin.name), {
+  feeBps: "300",
+  reviewPrice: "80000"
+});
+assert(settingsUpdate.ok, "マーケット設定を変更できる");
+assert.strictEqual(engine.state.marketplace.settings.feeBps, 300, "手数料が更新される");
+assert.strictEqual(engine.state.marketplace.settings.reviewPrice, 80000, "審査境界が更新される");
+const settingsInvalid = engine.updateMarketSettings(engine.getUser(admin.id, admin.name), { feeBps: "9999" });
+assert(!settingsInvalid.ok, "範囲外の手数料は失敗");
+// 元に戻す
+engine.updateMarketSettings(engine.getUser(admin.id, admin.name), {
+  feeBps: String(settingsBefore.feeBps),
+  reviewPrice: String(settingsBefore.reviewPrice)
+});
+
+// 却下商品の再提出
+const rejectedListing = engine.state.marketplace.listings.find((l) => l.status === "rejected");
+if (rejectedListing) {
+  const resubmit = engine.resubmitListing(engine.getUser(seller.id, seller.name), rejectedListing.id, {
+    description: "修正した説明"
+  });
+  assert(resubmit.ok, "却下商品を再提出できる");
+  assert.strictEqual(rejectedListing.status, "stopped", "元 listing は stopped 化");
+  assert(rejectedListing.resubmittedTo, "resubmittedTo が記録される");
+  const newListing = engine.state.marketplace.listings.find((l) => l.id === rejectedListing.resubmittedTo);
+  assert.strictEqual(newListing.status, "pending", "新 listing は pending");
+}
+
 // ショップ拡張 PR2: 通知イベント発火
 const freshPendingResult = engine.createUserListing(engine.getUser(seller.id, seller.name), {
   name: "通知テスト用サービス",

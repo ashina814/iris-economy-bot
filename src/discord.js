@@ -159,6 +159,14 @@ async function handleInteraction(interaction) {
       await handleShopEditModal(interaction);
       return;
     }
+    if (interaction.customId.startsWith("eco:modal:shop-resubmit:")) {
+      await handleShopResubmitModal(interaction);
+      return;
+    }
+    if (interaction.customId === "eco:modal:market-settings") {
+      await handleMarketSettingsModal(interaction);
+      return;
+    }
   }
 
   if (interaction.isUserSelectMenu()) {
@@ -282,6 +290,14 @@ async function handleInteraction(interaction) {
     }
     if (command.startsWith("shop-edit ")) {
       await showShopEditModal(interaction, command.split(/\s+/)[1]);
+      return;
+    }
+    if (command.startsWith("shop-resubmit ")) {
+      await showShopResubmitModal(interaction, command.split(/\s+/)[1]);
+      return;
+    }
+    if (command === "market-settings-edit") {
+      await showMarketSettingsModal(interaction);
       return;
     }
     if (command.startsWith("salary-execute ")) {
@@ -723,6 +739,15 @@ function buildNotificationEmbed(note) {
           { name: "売上", value: fmt(data.sellerReceive || 0), inline: true },
           { name: "価格", value: fmt(data.price || 0), inline: true },
           { name: "対応", value: data.manual ? "手動対応が必要（取引中）" : "自動付与済み", inline: true }
+        );
+    case "listing_purchased":
+      return embed
+        .setTitle("◆ 購入完了")
+        .setColor(0x22c55e)
+        .setDescription(`**${data.itemName}** を ${data.sellerName} から購入しました。（${fmt(data.price || 0)}）`)
+        .addFields(
+          { name: "状態", value: data.manual ? "手動対応待ち（販売者から連絡が来ます）" : "自動付与済み（持ち物から確認）", inline: true },
+          { name: "販売方式", value: data.mode === "timed" ? `期間制（期限 ${data.expiresAt ? new Date(data.expiresAt).toLocaleDateString("ja-JP") : "未設定"}）` : "買い切り", inline: true }
         );
     case "auction_outbid":
       return embed
@@ -1517,6 +1542,15 @@ async function showShopSearchModal(interaction) {
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
         .setMaxLength(12)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("sort")
+        .setLabel("並び順: 新着順 / 安い順 / 高い順 / 古い順（任意）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(10)
+        .setPlaceholder("空欄=新着順")
     )
   );
   await interaction.showModal(modal);
@@ -1525,11 +1559,14 @@ async function showShopSearchModal(interaction) {
 async function handleShopSearchModal(interaction) {
   const actor = actorFromInteraction(interaction);
   const user = engine.getUser(actor.id, actor.name);
+  const sortMap = { "新着順": "newest", "安い順": "price_asc", "高い順": "price_desc", "古い順": "oldest" };
+  const sortInput = String(interaction.fields.getTextInputValue("sort") || "").trim();
   const filters = {
     keyword: interaction.fields.getTextInputValue("keyword") || "",
     type: interaction.fields.getTextInputValue("type") || "",
     minPrice: interaction.fields.getTextInputValue("minPrice") || "",
-    maxPrice: interaction.fields.getTextInputValue("maxPrice") || ""
+    maxPrice: interaction.fields.getTextInputValue("maxPrice") || "",
+    sort: sortMap[sortInput] || sortInput || "newest"
   };
   const panel = engine.searchResultsPanel(user, filters);
   const result = { ok: true, title: panel.title, lines: [panel.description], panel };
@@ -1609,6 +1646,141 @@ async function handleNotifyToggle(interaction) {
   const user = engine.getUser(actor.id, actor.name);
   const target = !Boolean(user.notifyEnabled);
   const result = engine.setNotifyEnabled(user, target);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function showShopResubmitModal(interaction, listingId) {
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const listing = engine.state.marketplace.listings.find((l) => String(l.id) === String(listingId));
+  if (!listing || listing.sellerId !== user.id || listing.status !== "rejected") {
+    await interaction.reply({ content: "この商品を再提出できません。", ephemeral: true });
+    return;
+  }
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:shop-resubmit:${listing.id}`)
+    .setTitle(`再提出 #${listing.id}`);
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("name")
+        .setLabel("商品名（空欄で元のまま）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(48)
+        .setValue(listing.name || "")
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("price")
+        .setLabel("価格（Ris、空欄で元のまま）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(12)
+        .setValue(String(listing.price || ""))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("stock")
+        .setLabel("在庫（1〜99、空欄で元のまま）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(3)
+        .setValue(String(listing.stock || ""))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("description")
+        .setLabel("説明（空欄で元のまま）")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setMaxLength(240)
+        .setValue(listing.description || "")
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleShopResubmitModal(interaction) {
+  const listingId = interaction.customId.split(":")[3];
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.resubmitListing(user, listingId, {
+    name: interaction.fields.getTextInputValue("name") || null,
+    price: interaction.fields.getTextInputValue("price") || null,
+    stock: interaction.fields.getTextInputValue("stock") || null,
+    description: interaction.fields.getTextInputValue("description") || null
+  });
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function showMarketSettingsModal(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const settings = engine.state.marketplace.settings;
+  const modal = new ModalBuilder()
+    .setCustomId("eco:modal:market-settings")
+    .setTitle("マーケット設定を編集");
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("feeBps")
+        .setLabel("手数料（bps、100=1.0%）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(5)
+        .setValue(String(settings.feeBps))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("reviewPrice")
+        .setLabel("高額審査境界（Ris）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(12)
+        .setValue(String(settings.reviewPrice))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("maxActiveListings")
+        .setLabel("1人あたり出品上限（1〜99）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(3)
+        .setValue(String(settings.maxActiveListings))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("auctionExtendMinutes")
+        .setLabel("オークション延長分数（1〜60）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(3)
+        .setValue(String(settings.auctionExtendMinutes))
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleMarketSettingsModal(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const actor = actorFromInteraction(interaction);
+  const admin = engine.getUser(actor.id, actor.name);
+  const result = engine.updateMarketSettings(admin, {
+    feeBps: interaction.fields.getTextInputValue("feeBps") || "",
+    reviewPrice: interaction.fields.getTextInputValue("reviewPrice") || "",
+    maxActiveListings: interaction.fields.getTextInputValue("maxActiveListings") || "",
+    auctionExtendMinutes: interaction.fields.getTextInputValue("auctionExtendMinutes") || ""
+  });
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
   await replyDiscord(interaction, result, { ephemeral: true });
@@ -2973,6 +3145,8 @@ function commandFromComponent(interaction) {
     if (parts[1] === "shop" && parts[2] === "search-open") return "shop-search-open";
     if (parts[1] === "shop" && parts[2] === "status-toggle") return "shop-status-toggle";
     if (parts[1] === "shop" && parts[2] === "edit") return `shop-edit ${parts[3]}`;
+    if (parts[1] === "shop" && parts[2] === "resubmit") return `shop-resubmit ${parts[3]}`;
+    if (parts[1] === "market" && parts[2] === "settings-edit") return "market-settings-edit";
     return null;
   }
 
