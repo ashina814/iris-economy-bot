@@ -101,7 +101,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   await resumeYadoRooms();
   await ensureRankPanel();
   startVoiceRewardSweeper();
-  startAuctionSweeper();
+  startMarketSweeper();
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -204,6 +204,10 @@ async function handleInteraction(interaction) {
     }
     if (interaction.isButton() && interaction.customId.startsWith("eco:order:")) {
       await handleOrderAdminButton(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId === "eco:user:notify-toggle") {
+      await handleNotifyToggle(interaction);
       return;
     }
     const command = commandFromComponent(interaction);
@@ -615,19 +619,21 @@ async function replyDiscord(interaction, result, options = {}) {
   const cardImage = await buildProfileCardAttachment(result);
   if (cardImage) {
     await interaction.reply({ files: [cardImage.attachment], ephemeral: Boolean(options.ephemeral) });
-    return;
+  } else {
+    const embed = buildEmbed(result, cardImage?.name);
+    const components = buildComponents(result);
+    if (embed) {
+      await interaction.reply({ embeds: [embed], components, files: cardImage ? [cardImage.attachment] : [], ephemeral: Boolean(options.ephemeral) });
+    } else {
+      const chunks = chunkDiscord(formatDiscord(result));
+      await interaction.reply({ content: chunks[0], components, ephemeral: Boolean(options.ephemeral) });
+      for (const chunk of chunks.slice(1)) {
+        await interaction.followUp({ content: chunk, ephemeral: Boolean(options.ephemeral) });
+      }
+    }
   }
-  const embed = buildEmbed(result, cardImage?.name);
-  const components = buildComponents(result);
-  if (embed) {
-    await interaction.reply({ embeds: [embed], components, files: cardImage ? [cardImage.attachment] : [], ephemeral: Boolean(options.ephemeral) });
-    return;
-  }
-
-  const chunks = chunkDiscord(formatDiscord(result));
-  await interaction.reply({ content: chunks[0], components, ephemeral: Boolean(options.ephemeral) });
-  for (const chunk of chunks.slice(1)) {
-    await interaction.followUp({ content: chunk, ephemeral: Boolean(options.ephemeral) });
+  if (Array.isArray(result?.notifications) && result.notifications.length) {
+    await deliverNotifications(result.notifications);
   }
 }
 
@@ -635,19 +641,121 @@ async function updateDiscord(interaction, result) {
   const cardImage = await buildProfileCardAttachment(result);
   if (cardImage) {
     await interaction.update({ content: "", embeds: [], components: [], files: [cardImage.attachment] });
-    return;
+  } else {
+    const embed = buildEmbed(result, cardImage?.name);
+    const components = buildComponents(result, { fallback: true });
+    if (embed) {
+      await interaction.update({ content: "", embeds: [embed], components, files: cardImage ? [cardImage.attachment] : [] });
+    } else {
+      const chunks = chunkDiscord(formatDiscord(result));
+      await interaction.update({ content: chunks[0], embeds: [], components });
+      for (const chunk of chunks.slice(1)) {
+        await interaction.followUp({ content: chunk, ephemeral: true });
+      }
+    }
   }
-  const embed = buildEmbed(result, cardImage?.name);
-  const components = buildComponents(result, { fallback: true });
-  if (embed) {
-    await interaction.update({ content: "", embeds: [embed], components, files: cardImage ? [cardImage.attachment] : [] });
-    return;
+  if (Array.isArray(result?.notifications) && result.notifications.length) {
+    await deliverNotifications(result.notifications);
   }
+}
 
-  const chunks = chunkDiscord(formatDiscord(result));
-  await interaction.update({ content: chunks[0], embeds: [], components });
-  for (const chunk of chunks.slice(1)) {
-    await interaction.followUp({ content: chunk, ephemeral: true });
+async function deliverNotifications(notifications) {
+  if (!Array.isArray(notifications) || notifications.length === 0) return;
+  for (const note of notifications) {
+    try {
+      await deliverOne(note);
+    } catch (error) {
+      console.warn(`通知配送失敗 (${note.event}): ${error.message}`);
+    }
+  }
+}
+
+async function deliverOne(note) {
+  const userRec = engine.state.users?.[note.userId];
+  const enabled = Boolean(userRec?.notifyEnabled);
+  const embed = buildNotificationEmbed(note);
+  if (!embed) return;
+  if (enabled) {
+    const discordId = extractDiscordUserId(note.userId);
+    if (discordId) {
+      try {
+        const user = await client.users.fetch(discordId).catch(() => null);
+        if (user) {
+          await user.send({ embeds: [embed] });
+          return;
+        }
+      } catch (error) {
+        // DM 拒否や fetch 失敗はログ fallback
+      }
+    }
+  }
+  await sendLog({ ok: true, title: embed.data?.title || "通知", lines: [embed.data?.description || ""].filter(Boolean) });
+}
+
+function extractDiscordUserId(internalUserId) {
+  if (typeof internalUserId !== "string") return null;
+  const idx = internalUserId.indexOf(":");
+  if (idx < 0) return null;
+  return internalUserId.slice(idx + 1) || null;
+}
+
+function buildNotificationEmbed(note) {
+  const embed = new EmbedBuilder().setFooter({ text: "アイリス経済圏 / 通知" });
+  const data = note.data || {};
+  switch (note.event) {
+    case "listing_approved":
+      return embed
+        .setTitle("◆ 出品が承認されました")
+        .setColor(0x22c55e)
+        .setDescription(`#${data.listingId} **${data.name}** が公開されました。（価格 ${fmt(data.price || 0)}）`);
+    case "listing_rejected":
+      return embed
+        .setTitle("◇ 出品が却下されました")
+        .setColor(0xef4444)
+        .setDescription(`#${data.listingId} **${data.name}** が却下されました。`)
+        .addFields({ name: "理由", value: data.reason || "（記入なし）" });
+    case "listing_sold":
+      return embed
+        .setTitle("◆ 商品が売れました")
+        .setColor(0x22c55e)
+        .setDescription(`#${data.listingId} **${data.itemName}** を ${data.buyerName} が購入しました。`)
+        .addFields(
+          { name: "売上", value: fmt(data.sellerReceive || 0), inline: true },
+          { name: "価格", value: fmt(data.price || 0), inline: true },
+          { name: "対応", value: data.manual ? "手動対応が必要（取引中）" : "自動付与済み", inline: true }
+        );
+    case "auction_outbid":
+      return embed
+        .setTitle("◇ 入札が上書きされました")
+        .setColor(0xf59e0b)
+        .setDescription(`#${data.auctionId} **${data.name}** の最高入札が ${fmt(data.newBid)} に更新されました。`)
+        .addFields(
+          { name: "あなたの前回入札", value: `${fmt(data.previousBid)}（返金済み）`, inline: true },
+          { name: "現在の入札者", value: data.newBidderName || "不明", inline: true }
+        );
+    case "auction_won":
+      return embed
+        .setTitle("◆ 落札しました")
+        .setColor(0x22c55e)
+        .setDescription(`#${data.auctionId} **${data.name}** を ${fmt(data.winningBid)} で落札しました。持ち物に付与済み。`);
+    case "order_admin_completed":
+      return embed
+        .setTitle("◆ 取引が完了扱いになりました")
+        .setColor(0x22c55e)
+        .setDescription(`#${data.orderId} **${data.itemName}** を運営が完了処理しました。`);
+    case "order_refunded":
+      return embed
+        .setTitle("◇ 取引が返金されました")
+        .setColor(0xf59e0b)
+        .setDescription(`#${data.orderId} **${data.itemName}**（${fmt(data.amount || 0)}）が返金されました。`)
+        .addFields({ name: "役割", value: data.role === "seller" ? "販売者（売上巻き戻し）" : "購入者（返金受領）", inline: true });
+    case "listing_expired":
+      return embed
+        .setTitle("◇ 商品の期限が切れました")
+        .setColor(0x64748b)
+        .setDescription(`#${data.orderId} **${data.itemName}** の使用期限が切れました。`);
+    default:
+      return null;
   }
 }
 
@@ -1491,6 +1599,16 @@ async function handleShopEditModal(interaction) {
     stock: interaction.fields.getTextInputValue("stock") || null,
     description: interaction.fields.getTextInputValue("description") || null
   });
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleNotifyToggle(interaction) {
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const target = !Boolean(user.notifyEnabled);
+  const result = engine.setNotifyEnabled(user, target);
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
   await replyDiscord(interaction, result, { ephemeral: true });
@@ -2698,14 +2816,18 @@ function startVoiceRewardSweeper() {
   }, intervalMs).unref?.();
 }
 
-function startAuctionSweeper() {
+function startMarketSweeper() {
   const intervalMs = 60_000;
-  setInterval(() => {
-    const closed = engine.closeEndedAuctions();
-    if (closed.length > 0) {
+  setInterval(async () => {
+    const auctionRes = engine.closeEndedAuctions();
+    const expireRes = engine.expireEndedOrders();
+    const notifications = [...(auctionRes.notifications || []), ...(expireRes.notifications || [])];
+    if ((auctionRes.closed?.length || 0) + (expireRes.expired?.length || 0) > 0) {
       store.save(engine.state);
-      console.log(`公式オークションを ${closed.length}件終了しました。`);
+      if (auctionRes.closed?.length) console.log(`公式オークションを ${auctionRes.closed.length}件終了しました。`);
+      if (expireRes.expired?.length) console.log(`期限切れ商品を ${expireRes.expired.length}件処理しました。`);
     }
+    if (notifications.length) await deliverNotifications(notifications);
   }, intervalMs).unref?.();
 }
 

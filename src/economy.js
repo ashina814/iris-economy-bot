@@ -414,14 +414,16 @@ class EconomyEngine {
           buttons([
             panelButton("二人宿", "inn", "success"),
             panelButton("自分の店", "my-shop"),
-            panelButton("招待", "invite")
+            panelButton("招待", "invite"),
+            panelButton("通知設定", "notify")
           ]),
           select("行き先を選ぶ", [
             option("通話ラウンジ", "panel:lounge", "発言と通話ランク"),
             option("マーケット", "panel:marketplace", "買う、見る、入札する"),
             option("自分の店", "panel:my-shop", "出品、売上、取引管理"),
             option("二人宿", "panel:inn", "2人用VCを作成するパネル"),
-            option("招待", "panel:invite", "招待報酬と招待ランキング")
+            option("招待", "panel:invite", "招待報酬と招待ランキング"),
+            option("通知設定", "panel:notify", "DM通知のON/OFF")
           ])
         ]
       }),
@@ -442,6 +444,7 @@ class EconomyEngine {
       "admin-balance": () => this.adminBalancePanel(user),
       "admin-rank": () => this.adminRankPanel(user),
       "search-results": () => this.searchResultsPanel(user),
+      "notify": () => this.notifyPanel(user),
       lounge: () => ({
         title: "通話ラウンジ",
         description: "VC滞在時間と通常チャットの活動状況を確認できます。",
@@ -1871,7 +1874,21 @@ class EconomyEngine {
         `残高: ${fmt(user.wallet)}`,
         listing.manual ? "この商品は販売者の手動対応が必要です。取引中の商品から確認できます。" : "付与が完了しました。"
       ],
-      panel: listing.manual ? this.marketInventoryPanel(user) : this.userShopsPanel(user)
+      panel: listing.manual ? this.marketInventoryPanel(user) : this.userShopsPanel(user),
+      notifications: [
+        {
+          userId: seller.id,
+          event: "listing_sold",
+          data: {
+            listingId: listing.id,
+            itemName: listing.name,
+            buyerName: user.name,
+            price: listing.price,
+            sellerReceive,
+            manual: listing.manual
+          }
+        }
+      ]
     };
   }
 
@@ -1888,7 +1905,14 @@ class EconomyEngine {
       ok: true,
       title: "承認しました",
       lines: [`#${listing.id} ${listing.name} を公開しました。`, `販売者: ${listing.sellerName}`, `価格: ${fmt(listing.price)}`],
-      panel: this.marketReviewPanel()
+      panel: this.marketReviewPanel(),
+      notifications: [
+        {
+          userId: listing.sellerId,
+          event: "listing_approved",
+          data: { listingId: listing.id, name: listing.name, price: listing.price }
+        }
+      ]
     };
   }
 
@@ -1907,7 +1931,14 @@ class EconomyEngine {
       ok: true,
       title: "却下しました",
       lines: [`#${listing.id} ${listing.name} を却下しました。`, `販売者: ${listing.sellerName}`, `理由: ${trimmed || "記入なし"}`],
-      panel: this.marketReviewPanel()
+      panel: this.marketReviewPanel(),
+      notifications: [
+        {
+          userId: listing.sellerId,
+          event: "listing_rejected",
+          data: { listingId: listing.id, name: listing.name, reason: trimmed || "（理由記入なし）" }
+        }
+      ]
     };
   }
 
@@ -1957,7 +1988,14 @@ class EconomyEngine {
       ok: true,
       title: "運営完了処理",
       lines: [`#${order.id} ${order.itemName} を完了扱いにしました。`, `販売者: ${order.sellerName} / 購入者: ${order.buyerName}`],
-      panel: this.marketTradesPanel()
+      panel: this.marketTradesPanel(),
+      notifications: [
+        {
+          userId: order.buyerId,
+          event: "order_admin_completed",
+          data: { orderId: order.id, itemName: order.itemName }
+        }
+      ]
     };
   }
 
@@ -1969,6 +2007,14 @@ class EconomyEngine {
     const buyer = this.getUser(order.buyerId, order.buyerName);
     buyer.wallet += order.price;
     buyer.lifetimeEarned += order.price;
+
+    const notifications = [
+      {
+        userId: order.buyerId,
+        event: "order_refunded",
+        data: { orderId: order.id, itemName: order.itemName, amount: order.price, role: "buyer" }
+      }
+    ];
 
     if (order.sellerId !== "official") {
       const seller = this.getUser(order.sellerId, order.sellerName);
@@ -1984,6 +2030,11 @@ class EconomyEngine {
         listing.sold = Math.max(0, (listing.sold || 0) - 1);
         if (listing.status === "soldout" && listing.stock > 0) listing.status = "active";
       }
+      notifications.push({
+        userId: order.sellerId,
+        event: "order_refunded",
+        data: { orderId: order.id, itemName: order.itemName, amount: sellerReceive, role: "seller" }
+      });
     }
 
     const buyerShop = this.ensureShopShape(buyer);
@@ -2002,8 +2053,41 @@ class EconomyEngine {
         `購入者 ${buyer.name} に ${fmt(order.price)} を戻し、購入品を持ち物から削除しました。`,
         order.sellerId === "official" ? "販売者は公式のため、売上調整は不要です。" : `販売者 ${order.sellerName} の売上と在庫を巻き戻しました。`
       ],
-      panel: this.marketTradesPanel()
+      panel: this.marketTradesPanel(),
+      notifications
     };
+  }
+
+  expireEndedOrders() {
+    const now = Date.now();
+    const notifications = [];
+    const expired = [];
+    for (const order of this.state.marketplace.orders) {
+      if (order.mode !== "timed") continue;
+      if (!order.expiresAt) continue;
+      if (["expired", "refunded"].includes(order.status)) continue;
+      const t = new Date(order.expiresAt).getTime();
+      if (!Number.isFinite(t) || t > now) continue;
+      order.status = "expired";
+      order.expiredAt = new Date(now).toISOString();
+      expired.push(order);
+      const buyer = this.state.users[order.buyerId];
+      if (buyer?.marketplace?.inventory) {
+        for (const item of buyer.marketplace.inventory) {
+          if (String(item.orderId) === String(order.id)) {
+            item.status = "expired";
+            item.expiredAt = order.expiredAt;
+          }
+        }
+      }
+      notifications.push({
+        userId: order.buyerId,
+        event: "listing_expired",
+        data: { orderId: order.id, itemName: order.itemName }
+      });
+      this.marketLog(`#${order.id} ${order.itemName} が期限切れになりました。`);
+    }
+    return { expired, notifications };
   }
 
   createOfficialAuction(adminUser, data = {}) {
@@ -2108,6 +2192,22 @@ class EconomyEngine {
     auction.bids.push({ bidderId: user.id, bidderName: user.name, amount, at: new Date().toISOString() });
     auction.bids = auction.bids.slice(-50);
 
+    const outbidNotifications = [];
+    if (auction.highestBidderId && auction.highestBidderId !== user.id && auction.currentBid > 0) {
+      // 上書きされた前の入札者は前段で返金済み。ここで通知イベント積む。
+      outbidNotifications.push({
+        userId: auction.highestBidderId,
+        event: "auction_outbid",
+        data: {
+          auctionId: auction.id,
+          name: auction.name,
+          previousBid: auction.currentBid,
+          newBid: amount,
+          newBidderName: user.name
+        }
+      });
+    }
+
     if (auction.buyoutPrice && amount >= auction.buyoutPrice) {
       this.marketLog(`${user.name} が #${auction.id} ${auction.name} を即決価格 ${fmt(auction.buyoutPrice)} で落札しました。`);
       const closeResult = this.closeAuction(auction, "buyout");
@@ -2119,7 +2219,8 @@ class EconomyEngine {
           `即決価格 ${fmt(auction.buyoutPrice)} に達したため即落札しました。`,
           ...closeResult.lines
         ],
-        panel: this.auctionDetailPanel(user, id)
+        panel: this.auctionDetailPanel(user, id),
+        notifications: [...outbidNotifications, ...(closeResult.notifications || [])]
       };
     }
 
@@ -2135,7 +2236,8 @@ class EconomyEngine {
         `残高: ${fmt(user.wallet)}`,
         extended ? `終了直前のため ${MARKETPLACE_CONFIG.auctionExtendMinutes}分延長しました。` : `終了: ${shortDate(auction.endsAt)}`
       ].filter(Boolean),
-      panel: this.auctionDetailPanel(user, id)
+      panel: this.auctionDetailPanel(user, id),
+      notifications: outbidNotifications
     };
   }
 
@@ -2148,18 +2250,22 @@ class EconomyEngine {
       ok: true,
       title: "公式オークション終了",
       lines: result.lines,
-      panel: this.auctionDetailPanel(user, id)
+      panel: this.auctionDetailPanel(user, id),
+      notifications: result.notifications || []
     };
   }
 
   closeEndedAuctions() {
     const closed = [];
+    const notifications = [];
     for (const auction of this.state.marketplace.auctions) {
       if (auction.status === "open" && this.isAuctionExpired(auction)) {
-        closed.push(this.closeAuction(auction, "expired"));
+        const res = this.closeAuction(auction, "expired");
+        closed.push(res);
+        if (res.notifications) notifications.push(...res.notifications);
       }
     }
-    return closed;
+    return { closed, notifications };
   }
 
   closeAuction(auction, reason = "expired") {
@@ -2168,7 +2274,7 @@ class EconomyEngine {
     auction.endReason = reason;
     if (!auction.highestBidderId || !auction.currentBid) {
       this.marketLog(`#${auction.id} ${auction.name} は入札なしで終了しました。`);
-      return { lines: [`${auction.name} は入札なしで終了しました。`] };
+      return { lines: [`${auction.name} は入札なしで終了しました。`], notifications: [] };
     }
 
     const winner = this.getUser(auction.highestBidderId, auction.highestBidderName);
@@ -2203,7 +2309,21 @@ class EconomyEngine {
     };
     this.state.marketplace.orders.push(order);
     this.marketLog(`#${auction.id} ${auction.name} を ${winner.name} が ${fmt(auction.currentBid)} で落札しました。`);
-    return { lines: [`落札者: ${winner.name}`, `落札額: ${fmt(auction.currentBid)}`, `商品: ${auction.name}`] };
+    return {
+      lines: [`落札者: ${winner.name}`, `落札額: ${fmt(auction.currentBid)}`, `商品: ${auction.name}`],
+      notifications: [
+        {
+          userId: winner.id,
+          event: "auction_won",
+          data: {
+            auctionId: auction.id,
+            name: auction.name,
+            winningBid: auction.currentBid,
+            reason
+          }
+        }
+      ]
+    };
   }
 
   minimumAuctionBid(auction) {
@@ -2305,6 +2425,50 @@ class EconomyEngine {
       title: needsReview ? "再開しました（審査待ち）" : "再開しました",
       lines: [`#${listing.id} ${listing.name}`, needsReview ? "高額または要注意タイプのため、運営確認後に再公開されます。" : "民営ショップに再公開されました。"],
       panel: this.myListingsPanel(user)
+    };
+  }
+
+  setNotifyEnabled(user, enabled) {
+    const before = Boolean(user.notifyEnabled);
+    const after = Boolean(enabled);
+    user.notifyEnabled = after;
+    if (before === after) {
+      return {
+        ok: false,
+        title: "変化なし",
+        lines: [`すでに通知は${after ? "ON" : "OFF"}です。`],
+        panel: this.notifyPanel(user)
+      };
+    }
+    this.log(user, "notify_toggle", after ? 1 : 0, after ? "通知ON" : "通知OFF");
+    return {
+      ok: true,
+      title: after ? "通知をONにしました" : "通知をOFFにしました",
+      lines: [
+        after
+          ? "承認/却下/売れた/落札/返金/期限切れなどをDMで受け取ります。DM拒否設定の人はログチャンネルに届きます。"
+          : "通知は届きません（ログチャンネルには従来通り記録が残ります）。"
+      ],
+      panel: this.notifyPanel(user)
+    };
+  }
+
+  notifyPanel(user) {
+    const enabled = Boolean(user.notifyEnabled);
+    return {
+      title: "通知設定",
+      description: enabled ? "現在: **通知ON**（DM で受信）" : "現在: **通知OFF**（受信しない）",
+      color: enabled ? 0x22c55e : 0x64748b,
+      fields: [
+        { name: "対象イベント", value: "出品承認/却下/売れた/落札/入札上書き/返金/期限切れ", inline: false },
+        { name: "配信先", value: "設定ONの場合、Botから DM。DM拒否ならログチャンネルに fallback。", inline: false }
+      ],
+      components: [
+        buttons([
+          customButton(enabled ? "通知をOFFにする" : "通知をONにする", "eco:user:notify-toggle", enabled ? "danger" : "success"),
+          panelButton("ホーム", "home")
+        ])
+      ]
     };
   }
 
@@ -3237,7 +3401,8 @@ function createUser(id, name) {
     },
     lastDaily: null,
     lastWork: null,
-    lastSubsidy: null
+    lastSubsidy: null,
+    notifyEnabled: false
   };
 }
 

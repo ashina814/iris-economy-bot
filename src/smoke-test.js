@@ -241,6 +241,67 @@ assert.strictEqual(engine.getUser(payeeA.id, payeeA.name).wallet, payeeAWalletBe
 const salaryInvalid = engine.distributeSalary(engine.getUser(admin.id, admin.name), { entries: [], perUser: "500" });
 assert(!salaryInvalid.ok, "対象0人の配布は失敗する必要があります");
 
+// ショップ拡張 PR2: 通知イベント発火
+const freshPendingResult = engine.createUserListing(engine.getUser(seller.id, seller.name), {
+  name: "通知テスト用サービス",
+  type: "service",
+  mode: "permanent",
+  price: "600",
+  stock: "1",
+  description: "通知テスト用"
+});
+assert(freshPendingResult.ok);
+const freshPending = engine.state.marketplace.listings.find((l) => l.name === "通知テスト用サービス");
+const approvedResult = engine.approveListing(engine.getUser(admin.id, admin.name), freshPending.id);
+assert(Array.isArray(approvedResult.notifications) && approvedResult.notifications.length > 0, "承認結果に通知イベントが含まれる");
+assert.strictEqual(approvedResult.notifications[0].event, "listing_approved", "listing_approved イベント");
+assert.strictEqual(approvedResult.notifications[0].userId, seller.id, "販売者宛て");
+
+// 通知ON/OFF トグル
+const notifyToggle1 = engine.setNotifyEnabled(engine.getUser(actor.id, actor.name), true);
+assert(notifyToggle1.ok, "通知ON トグルが成功");
+assert.strictEqual(engine.getUser(actor.id, actor.name).notifyEnabled, true, "notifyEnabled が true になる");
+const notifyToggle2 = engine.setNotifyEnabled(engine.getUser(actor.id, actor.name), true);
+assert(!notifyToggle2.ok, "同じ状態への切り替えは失敗");
+
+// 期限切れ処理: 期限が過去の timed order を作って expireEndedOrders で expired に
+const expiredOrder = {
+  id: 999999,
+  listingId: "test-listing",
+  itemName: "期限切れテスト",
+  buyerId: buyer.id,
+  buyerName: buyer.name,
+  sellerId: seller.id,
+  sellerName: seller.name,
+  price: 100,
+  fee: 5,
+  mode: "timed",
+  type: "item",
+  manual: false,
+  status: "complete",
+  createdAt: new Date(Date.now() - 86400000).toISOString(),
+  completedAt: new Date(Date.now() - 86400000).toISOString(),
+  expiresAt: new Date(Date.now() - 3600000).toISOString()
+};
+engine.state.marketplace.orders.push(expiredOrder);
+const buyerFresh = engine.getUser(buyer.id, buyer.name);
+engine.ensureShopShape(buyerFresh).inventory.push({
+  orderId: expiredOrder.id,
+  name: expiredOrder.itemName,
+  type: "item",
+  mode: "timed",
+  sellerName: seller.name,
+  acquiredAt: expiredOrder.createdAt,
+  expiresAt: expiredOrder.expiresAt,
+  status: "complete"
+});
+const expireResult = engine.expireEndedOrders();
+assert(expireResult.expired.some((o) => o.id === expiredOrder.id), "期限切れ order が検出される");
+assert.strictEqual(expiredOrder.status, "expired", "order.status が expired");
+const invItem = engine.getUser(buyer.id, buyer.name).marketplace.inventory.find((i) => i.orderId === expiredOrder.id);
+assert.strictEqual(invItem?.status, "expired", "inventory エントリも expired 印");
+assert(expireResult.notifications.some((n) => n.event === "listing_expired" && n.userId === buyer.id), "購入者に期限切れ通知が発火");
+
 // ショップ拡張 PR1: 検索/店ページ/編集/再開/営業ステータス
 const searchAll = engine.searchListings({});
 assert(Array.isArray(searchAll), "searchListings は配列を返す必要があります");
