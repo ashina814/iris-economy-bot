@@ -441,6 +441,7 @@ class EconomyEngine {
       "market-logs": () => this.marketLogsPanel(),
       "admin-balance": () => this.adminBalancePanel(user),
       "admin-rank": () => this.adminRankPanel(user),
+      "search-results": () => this.searchResultsPanel(user),
       lounge: () => ({
         title: "通話ラウンジ",
         description: "VC滞在時間と通常チャットの活動状況を確認できます。",
@@ -926,6 +927,9 @@ class EconomyEngine {
     if (action === "auction-end") return this.forceEndAuction(user, args[1]);
     if (action === "review") return this.panelResult(this.reviewListingPanel(user, args[1]));
     if (action === "order") return this.panelResult(this.adminOrderPanel(user, args[1]));
+    if (action === "shop-view") return this.panelResult(this.shopViewPanel(user, args[1]));
+    if (action === "restart-listing") return this.restartListing(user, args[1]);
+    if (action === "edit-listing") return this.panelResult(this.editListingPromptPanel(user, args[1]));
     if (action === "open-shop") return this.openShop(user);
     if (action === "listing-type") return this.setListingDraft(user, { type: args[1] });
     if (action === "listing-mode") return this.setListingDraft(user, { mode: args[1] });
@@ -1047,9 +1051,14 @@ class EconomyEngine {
 
   userShopsPanel(user) {
     const listings = this.activeListings().slice(0, 25);
+    const openShops = this.openShopSellerIds();
+    const shopEntries = Array.from(openShops)
+      .map((ownerId) => this.state.marketplace.shops[ownerId])
+      .filter(Boolean)
+      .slice(0, 25);
     return {
       title: "民営ショップ",
-      description: listings.length ? "ユーザーが出品している商品です。購入前に詳細と確認を挟みます。" : "出品中の商品はまだありません。",
+      description: listings.length ? "ユーザーが出品している商品です。絞り込みや店ごとの一覧も見られます。" : "出品中の商品はまだありません。",
       color: 0x0f766e,
       fields: listings.slice(0, 6).map((listing) => ({
         name: listing.name,
@@ -1057,14 +1066,96 @@ class EconomyEngine {
         inline: true
       })),
       components: [
+        buttons([
+          customButton("絞り込みで探す", "eco:shop:search-open", "primary"),
+          panelButton("マーケット", "marketplace"),
+          panelButton("自分の店", "my-shop", "success"),
+          panelButton("持ち物", "market-inventory")
+        ]),
         listings.length
           ? select("商品を選ぶ", listings.map((listing) =>
             option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`)))
           : buttons([panelButton("自分の店", "my-shop", "success"), panelButton("マーケット", "marketplace")]),
+        shopEntries.length
+          ? select("店を選ぶ", shopEntries.map((shop) =>
+              option(`${shop.name || `${shop.ownerName}の店`}`.slice(0, 90), `run:marketplace shop-view ${shop.ownerId}`, `${shop.ownerName || ""}`.slice(0, 100) || "店主")
+            ))
+          : buttons([panelButton("マーケット", "marketplace")])
+      ]
+    };
+  }
+
+  shopViewPanel(user, ownerId) {
+    if (!ownerId) return this.userShopsPanel(user);
+    const owner = this.state.users[ownerId];
+    if (!owner || !owner.marketplace?.shopOpened) {
+      return {
+        title: "店が見つかりません",
+        description: "指定された店は存在しないか、まだ開店していません。",
+        color: 0x64748b,
+        fields: [],
+        components: [buttons([panelButton("民営ショップ", "user-shops"), panelButton("マーケット", "marketplace")])]
+      };
+    }
+    const shop = owner.marketplace;
+    const isClosed = (shop.shopStatus || "open") === "closed";
+    const listings = this.sellerListings(ownerId).filter((l) => l.status === "active" && l.stock > 0).slice(0, 25);
+    return {
+      title: `${shop.shopName || `${owner.name}の店`}${isClosed ? "（休業中）" : ""}`,
+      description: shop.shopDescription || "説明はまだありません。",
+      color: isClosed ? 0x64748b : 0x0f766e,
+      fields: [
+        { name: "店主", value: owner.name, inline: true },
+        { name: "営業状況", value: isClosed ? "休業中（購入不可）" : "営業中", inline: true },
+        { name: "出品中", value: `${listings.length}件`, inline: true },
+        ...listings.slice(0, 6).map((listing) => ({
+          name: listing.name,
+          value: `${fmt(listing.price)} / ${saleModeLabel(listing.mode)} / 在庫 ${listing.stock}`,
+          inline: true
+        }))
+      ],
+      components: [
+        listings.length && !isClosed
+          ? select("商品を選ぶ", listings.map((listing) =>
+              option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)}`)
+            ))
+          : buttons([panelButton("民営ショップ", "user-shops")]),
         buttons([
+          panelButton("民営ショップ", "user-shops"),
           panelButton("マーケット", "marketplace"),
-          panelButton("自分の店", "my-shop", "success"),
           panelButton("持ち物", "market-inventory")
+        ])
+      ]
+    };
+  }
+
+  searchResultsPanel(user, filters = {}) {
+    const results = this.searchListings(filters);
+    const summary = [];
+    if (filters.keyword) summary.push(`キーワード: ${filters.keyword}`);
+    if (filters.type) summary.push(`種類: ${filters.type}`);
+    if (filters.minPrice) summary.push(`最低価格: ${filters.minPrice}`);
+    if (filters.maxPrice) summary.push(`最高価格: ${filters.maxPrice}`);
+    const summaryLine = summary.length ? summary.join(" / ") : "条件なし（全商品）";
+    return {
+      title: `絞り込み結果（${results.length}件）`,
+      description: `条件: ${summaryLine}\n上位25件までを表示します。`,
+      color: 0x0f766e,
+      fields: results.slice(0, 6).map((listing) => ({
+        name: listing.name,
+        value: `${fmt(listing.price)} / ${productTypeLabel(listing.type)} / ${listing.sellerName}\n在庫 ${listing.stock}`,
+        inline: true
+      })),
+      components: [
+        results.length
+          ? select("商品を選ぶ", results.slice(0, 25).map((listing) =>
+              option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`)
+            ))
+          : buttons([panelButton("民営ショップ", "user-shops")]),
+        buttons([
+          customButton("再検索", "eco:shop:search-open", "primary"),
+          panelButton("民営ショップ", "user-shops"),
+          panelButton("マーケット", "marketplace")
         ])
       ]
     };
@@ -1088,6 +1179,7 @@ class EconomyEngine {
       components: [
         buttons([
           runButton("購入確認", `marketplace listing-confirm ${listing.id}`, "primary", listing.sellerId === user.id),
+          runButton("この店の他の商品を見る", `marketplace shop-view ${listing.sellerId}`),
           panelButton("民営ショップ", "user-shops"),
           panelButton("マーケット", "marketplace")
         ])
@@ -1158,11 +1250,13 @@ class EconomyEngine {
     const active = this.sellerListings(user.id).filter((listing) => listing.status === "active").length;
     const pending = this.sellerListings(user.id).filter((listing) => listing.status === "pending").length;
     const openOrders = this.sellerOrders(user.id).filter((order) => order.status === "open").length;
+    const isClosed = (shop.shopStatus || "open") === "closed";
     return {
-      title: "自分の店",
+      title: `自分の店${isClosed ? "（休業中）" : ""}`,
       description: shop.shopOpened ? `${shop.shopName}\n${shop.shopDescription || "説明はまだありません。"}` : "店を開くと、商品を出品できるようになります。",
-      color: 0x14b8a6,
+      color: isClosed ? 0x64748b : 0x14b8a6,
       fields: [
+        { name: "営業", value: isClosed ? "休業中（購入不可）" : "営業中", inline: true },
         { name: "売上", value: fmt(shop.sales || 0), inline: true },
         { name: "出品中", value: `${active}件`, inline: true },
         { name: "審査待ち", value: `${pending}件`, inline: true },
@@ -1172,11 +1266,12 @@ class EconomyEngine {
         buttons([
           runButton(shop.shopOpened ? "店を確認" : "店を開く", "marketplace open-shop", "success"),
           customButton("店の設定", "eco:market:shop-settings", "primary", !shop.shopOpened),
+          customButton(isClosed ? "営業を再開する" : "休業中にする", "eco:shop:status-toggle", isClosed ? "success" : "danger", !shop.shopOpened),
           panelButton("商品を出す", "listing-new", "primary", !shop.shopOpened),
-          panelButton("商品を管理", "my-listings"),
-          panelButton("売上を見る", "my-sales")
+          panelButton("商品を管理", "my-listings")
         ]),
         buttons([
+          panelButton("売上を見る", "my-sales"),
           panelButton("取引中の商品", "my-sales"),
           panelButton("民営ショップ", "user-shops"),
           panelButton("マーケット", "marketplace")
@@ -1213,28 +1308,60 @@ class EconomyEngine {
     };
   }
 
+  editListingPromptPanel(user, id) {
+    const listing = this.findListing(id);
+    if (!listing || listing.sellerId !== user.id) return this.myListingsPanel(user);
+    return {
+      title: `編集 #${listing.id} ${listing.name}`,
+      description: "「編集モーダルを開く」を押すと、現在の値が入った状態でモーダルが開きます。変更したいフィールドだけ書き換えて送信してください。",
+      color: 0x14b8a6,
+      fields: [
+        { name: "現在の商品名", value: listing.name, inline: true },
+        { name: "現在の価格", value: fmt(listing.price), inline: true },
+        { name: "現在の在庫", value: `${listing.stock}`, inline: true },
+        { name: "現在のステータス", value: listingStatusLabel(listing.status), inline: true },
+        { name: "現在の説明", value: listing.description || "説明なし", inline: false }
+      ],
+      components: [
+        buttons([
+          customButton("編集モーダルを開く", `eco:shop:edit:${listing.id}`, "primary"),
+          panelButton("商品管理へ戻る", "my-listings"),
+          panelButton("自分の店", "my-shop")
+        ])
+      ]
+    };
+  }
+
   myListingsPanel(user) {
     const listings = this.sellerListings(user.id).slice(0, 10);
+    const editable = listings.filter((l) => !["rejected"].includes(l.status));
+    const stoppable = listings.filter((l) => !["stopped", "rejected"].includes(l.status));
+    const restartable = listings.filter((l) => l.status === "stopped" && l.stock > 0);
     return {
       title: "商品管理",
-      description: listings.length ? "出品中、審査待ち、停止済みの商品を確認できます。" : "まだ出品がありません。",
+      description: listings.length ? "出品中/審査待ち/停止/却下の商品を確認・編集できます。1件を選んで詳細操作します。" : "まだ出品がありません。",
       color: 0x14b8a6,
       fields: listings.map((listing) => ({
         name: `#${listing.id} ${listing.name}`,
-        value: `${listingStatusLabel(listing.status)} / ${fmt(listing.price)} / 在庫 ${listing.stock}\n${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}`,
+        value: `${listingStatusLabel(listing.status)} / ${fmt(listing.price)} / 在庫 ${listing.stock}\n${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}${listing.reviewNote ? `\n却下理由: ${listing.reviewNote}` : ""}`,
         inline: false
       })),
       components: [
-        listings.some((listing) => listing.status !== "stopped")
-          ? select("停止する商品", listings.filter((listing) => listing.status !== "stopped").map((listing) =>
-            option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace stop-listing ${listing.id}`, "出品を停止する")
-          ))
+        editable.length
+          ? select("編集する商品を選ぶ", editable.map((listing) =>
+              option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace edit-listing ${listing.id}`, `${listingStatusLabel(listing.status)} / ${fmt(listing.price)}`)
+            ))
           : buttons([panelButton("商品を出す", "listing-new", "primary"), panelButton("自分の店", "my-shop")]),
-        buttons([
-          panelButton("商品を出す", "listing-new", "primary"),
-          panelButton("自分の店", "my-shop"),
-          panelButton("民営ショップ", "user-shops")
-        ])
+        stoppable.length
+          ? select("停止する商品を選ぶ", stoppable.map((listing) =>
+              option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace stop-listing ${listing.id}`, "出品を停止する")
+            ))
+          : buttons([panelButton("商品を出す", "listing-new", "primary")]),
+        restartable.length
+          ? select("再開する商品を選ぶ（停止済み）", restartable.map((listing) =>
+              option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace restart-listing ${listing.id}`, "再公開する")
+            ))
+          : buttons([panelButton("自分の店", "my-shop"), panelButton("民営ショップ", "user-shops")])
       ]
     };
   }
@@ -1568,11 +1695,13 @@ class EconomyEngine {
       shopOpened: false,
       shopName: "",
       shopDescription: "",
+      shopStatus: "open",
       sales: 0,
       inventory: [],
       listingDraft: { type: "item", mode: "permanent" },
       ...(user.marketplace || {})
     };
+    if (!["open", "closed"].includes(user.marketplace.shopStatus)) user.marketplace.shopStatus = "open";
     user.marketplace.inventory = Array.isArray(user.marketplace.inventory) ? user.marketplace.inventory : [];
     user.marketplace.listingDraft = { type: "item", mode: "permanent", ...(user.marketplace.listingDraft || {}) };
     return user.marketplace;
@@ -1676,6 +1805,10 @@ class EconomyEngine {
     if (!listing || listing.status !== "active") return { ok: false, title: "買えません", lines: ["この商品は現在販売されていません。"] };
     if (listing.sellerId === user.id) return { ok: false, title: "自分の商品です", lines: ["自分の商品は購入できません。"] };
     if (listing.stock <= 0) return { ok: false, title: "在庫切れ", lines: ["この商品は売り切れました。"] };
+    const sellerRef = this.state.users[listing.sellerId];
+    if ((sellerRef?.marketplace?.shopStatus || "open") === "closed") {
+      return { ok: false, title: "現在休業中", lines: ["この店は現在休業中で購入できません。時間をおいてください。"] };
+    }
     if (user.wallet < listing.price) {
       return {
         ok: false,
@@ -2099,7 +2232,120 @@ class EconomyEngine {
   }
 
   activeListings() {
-    return this.state.marketplace.listings.filter((listing) => listing.status === "active" && listing.stock > 0);
+    return this.state.marketplace.listings.filter((listing) => {
+      if (listing.status !== "active" || listing.stock <= 0) return false;
+      const seller = this.state.users[listing.sellerId];
+      const status = seller?.marketplace?.shopStatus || "open";
+      return status === "open";
+    });
+  }
+
+  searchListings({ keyword = "", minPrice = "", maxPrice = "", type = "" } = {}) {
+    const kw = String(keyword || "").toLowerCase().trim();
+    const min = parsePositiveInt(minPrice);
+    const max = parsePositiveInt(maxPrice);
+    const typeMap = { "ロール": "role", "称号": "title", "アイテム": "item", "チケット": "ticket", "権利": "right", "サービス": "service", "セット": "bundle", "セット商品": "bundle" };
+    const typeKey = MARKET_PRODUCT_TYPES[type] ? type : (typeMap[String(type || "").trim()] || null);
+    return this.activeListings().filter((listing) => {
+      if (kw && !String(listing.name).toLowerCase().includes(kw) && !String(listing.description || "").toLowerCase().includes(kw)) return false;
+      if (typeKey && listing.type !== typeKey) return false;
+      if (Number.isFinite(min) && listing.price < min) return false;
+      if (Number.isFinite(max) && listing.price > max) return false;
+      return true;
+    });
+  }
+
+  editListing(user, id, patch = {}) {
+    const listing = this.findListing(id);
+    if (!listing) return { ok: false, title: "商品が見つかりません", lines: [`#${id} は台帳にありません。`] };
+    if (listing.sellerId !== user.id) return { ok: false, title: "自分の商品ではありません", lines: ["自分の出品だけ編集できます。"] };
+    if (["rejected"].includes(listing.status)) return { ok: false, title: "却下済み", lines: ["却下された商品は編集できません。新しく出品してください。"] };
+    const changes = [];
+    if (patch.name != null && String(patch.name).trim() !== "") {
+      const name = cleanMarketText(patch.name, 48);
+      if (name && name !== listing.name) { changes.push(`名前: ${listing.name} → ${name}`); listing.name = name; }
+    }
+    if (patch.price != null && String(patch.price).trim() !== "") {
+      const price = parsePositiveInt(patch.price);
+      if (Number.isFinite(price) && price !== listing.price) { changes.push(`価格: ${fmt(listing.price)} → ${fmt(price)}`); listing.price = price; }
+    }
+    if (patch.stock != null && String(patch.stock).trim() !== "") {
+      const stock = clamp(parsePositiveInt(patch.stock) || 1, 1, 99);
+      if (Number.isFinite(stock) && stock !== listing.stock) { changes.push(`在庫: ${listing.stock} → ${stock}`); listing.stock = stock; }
+    }
+    if (patch.description != null && String(patch.description).trim() !== "") {
+      const desc = cleanMarketText(patch.description, 240);
+      if (desc && desc !== listing.description) { changes.push("説明を更新"); listing.description = desc; }
+    }
+    if (changes.length === 0) return { ok: false, title: "変更がありません", lines: ["少なくとも1つのフィールドを変更してください。"] };
+    listing.updatedAt = new Date().toISOString();
+    if (listing.status === "soldout" && listing.stock > 0) listing.status = "active";
+    this.marketLog(`${user.name} が #${listing.id} を編集: ${changes.slice(0, 3).join(" / ")}`);
+    return {
+      ok: true,
+      title: "商品を更新しました",
+      lines: [`#${listing.id} ${listing.name}`, ...changes],
+      panel: this.myListingsPanel(user)
+    };
+  }
+
+  restartListing(user, id) {
+    const listing = this.findListing(id);
+    if (!listing) return { ok: false, title: "商品が見つかりません", lines: [`#${id} は台帳にありません。`] };
+    if (listing.sellerId !== user.id) return { ok: false, title: "自分の商品ではありません", lines: ["自分の出品だけ再開できます。"] };
+    if (listing.status !== "stopped") return { ok: false, title: "再開できません", lines: [`#${listing.id} は現在 ${listingStatusLabel(listing.status)} です。停止済みの商品だけ再開できます。`] };
+    if (listing.stock <= 0) return { ok: false, title: "在庫切れ", lines: ["在庫が0の商品は再開できません。編集で在庫を増やしてください。"] };
+    const needsReview = listing.price >= this.state.marketplace.settings.reviewPrice || ["role", "title", "right", "service", "bundle"].includes(listing.type);
+    listing.status = needsReview ? "pending" : "active";
+    listing.updatedAt = new Date().toISOString();
+    delete listing.stoppedAt;
+    this.marketLog(`${user.name} が #${listing.id} ${listing.name} を再開しました。${needsReview ? "審査待ち。" : ""}`);
+    return {
+      ok: true,
+      title: needsReview ? "再開しました（審査待ち）" : "再開しました",
+      lines: [`#${listing.id} ${listing.name}`, needsReview ? "高額または要注意タイプのため、運営確認後に再公開されます。" : "民営ショップに再公開されました。"],
+      panel: this.myListingsPanel(user)
+    };
+  }
+
+  setShopStatus(user, statusRaw) {
+    const shop = this.ensureShopShape(user);
+    if (!shop.shopOpened) return { ok: false, title: "店がありません", lines: ["先に「店を開く」を押してください。"] };
+    const target = statusRaw === "closed" ? "closed" : "open";
+    if (shop.shopStatus === target) {
+      return { ok: false, title: "変化なし", lines: [`すでに${target === "open" ? "営業中" : "休業中"}です。`], panel: this.myShopPanel(user) };
+    }
+    shop.shopStatus = target;
+    shop.shopStatusChangedAt = new Date().toISOString();
+    this.state.marketplace.shops[user.id] = {
+      ...this.state.marketplace.shops[user.id],
+      ownerId: user.id,
+      ownerName: user.name,
+      name: shop.shopName,
+      description: shop.shopDescription,
+      shopStatus: target,
+      updatedAt: shop.shopStatusChangedAt
+    };
+    this.marketLog(`${user.name} の店を${target === "open" ? "営業中" : "休業中"}に切り替え。`);
+    return {
+      ok: true,
+      title: target === "open" ? "営業を再開しました" : "休業中にしました",
+      lines: [
+        target === "closed"
+          ? "商品は民営ショップと検索から除外され、購入できなくなります。停止しなくてもOKです。"
+          : "商品が民営ショップと検索に再表示されます。"
+      ],
+      panel: this.myShopPanel(user)
+    };
+  }
+
+  openShopSellerIds() {
+    const ids = new Set();
+    for (const [id, u] of Object.entries(this.state.users || {})) {
+      const shop = u.marketplace;
+      if (shop?.shopOpened && (shop.shopStatus || "open") === "open") ids.add(id);
+    }
+    return ids;
   }
 
   sellerListings(userId) {

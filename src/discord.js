@@ -151,6 +151,14 @@ async function handleInteraction(interaction) {
       await handleBalanceRoleAmountModal(interaction);
       return;
     }
+    if (interaction.customId === "eco:modal:shop-search") {
+      await handleShopSearchModal(interaction);
+      return;
+    }
+    if (interaction.customId.startsWith("eco:modal:shop-edit:")) {
+      await handleShopEditModal(interaction);
+      return;
+    }
   }
 
   if (interaction.isUserSelectMenu()) {
@@ -258,6 +266,18 @@ async function handleInteraction(interaction) {
     }
     if (command.startsWith("balance-role-cancel ")) {
       await cancelBalanceRoleSession(interaction, command.split(/\s+/)[1]);
+      return;
+    }
+    if (command === "shop-search-open") {
+      await showShopSearchModal(interaction);
+      return;
+    }
+    if (command === "shop-status-toggle") {
+      await handleShopStatusToggle(interaction);
+      return;
+    }
+    if (command.startsWith("shop-edit ")) {
+      await showShopEditModal(interaction, command.split(/\s+/)[1]);
       return;
     }
     if (command.startsWith("salary-execute ")) {
@@ -1351,6 +1371,140 @@ async function executeBalanceRoleSet(interaction, sessionId) {
 async function cancelBalanceRoleSession(interaction, sessionId) {
   salarySessions.delete(sessionId);
   await interaction.reply({ content: "ロール一括セットをキャンセルしました。", ephemeral: true });
+}
+
+async function showShopSearchModal(interaction) {
+  const modal = new ModalBuilder()
+    .setCustomId("eco:modal:shop-search")
+    .setTitle("民営ショップを絞り込む");
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("keyword")
+        .setLabel("キーワード（商品名/説明に含まれる文字、任意）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(48)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("type")
+        .setLabel("種類（アイテム/チケット/権利/サービス/称号/ロール/セット、任意）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(20)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("minPrice")
+        .setLabel("最低価格（Ris、任意）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(12)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("maxPrice")
+        .setLabel("最高価格（Ris、任意）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(12)
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleShopSearchModal(interaction) {
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const filters = {
+    keyword: interaction.fields.getTextInputValue("keyword") || "",
+    type: interaction.fields.getTextInputValue("type") || "",
+    minPrice: interaction.fields.getTextInputValue("minPrice") || "",
+    maxPrice: interaction.fields.getTextInputValue("maxPrice") || ""
+  };
+  const panel = engine.searchResultsPanel(user, filters);
+  const result = { ok: true, title: panel.title, lines: [panel.description], panel };
+  decorateResultForDiscord(result, interaction);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function showShopEditModal(interaction, listingId) {
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const listing = engine.state.marketplace.listings.find((l) => String(l.id) === String(listingId));
+  if (!listing || listing.sellerId !== user.id) {
+    await interaction.reply({ content: "この商品を編集する権限がありません。", ephemeral: true });
+    return;
+  }
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:shop-edit:${listing.id}`)
+    .setTitle(`編集 #${listing.id}`);
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("name")
+        .setLabel("商品名（空欄で変更なし）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(48)
+        .setValue(listing.name || "")
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("price")
+        .setLabel("価格（Ris、空欄で変更なし）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(12)
+        .setValue(String(listing.price || ""))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("stock")
+        .setLabel("在庫（1〜99、空欄で変更なし）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(3)
+        .setValue(String(listing.stock || ""))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("description")
+        .setLabel("説明（空欄で変更なし）")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setMaxLength(240)
+        .setValue(listing.description || "")
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleShopEditModal(interaction) {
+  const listingId = interaction.customId.split(":")[3];
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.editListing(user, listingId, {
+    name: interaction.fields.getTextInputValue("name") || null,
+    price: interaction.fields.getTextInputValue("price") || null,
+    stock: interaction.fields.getTextInputValue("stock") || null,
+    description: interaction.fields.getTextInputValue("description") || null
+  });
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleShopStatusToggle(interaction) {
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const current = user.marketplace?.shopStatus || "open";
+  const target = current === "open" ? "closed" : "open";
+  const result = engine.setShopStatus(user, target);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
 }
 
 async function handleReviewButton(interaction) {
@@ -2694,6 +2848,9 @@ function commandFromComponent(interaction) {
     if (parts[1] === "admin" && parts[2] === "balance-role-set") return "balance-role-set";
     if (parts[1] === "admin" && parts[2] === "balance-role-execute") return `balance-role-execute ${parts[3]}`;
     if (parts[1] === "admin" && parts[2] === "balance-role-cancel") return `balance-role-cancel ${parts[3]}`;
+    if (parts[1] === "shop" && parts[2] === "search-open") return "shop-search-open";
+    if (parts[1] === "shop" && parts[2] === "status-toggle") return "shop-status-toggle";
+    if (parts[1] === "shop" && parts[2] === "edit") return `shop-edit ${parts[3]}`;
     return null;
   }
 

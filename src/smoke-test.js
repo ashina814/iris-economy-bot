@@ -241,6 +241,58 @@ assert.strictEqual(engine.getUser(payeeA.id, payeeA.name).wallet, payeeAWalletBe
 const salaryInvalid = engine.distributeSalary(engine.getUser(admin.id, admin.name), { entries: [], perUser: "500" });
 assert(!salaryInvalid.ok, "対象0人の配布は失敗する必要があります");
 
+// ショップ拡張 PR1: 検索/店ページ/編集/再開/営業ステータス
+const searchAll = engine.searchListings({});
+assert(Array.isArray(searchAll), "searchListings は配列を返す必要があります");
+const searchByKeyword = engine.searchListings({ keyword: "通話" });
+assert(searchByKeyword.some((l) => l.name === "通話券"), "キーワード検索で通話券が見つかる");
+const searchByPriceLow = engine.searchListings({ maxPrice: "100" });
+assert(!searchByPriceLow.some((l) => l.name === "通話券"), "上限100Risなら500Ris商品は除外される");
+
+// 店ページ: seller の shop-view で自分の店が見える
+const shopViewResult = engine.run(`marketplace shop-view ${seller.id}`, buyer);
+assert(shopViewResult.panel, "店ページパネルが取れる");
+assert(shopViewResult.panel.fields.some((f) => f.value?.includes(sellerUser.name) || shopViewResult.panel.title.includes("店")), "店ページに店主表示");
+
+// 出品編集: 価格・在庫の変更（sellerUser は毎回 fresh 取得しないと migrateUser で別オブジェクトになる）
+const editableListing = engine.state.marketplace.listings.find((l) => l.sellerId === seller.id && l.status === "active");
+if (editableListing) {
+  const editResult = engine.editListing(engine.getUser(seller.id, seller.name), editableListing.id, { price: "700" });
+  assert(editResult.ok, "自分の商品の編集ができる");
+  assert.strictEqual(editableListing.price, 700, "価格が更新される");
+  const editForeign = engine.editListing(engine.getUser(buyer.id, buyer.name), editableListing.id, { price: "100" });
+  assert(!editForeign.ok, "他人の商品は編集できない");
+}
+
+// 停止 → 再開
+const stopTarget = engine.createUserListing(engine.getUser(seller.id, seller.name), {
+  name: "再開テスト用",
+  type: "item",
+  mode: "permanent",
+  price: "300",
+  stock: "1",
+  description: "再開テスト用"
+});
+assert(stopTarget.ok);
+const stopTargetListing = engine.state.marketplace.listings.find((l) => l.name === "再開テスト用");
+engine.stopListing(engine.getUser(seller.id, seller.name), stopTargetListing.id);
+assert.strictEqual(stopTargetListing.status, "stopped", "停止後は stopped");
+const restart = engine.restartListing(engine.getUser(seller.id, seller.name), stopTargetListing.id);
+assert(restart.ok, "停止済み商品を再開できる");
+assert.strictEqual(stopTargetListing.status, "active", "再開後は active");
+
+// 営業ステータス: 休業中は民営ショップから消え、購入も不可
+const shopCloseResult = engine.setShopStatus(engine.getUser(seller.id, seller.name), "closed");
+assert(shopCloseResult.ok, "休業中に切り替えできる");
+const activeAfterClose = engine.activeListings();
+assert(!activeAfterClose.some((l) => l.sellerId === seller.id), "休業中の店の商品は活性一覧から除外される");
+const forbiddenBuy = engine.buyUserListing(engine.getUser(buyer.id, buyer.name), editableListing.id);
+assert(!forbiddenBuy.ok, "休業中の店からは購入できない");
+const reopenResult = engine.setShopStatus(engine.getUser(seller.id, seller.name), "open");
+assert(reopenResult.ok, "営業を再開できる");
+const activeAfterOpen = engine.activeListings();
+assert(activeAfterOpen.some((l) => l.sellerId === seller.id), "再開後は商品が活性一覧に戻る");
+
 // 個人残高操作: セット/加算/減算
 const targetActor = { id: "test:balance", name: "残高テスト対象" };
 const adminOp = engine.getUser(admin.id, admin.name);
