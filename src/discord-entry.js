@@ -182,6 +182,16 @@ function patchRankingSource(source) {
     `      lines.push(\`\${userMention(self, memberRecordForUser(self, memberDirectory))} - \${spec.label(spec.score(self), self)}\`);`
   );
 
+  content = content.replace(
+    `function handleXpSettingsCommand(engine, input) {`,
+    `function stableAdminRankPanel(engine) {\n  const settings = engine.xpSettings ? engine.xpSettings() : DEFAULT_XP_SETTINGS;\n  const panel = {\n    title: "ランク設定",\n    description: "ランク確認パネル、昇格通知先、TC/VC XP設定を管理します。",\n    color: 0x334155,\n    fields: [\n      { name: "ランク確認パネル", value: "このチャンネルに住民向けの常設ランキングパネルを送信できます。", inline: false },\n      { name: "昇格通知", value: "通知先をこのチャンネルに設定、または解除できます。", inline: true },\n      { name: "TC/VC XP設定", value: xpSettingsSummary(settings), inline: true }\n    ],\n    components: [\n      buttons([\n        { kind: "custom", label: "ランク確認パネル送信", customId: "eco:admin:rank-panel-post", style: "primary" },\n        { kind: "custom", label: "通知先をここにする", customId: "eco:admin:rank-notify-set", style: "success" },\n        { kind: "custom", label: "通知先解除", customId: "eco:admin:rank-notify-clear", style: "danger" }\n      ]),\n      buttons([\n        panelButton("XP設定", "rank-xp-settings", "primary"),\n        panelButton("運営パネル", "admin")\n      ])\n    ]\n  };\n  return { ok: true, title: panel.title, lines: [panel.description, xpSettingsSummary(settings)], panel };\n}\n\nfunction handleXpSettingsCommand(engine, input) {`
+  );
+
+  content = content.replace(
+    `  if (LOUNGE_PANEL_IDS.has(panelId)) return loungeRemovedResult();\n  if (panelId === "rank-xp-settings" || panelId === "xp-settings") return xpSettingsPanel(this);`,
+    `  if (LOUNGE_PANEL_IDS.has(panelId)) return loungeRemovedResult();\n  if (panelId === "admin-rank" || panelId === "rank-settings") return stableAdminRankPanel(this);\n  if (panelId === "rank-xp-settings" || panelId === "xp-settings") return xpSettingsPanel(this);`
+  );
+
   return content;
 }
 
