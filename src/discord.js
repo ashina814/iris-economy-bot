@@ -9,13 +9,24 @@ const LOUNGE_PANEL_IDS = new Set(["lounge", "通話", "ラウンジ", "通話ラ
 const MANUAL_VOICE_SETTLEMENT_COMMANDS = new Set(["vc", "voice", "claimvc", "通話報酬", "vc精算", "通話精算"]);
 const RANK_BALANCE_VERSION = 20260708;
 const CURRENCY_CODE = "Ris";
-const TEXT_XP_COOLDOWN_MS = 60 * 1000;
-const TEXT_XP_MIN = 1;
-const TEXT_XP_MAX = 2;
-const TEXT_DRIP_MIN = 1;
-const TEXT_DRIP_MAX = 4;
-const VC_XP_PER_MINUTE = 1;
 const VC_MAX_CLAIM_MINUTES = 240;
+const DEFAULT_XP_SETTINGS = Object.freeze({
+  textCooldownSec: 60,
+  textXpMin: 1,
+  textXpMax: 2,
+  textDripMin: 1,
+  textDripMax: 4,
+  vcXpPerMinute: 1
+});
+
+const XP_SETTING_LIMITS = Object.freeze({
+  textCooldownSec: [15, 300],
+  textXpMin: [1, 20],
+  textXpMax: [1, 30],
+  textDripMin: [0, 100],
+  textDripMax: [0, 200],
+  vcXpPerMinute: [1, 20]
+});
 
 const TUNED_RANK_THRESHOLDS = [
   0,
@@ -211,8 +222,49 @@ function retuneResultValue(value, user) {
   return next;
 }
 
-function retuneResult(result, user) {
-  return retuneResultValue(sanitizeResult(result), user);
+function retuneResult(result, user, engine = null) {
+  return decorateTunedPanels(retuneResultValue(sanitizeResult(result), user), engine);
+}
+
+function decorateTunedPanels(result, engine) {
+  const panel = result?.panel;
+  if (!panel || typeof panel !== "object") return result;
+
+  if (panel.title === "運営パネル") {
+    panel.fields ||= [];
+    if (!panel.fields.some((field) => field?.name === "TC/VC XP設定")) {
+      panel.fields.splice(3, 0, {
+        name: "TC/VC XP設定",
+        value: "TC獲得XP、TCクールダウン、VC XP/分を調整できます。",
+        inline: true
+      });
+    }
+
+    panel.components ||= [];
+    const row = panel.components.find((component) => component?.type === "buttons" && Array.isArray(component.items));
+    if (row && !row.items.some((item) => item?.panel === "rank-xp-settings")) {
+      row.items.splice(Math.max(0, row.items.length - 1), 0, panelButton("XP設定", "rank-xp-settings"));
+    }
+  }
+
+  if (panel.title === "ランク設定") {
+    panel.fields ||= [];
+    if (!panel.fields.some((field) => field?.name === "TC/VC XP設定")) {
+      panel.fields.push({
+        name: "TC/VC XP設定",
+        value: engine ? xpSettingsSummary(engine.xpSettings()) : "管理パネルのXP設定から変更できます。",
+        inline: false
+      });
+    }
+
+    panel.components ||= [];
+    panel.components.push(buttons([
+      panelButton("XP設定", "rank-xp-settings", "primary"),
+      panelButton("運営パネル", "admin")
+    ]));
+  }
+
+  return result;
 }
 
 function rankFor(ranks, value) {
@@ -290,6 +342,18 @@ function cooldownRemaining(lastIso, now, durationMs) {
   return Math.max(0, durationMs - elapsed);
 }
 
+function buttons(items) {
+  return { type: "buttons", items };
+}
+
+function runButton(label, command, style = "secondary", disabled = false) {
+  return { kind: "run", label, command, style, disabled };
+}
+
+function panelButton(label, panel, style = "secondary", disabled = false) {
+  return { kind: "panel", label, panel, style, disabled };
+}
+
 function normalizeActivity(user) {
   user.activity ||= {};
   user.activity.textXp = Math.max(0, Math.floor(Number(user.activity.textXp) || 0));
@@ -300,16 +364,151 @@ function normalizeActivity(user) {
   user.activity.vcDailyMinutes = Math.max(0, Math.floor(Number(user.activity.vcDailyMinutes) || 0));
 }
 
-function applyRankBalanceMigration(state) {
-  if (!state || typeof state !== "object" || !state.users || state.rankBalanceVersion === RANK_BALANCE_VERSION) return false;
-  for (const user of Object.values(state.users || {})) {
-    if (!user || typeof user !== "object") continue;
-    normalizeActivity(user);
-    user.activity.textXp = Math.floor(user.activity.textXp / 8);
-    user.activity.vcXp = user.activity.vcMinutes > 0 ? user.activity.vcMinutes : Math.floor(user.activity.vcXp / 6);
+function cleanXpSettings(raw = {}) {
+  const settings = { ...DEFAULT_XP_SETTINGS, ...(raw || {}) };
+  for (const [key, [min, max]] of Object.entries(XP_SETTING_LIMITS)) {
+    settings[key] = clamp(Math.floor(Number(settings[key]) || DEFAULT_XP_SETTINGS[key]), min, max);
   }
-  state.rankBalanceVersion = RANK_BALANCE_VERSION;
-  return true;
+  if (settings.textXpMax < settings.textXpMin) settings.textXpMax = settings.textXpMin;
+  if (settings.textDripMax < settings.textDripMin) settings.textDripMax = settings.textDripMin;
+  return settings;
+}
+
+function getXpSettings(state) {
+  state.rankXpSettings = cleanXpSettings(state.rankXpSettings);
+  return state.rankXpSettings;
+}
+
+function applyXpPreset(state, preset) {
+  if (preset === "light") {
+    state.rankXpSettings = cleanXpSettings({
+      textCooldownSec: 45,
+      textXpMin: 2,
+      textXpMax: 3,
+      textDripMin: 2,
+      textDripMax: 6,
+      vcXpPerMinute: 2
+    });
+  } else if (preset === "heavy") {
+    state.rankXpSettings = cleanXpSettings({
+      textCooldownSec: 90,
+      textXpMin: 1,
+      textXpMax: 1,
+      textDripMin: 1,
+      textDripMax: 3,
+      vcXpPerMinute: 1
+    });
+  } else {
+    state.rankXpSettings = cleanXpSettings(DEFAULT_XP_SETTINGS);
+  }
+  return state.rankXpSettings;
+}
+
+function adjustXpSetting(state, key, delta) {
+  const settings = getXpSettings(state);
+  if (!(key in XP_SETTING_LIMITS)) return settings;
+  settings[key] += delta;
+  state.rankXpSettings = cleanXpSettings(settings);
+  return state.rankXpSettings;
+}
+
+function xpSettingsSummary(settings) {
+  return [
+    `TC XP: ${settings.textXpMin}〜${settings.textXpMax} / 有効発言`,
+    `TC CD: ${settings.textCooldownSec}秒`,
+    `TC Ris: ${settings.textDripMin}〜${settings.textDripMax} / 有効発言`,
+    `VC XP: ${settings.vcXpPerMinute} / 分`
+  ].join("\n");
+}
+
+function xpSettingsPanel(engine, message = null) {
+  const settings = engine.xpSettings();
+  return {
+    ok: true,
+    title: "TC/VC XP設定",
+    lines: [
+      message,
+      xpSettingsSummary(settings),
+      "",
+      "軽め: TC 2〜3XP/45秒、VC 2XP/分",
+      "標準: TC 1〜2XP/60秒、VC 1XP/分",
+      "重め: TC 1XP/90秒、VC 1XP/分"
+    ].filter(Boolean),
+    panel: {
+      title: "TC/VC XP設定",
+      description: "TCとVCのXP獲得量を調整します。変更は次の発言・VC精算から反映されます。",
+      color: 0x7c3aed,
+      fields: [
+        { name: "現在値", value: xpSettingsSummary(settings), inline: false },
+        { name: "ランク基準", value: "Lv21 アイリス = 90,000 XP / VC換算1500時間（VC 1XP/分の標準時）", inline: false }
+      ],
+      components: [
+        buttons([
+          runButton("軽め", "rankxp preset light", "success"),
+          runButton("標準", "rankxp preset standard", "primary"),
+          runButton("重め", "rankxp preset heavy", "danger"),
+          panelButton("運営パネル", "admin")
+        ]),
+        buttons([
+          runButton("TC上限 +1", "rankxp adjust textXpMax 1"),
+          runButton("TC上限 -1", "rankxp adjust textXpMax -1"),
+          runButton("TC下限 +1", "rankxp adjust textXpMin 1"),
+          runButton("TC下限 -1", "rankxp adjust textXpMin -1")
+        ]),
+        buttons([
+          runButton("TC CD -15秒", "rankxp adjust textCooldownSec -15"),
+          runButton("TC CD +15秒", "rankxp adjust textCooldownSec 15"),
+          runButton("VC XP +1", "rankxp adjust vcXpPerMinute 1"),
+          runButton("VC XP -1", "rankxp adjust vcXpPerMinute -1")
+        ])
+      ]
+    }
+  };
+}
+
+function handleXpSettingsCommand(engine, input) {
+  const parts = String(input || "").trim().split(/\s+/);
+  const action = String(parts[1] || "show").toLowerCase();
+
+  if (action === "show") return xpSettingsPanel(engine);
+  if (action === "preset") {
+    const preset = String(parts[2] || "standard").toLowerCase();
+    applyXpPreset(engine.state, preset);
+    return xpSettingsPanel(engine, `プリセット「${preset === "light" ? "軽め" : preset === "heavy" ? "重め" : "標準"}」を適用しました。`);
+  }
+
+  if (action === "adjust") {
+    const key = parts[2];
+    const delta = Math.floor(Number(parts[3]) || 0);
+    if (!key || !delta || !(key in XP_SETTING_LIMITS)) {
+      return { ok: false, title: "XP設定エラー", lines: ["調整対象または増減値が不正です。"] };
+    }
+    adjustXpSetting(engine.state, key, delta);
+    return xpSettingsPanel(engine, "XP設定を更新しました。");
+  }
+
+  return xpSettingsPanel(engine);
+}
+
+function applyRankBalanceMigration(state) {
+  if (!state || typeof state !== "object" || !state.users) return false;
+  let changed = false;
+
+  if (state.rankBalanceVersion !== RANK_BALANCE_VERSION) {
+    for (const user of Object.values(state.users || {})) {
+      if (!user || typeof user !== "object") continue;
+      normalizeActivity(user);
+      user.activity.textXp = Math.floor(user.activity.textXp / 8);
+      user.activity.vcXp = user.activity.vcMinutes > 0 ? user.activity.vcMinutes : Math.floor(user.activity.vcXp / 6);
+    }
+    state.rankBalanceVersion = RANK_BALANCE_VERSION;
+    changed = true;
+  }
+
+  const beforeSettings = JSON.stringify(state.rankXpSettings || null);
+  state.rankXpSettings = cleanXpSettings(state.rankXpSettings);
+  if (JSON.stringify(state.rankXpSettings) !== beforeSettings) changed = true;
+  return changed;
 }
 
 const originalStoreLoad = JsonStore.prototype.load;
@@ -333,6 +532,10 @@ class TunedEconomyEngine extends OriginalEconomyEngine {
       if (user?.joined) this.updateTitle(user);
     }
   }
+
+  xpSettings() {
+    return getXpSettings(this.state);
+  }
 }
 
 economy.EconomyEngine = TunedEconomyEngine;
@@ -342,17 +545,22 @@ const originalPanel = OriginalEconomyEngine.prototype.panel;
 const originalUpdateTitle = OriginalEconomyEngine.prototype.updateTitle;
 
 TunedEconomyEngine.prototype.run = function patchedRun(input, actor) {
-  if (isLoungeCommand(input)) return loungeRemovedResult();
-  if (isManualVoiceSettlementCommand(input)) return automaticVoiceSettlementResult();
+  const text = String(input || "").trim();
+  if (isLoungeCommand(text)) return loungeRemovedResult();
+  if (isManualVoiceSettlementCommand(text)) return automaticVoiceSettlementResult();
+  if (/^rankxp(?:\s|$)/i.test(text) || /^xp-settings(?:\s|$)/i.test(text)) return handleXpSettingsCommand(this, text);
+  if (/^panel\s+rank-xp-settings$/i.test(text)) return xpSettingsPanel(this);
+
   const result = originalRun.call(this, input, actor);
   const user = actor?.id ? this.getUser(actor.id, actor.name) : null;
-  return retuneResult(result, user);
+  return retuneResult(result, user, this);
 };
 
 TunedEconomyEngine.prototype.panel = function patchedPanel(user, panelIdRaw = "home") {
   const panelId = normalizePanelId(panelIdRaw);
   if (LOUNGE_PANEL_IDS.has(panelId)) return loungeRemovedResult();
-  return retuneResult(originalPanel.call(this, user, panelIdRaw), user);
+  if (panelId === "rank-xp-settings" || panelId === "xp-settings") return xpSettingsPanel(this);
+  return retuneResult(originalPanel.call(this, user, panelIdRaw), user, this);
 };
 
 TunedEconomyEngine.prototype.textLevel = function patchedTextLevel(user) {
@@ -384,14 +592,15 @@ TunedEconomyEngine.prototype.updateTitle = function patchedUpdateTitle(user) {
 
 TunedEconomyEngine.prototype.awardTextActivity = function patchedAwardTextActivity(actor, meta = {}) {
   const user = this.getUser(actor.id, actor.name);
+  const settings = this.xpSettings();
   const now = this.now();
-  const cooldownMs = meta.cooldownMs ?? TEXT_XP_COOLDOWN_MS;
+  const cooldownMs = meta.cooldownMs ?? settings.textCooldownSec * 1000;
   const remaining = cooldownRemaining(user.activity.lastTextAt, now, cooldownMs);
   if (remaining > 0) return null;
 
   const before = rankFor(TEXT_RANKS, user.activity.textXp || 0);
-  const xp = randInt(this.rng, TEXT_XP_MIN, TEXT_XP_MAX);
-  const drip = randInt(this.rng, TEXT_DRIP_MIN, TEXT_DRIP_MAX);
+  const xp = randInt(this.rng, settings.textXpMin, settings.textXpMax);
+  const drip = randInt(this.rng, settings.textDripMin, settings.textDripMax);
   user.activity.textXp = Math.max(0, Math.floor(Number(user.activity.textXp) || 0)) + xp;
   user.activity.textMessages = Math.max(0, Math.floor(Number(user.activity.textMessages) || 0)) + 1;
   user.activity.lastTextAt = now.toISOString();
@@ -431,11 +640,12 @@ TunedEconomyEngine.prototype.awardTextActivity = function patchedAwardTextActivi
 
 TunedEconomyEngine.prototype.awardVoiceMinutes = function patchedAwardVoiceMinutes(user, minutes, options = {}) {
   this.resetVoiceDay(user);
+  const settings = this.xpSettings();
   const before = rankFor(VC_RANKS, user.activity.vcXp || 0);
   const cappedMinutes = Math.min(Math.max(0, Math.floor(Number(minutes) || 0)), VC_MAX_CLAIM_MINUTES);
   if (cappedMinutes <= 0) return { noop: true };
 
-  const xp = cappedMinutes * VC_XP_PER_MINUTE;
+  const xp = cappedMinutes * settings.vcXpPerMinute;
   const salaryPerMinute = this.voiceSalaryPerMinute(user);
   const rawDrip = Math.floor(cappedMinutes * salaryPerMinute);
   const remaining = Math.max(0, this.voiceDailyCap(user) - user.activity.vcDailyEarned);
@@ -542,7 +752,7 @@ TunedEconomyEngine.prototype.cardScore = function patchedCardScore(user) {
 TunedEconomyEngine.prototype.leaderboard = function patchedLeaderboard(typeRaw = "net") {
   const type = String(typeRaw || "net").toLowerCase();
   if (!["text", "txt", "vc", "voice"].includes(type)) {
-    return retuneResult(OriginalEconomyEngine.prototype.leaderboard.call(this, typeRaw), null);
+    return retuneResult(OriginalEconomyEngine.prototype.leaderboard.call(this, typeRaw), null, this);
   }
 
   const users = Object.values(this.state.users).filter((user) => user.joined);
@@ -561,6 +771,15 @@ TunedEconomyEngine.prototype.leaderboard = function patchedLeaderboard(typeRaw =
     title,
     lines: ranked.map((entry, index) => `${index + 1}. ${entry.user.name} - ${rankFor(ranks, entry.value).name} / 経験値 ${entry.value}`)
   };
+};
+
+TunedEconomyEngine.prototype.voiceRewardLine = function patchedVoiceRewardLine(user) {
+  this.resetVoiceDay(user);
+  const settings = this.xpSettings();
+  const cap = this.voiceDailyCap(user);
+  const remaining = Math.max(0, cap - user.activity.vcDailyEarned);
+  const state = user.activity.voiceJoinedAt ? "在室中" : "未接続";
+  return `${state} / VCレベル ${this.vcLevel(user)} / 給与 ${fmt(this.voiceSalaryPerMinute(user))}/分 / VC経験値 ${settings.vcXpPerMinute}/分 / 今日 ${fmt(user.activity.vcDailyEarned)} / ${fmt(cap)} / 残り ${fmt(remaining)}`;
 };
 
 function renderTunedPlayerCardLines(data) {
