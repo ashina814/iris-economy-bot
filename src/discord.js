@@ -538,7 +538,7 @@ function buildSlashCommands() {
 function commandFromSlash(interaction) {
   switch (interaction.commandName) {
     case "アイリス":
-      return { command: "panel home", ephemeral: false, adminOnly: false };
+      return { command: "panel home", ephemeral: true, adminOnly: false };
     case "カード":
       return { command: "card", ephemeral: false, adminOnly: false };
     case "宿": {
@@ -546,7 +546,7 @@ function commandFromSlash(interaction) {
       return { command: `panel ${panel}`, ephemeral: false, adminOnly: true };
     }
     case "マーケット":
-      return { command: "panel marketplace", ephemeral: false, adminOnly: false };
+      return { command: "panel marketplace", ephemeral: true, adminOnly: false };
     case "自分の店":
       return { command: "panel my-shop", ephemeral: true, adminOnly: false };
     case "送金":
