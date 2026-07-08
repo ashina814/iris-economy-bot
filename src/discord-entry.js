@@ -8,6 +8,8 @@ const discord = require("discord.js");
 const memberDirectoryByGuild = new Map();
 const prefix = process.env.BOT_PREFIX || "!eco";
 const targetDiscordEntrypoint = path.join(__dirname, "discord.js");
+const targetDiscordCoreEntrypoint = path.join(__dirname, "discord-core.js");
+const targetEconomyEntrypoint = path.join(__dirname, "economy.js");
 
 function extractDiscordUserId(internalUserId) {
   const text = String(internalUserId || "");
@@ -143,19 +145,50 @@ function installDiscordEntrypointTransform() {
 
   const originalLoader = Module._extensions[".js"];
   Module._extensions[".js"] = function irisRankingTransform(module, filename) {
-    if (path.resolve(filename) !== path.resolve(targetDiscordEntrypoint)) {
-      return originalLoader(module, filename);
+    const resolved = path.resolve(filename);
+    let content = null;
+    if (resolved === path.resolve(targetDiscordEntrypoint)) {
+      content = patchRankingSource(fs.readFileSync(filename, "utf8"));
+    } else if (resolved === path.resolve(targetDiscordCoreEntrypoint)) {
+      content = patchBumpUpSource(fs.readFileSync(filename, "utf8"));
+    } else if (resolved === path.resolve(targetEconomyEntrypoint)) {
+      content = patchBumpUpLabels(fs.readFileSync(filename, "utf8"));
     }
 
-    let content = fs.readFileSync(filename, "utf8");
-    content = patchRankingSource(content);
+    if (content === null) return originalLoader(module, filename);
     return module._compile(content, filename);
   };
   Module._extensions[".js"].__irisRankingTransformPatched = true;
 }
 
+function patchBumpUpLabels(source) {
+  return source
+    .replaceAll("Bumpランキング", "Bump/Upランキング")
+    .replaceAll("Bump階級", "Bump/Up階級")
+    .replaceAll("Bump受付", "Bump/Up受付")
+    .replaceAll("Bumpしました", "Bump/Upしました")
+    .replaceAll("Bump ${fmt", "Bump/Up ${fmt")
+    .replaceAll("Bump: DISBOARD", "Bump/Up: DISBOARD")
+    .replaceAll("Bump の", "Bump/Up の")
+    .replaceAll("Bump 回数", "Bump/Up 回数");
+}
+
+function patchBumpUpSource(source) {
+  let content = patchBumpUpLabels(source);
+  content = content.replace(
+    `    const description = message.embeds?.[0]?.description || "";\n    if (!description.includes("表示順をアップ") && !/Bump done/i.test(description)) return;`,
+    `    const description = message.embeds?.[0]?.description || "";\n    const bumpText = [description, message.content || ""].join("\\n");\n    const isBumpOrUp = description.includes("表示順をアップ")\n      || /Bump done/i.test(bumpText)\n      || /Up done/i.test(bumpText)\n      || /\\/(?:bump|up)\\b/i.test(bumpText)\n      || /(?:bump|up)\\s*(?:done|success|complete|完了|成功)/i.test(bumpText);\n    if (!isBumpOrUp) return;`
+  );
+  content = content
+    .replaceAll("Bumpありがとう", "Bump/Upありがとう")
+    .replaceAll("Bump階級昇格", "Bump/Up階級昇格")
+    .replaceAll("Bump のランク", "Bump/Up のランク")
+    .replaceAll("Bump 回数", "Bump/Up 回数");
+  return content;
+}
+
 function patchRankingSource(source) {
-  let content = source;
+  let content = patchBumpUpLabels(source);
 
   content = content.replace(
     `function userMention(user) {\n  const discordId = extractDiscordUserId(user?.id);\n  return discordId ? \`<@\${discordId}>\` : (user?.name || "名無し");\n}\n`,
@@ -180,6 +213,16 @@ function patchRankingSource(source) {
   content = content.replace(
     `      lines.push(\`\${userMention(self)} - \${spec.label(spec.score(self), self)}\`);`,
     `      lines.push(\`\${userMention(self, memberRecordForUser(self, memberDirectory))} - \${spec.label(spec.score(self), self)}\`);`
+  );
+
+  content = content.replace(
+    `function handleXpSettingsCommand(engine, input) {`,
+    `function stableAdminRankPanel(engine) {\n  const settings = engine.xpSettings ? engine.xpSettings() : DEFAULT_XP_SETTINGS;\n  const panel = {\n    title: "ランク設定",\n    description: "ランク確認パネル、昇格通知先、TC/VC XP設定を管理します。",\n    color: 0x334155,\n    fields: [\n      { name: "ランク確認パネル", value: "このチャンネルに住民向けの常設ランキングパネルを送信できます。", inline: false },\n      { name: "昇格通知", value: "通知先をこのチャンネルに設定、または解除できます。", inline: true },\n      { name: "TC/VC XP設定", value: xpSettingsSummary(settings), inline: true }\n    ],\n    components: [\n      buttons([\n        { kind: "custom", label: "ランク確認パネル送信", customId: "eco:admin:rank-panel-post", style: "primary" },\n        { kind: "custom", label: "通知先をここにする", customId: "eco:admin:rank-notify-set", style: "success" },\n        { kind: "custom", label: "通知先解除", customId: "eco:admin:rank-notify-clear", style: "danger" }\n      ]),\n      buttons([\n        panelButton("XP設定", "rank-xp-settings", "primary"),\n        panelButton("運営パネル", "admin")\n      ])\n    ]\n  };\n  return { ok: true, title: panel.title, lines: [panel.description, xpSettingsSummary(settings)], panel };\n}\n\nfunction handleXpSettingsCommand(engine, input) {`
+  );
+
+  content = content.replace(
+    `  if (LOUNGE_PANEL_IDS.has(panelId)) return loungeRemovedResult();\n  if (panelId === "rank-xp-settings" || panelId === "xp-settings") return xpSettingsPanel(this);`,
+    `  if (LOUNGE_PANEL_IDS.has(panelId)) return loungeRemovedResult();\n  if (panelId === "admin-rank" || panelId === "rank-settings") return stableAdminRankPanel(this);\n  if (panelId === "rank-xp-settings" || panelId === "xp-settings") return xpSettingsPanel(this);`
   );
 
   return content;
