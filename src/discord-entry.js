@@ -164,7 +164,7 @@ function patchRankingSource(source) {
 
   content = content.replace(
     `function buildMentionLeaderboard(engine, actor, typeRaw = "net") {\n  const spec = leaderboardSpec(typeRaw);\n  const users = Object.values(engine.state.users || {}).filter((user) => user.joined);`,
-    `function buildMentionLeaderboard(engine, actor, typeRaw = "net") {\n  const spec = leaderboardSpec(typeRaw);\n  const memberDirectory = memberDirectoryForActor(actor);\n  const users = Object.values(engine.state.users || {}).filter((user) => {\n    if (!user.joined) return false;\n    if (!memberDirectory) return true;\n    return Boolean(memberRecordForUser(user, memberDirectory));\n  });`
+    `function buildMentionLeaderboard(engine, actor, typeRaw = "net") {\n  const spec = leaderboardSpec(typeRaw);\n  const memberDirectory = memberDirectoryForActor(actor);\n  const users = Object.values(engine.state.users || {}).filter((user) => {\n    const value = spec.score(user);\n    const hasRankingValue = value > 0;\n    const isRequester = actor?.id && user.id === actor.id;\n    const isEligibleRecord = user.joined || hasRankingValue || isRequester;\n    if (!isEligibleRecord) return false;\n    if (!memberDirectory) return true;\n    return Boolean(memberRecordForUser(user, memberDirectory));\n  });`
   );
 
   content = content.replace(
