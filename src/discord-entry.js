@@ -188,7 +188,7 @@ function patchDiscordCoreSource(source) {
 
   content = content.replace(
     `async function sendRankAnnouncement(result, discordUserId, context = null) {`,
-    `function compactVcRankAnnouncement(result) {\n  if (result?.kind !== "vc_rank_up" && result?.meta?.axis !== "vc") return result;\n  const next = { ...result };\n  next.lines = Array.isArray(result.lines) && result.lines.length ? [result.lines[0]] : [];\n  if (result.meta) {\n    next.meta = { ...result.meta };\n    delete next.meta.minutesThisClaim;\n    delete next.meta.xpGained;\n    delete next.meta.drip;\n    delete next.meta.salaryPerMinute;\n  }\n  return next;\n}\n\nasync function sendRankAnnouncement(result, discordUserId, context = null) {\n  result = compactVcRankAnnouncement(result);`
+    `function compactRankAnnouncement(result) {\n  const axis = result?.meta?.axis;\n  const kind = result?.kind;\n  if (kind !== "vc_rank_up" && kind !== "text_rank_up" && axis !== "vc" && axis !== "text") return result;\n  const next = { ...result };\n  next.lines = Array.isArray(result.lines) && result.lines.length ? [result.lines[0]] : [];\n  if (result.meta) {\n    next.meta = { ...result.meta };\n    delete next.meta.minutesThisClaim;\n    delete next.meta.xpGained;\n    delete next.meta.drip;\n    delete next.meta.salaryPerMinute;\n  }\n  return next;\n}\n\nasync function sendRankAnnouncement(result, discordUserId, context = null) {\n  result = compactRankAnnouncement(result);`
   );
 
   content = content.replace(
@@ -220,6 +220,11 @@ function patchRankingSource(source) {
 
   content = content.replace(
     'lines: [`${user.name} が ${after.name} になりました。`, `VCレベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, capLine],',
+    'lines: [`${user.name} が ${after.name} になりました。`],'
+  );
+
+  content = content.replace(
+    'lines: [`${user.name} が ${after.name} になりました。`, `TCレベル ${this.textLevel(user)} / 会話報酬 +${fmt(drip)} / TC経験値 +${xp}`],',
     'lines: [`${user.name} が ${after.name} になりました。`],'
   );
 
