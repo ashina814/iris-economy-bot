@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "アイリス向けの独自通貨Ris、通話報酬、二人宿、マーケット、民営ショップ、招待、給与配布を持つDiscord経済圏ボット。",
-  "main": "src/discord-entry.js",
+  "main": "src/discord-entry-tc-compact.js",
   "scripts": {
-    "start": "node src/discord-entry.js",
+    "start": "node src/discord-entry-tc-compact.js",
     "play": "node src/cli.js",
-    "discord": "node src/discord-entry.js",
+    "discord": "node src/discord-entry-tc-compact.js",
     "smoke": "node src/smoke-test.js",
-    "check": "node --check src/economy.js && node --check src/discord.js && node --check src/discord-entry.js",
+    "check": "node --check src/economy.js && node --check src/discord.js && node --check src/discord-entry.js && node --check src/discord-entry-tc-compact.js",
     "deploy": "git pull && npm install --omit=dev && npm run check && npm run smoke"
   },
   "dependencies": {
