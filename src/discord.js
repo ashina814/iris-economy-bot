@@ -1,9 +1,100 @@
 "use strict";
 
-const { EconomyEngine } = require("./economy");
+const economy = require("./economy");
+const { JsonStore } = require("./storage");
+
+const OriginalEconomyEngine = economy.EconomyEngine;
 
 const LOUNGE_PANEL_IDS = new Set(["lounge", "通話", "ラウンジ", "通話ラウンジ"]);
 const MANUAL_VOICE_SETTLEMENT_COMMANDS = new Set(["vc", "voice", "claimvc", "通話報酬", "vc精算", "通話精算"]);
+const RANK_BALANCE_VERSION = 20260708;
+const CURRENCY_CODE = "Ris";
+const TEXT_XP_COOLDOWN_MS = 60 * 1000;
+const TEXT_XP_MIN = 1;
+const TEXT_XP_MAX = 2;
+const TEXT_DRIP_MIN = 1;
+const TEXT_DRIP_MAX = 4;
+const VC_XP_PER_MINUTE = 1;
+const VC_MAX_CLAIM_MINUTES = 240;
+
+const TUNED_RANK_THRESHOLDS = [
+  0,
+  15,
+  45,
+  90,
+  180,
+  360,
+  720,
+  1200,
+  2000,
+  3200,
+  5000,
+  7500,
+  11000,
+  16000,
+  22000,
+  30000,
+  40000,
+  50000,
+  57000,
+  60000,
+  90000
+];
+
+const TEXT_RANKS = makeRanks([
+  "観測者",
+  "応答の芽",
+  "言葉の灯",
+  "会話の糸口",
+  "文脈の拾い手",
+  "話題の継ぎ手",
+  "言葉の結び手",
+  "会話の常連",
+  "文脈の編み手",
+  "言葉の調律師",
+  "タイムラインの灯台",
+  "談話圏の柱",
+  "記録の織り手",
+  "文脈の航路",
+  "言葉の環",
+  "談話圏の礎",
+  "記録片",
+  "文脈星",
+  "言語環",
+  "言語核",
+  "アイリス"
+]);
+
+const VC_RANKS = makeRanks([
+  "入室者",
+  "傾聴の芽",
+  "声の灯",
+  "雑談の糸口",
+  "声の同席者",
+  "余韻の継ぎ手",
+  "声場の結び手",
+  "通話の常連",
+  "響きの編み手",
+  "声の調律師",
+  "通話圏の灯台",
+  "声場の柱",
+  "残響の織り手",
+  "声域の航路",
+  "共鳴の環",
+  "通話圏の礎",
+  "残響片",
+  "共鳴星",
+  "声域環",
+  "音声核",
+  "アイリス"
+]);
+
+const OLD_TEXT_RANK_NAMES = ["観測者", "発言者", "会話設計士", "文脈編集者", "タイムライン統括", "言語圏の代表"];
+const OLD_VC_RANK_NAMES = ["入室者", "傾聴者", "雑談主任", "会議進行役", "深夜VC責任者", "声のインフラ"];
+
+function makeRanks(names) {
+  return names.map((name, index) => ({ name, min: TUNED_RANK_THRESHOLDS[index] }));
+}
 
 function normalizePanelId(value) {
   return String(value || "").trim().toLowerCase();
@@ -102,20 +193,443 @@ function sanitizeResult(result) {
   return { ...result, panel: sanitizeValue(result.panel) };
 }
 
-const originalRun = EconomyEngine.prototype.run;
-const originalPanel = EconomyEngine.prototype.panel;
+function retuneRankText(value, user) {
+  if (typeof value !== "string" || !user?.activity) return value;
+  let text = stripLoungeFromText(value);
+  const currentTextRank = rankFor(TEXT_RANKS, user.activity.textXp || 0).name;
+  const currentVcRank = rankFor(VC_RANKS, user.activity.vcXp || 0).name;
+  for (const name of OLD_TEXT_RANK_NAMES) text = text.replaceAll(name, currentTextRank);
+  for (const name of OLD_VC_RANK_NAMES) text = text.replaceAll(name, currentVcRank);
+  return text;
+}
 
-EconomyEngine.prototype.run = function patchedRun(input, actor) {
+function retuneResultValue(value, user) {
+  if (Array.isArray(value)) return value.map((item) => retuneResultValue(item, user));
+  if (!value || typeof value !== "object") return retuneRankText(value, user);
+  const next = {};
+  for (const [key, entry] of Object.entries(value)) next[key] = retuneResultValue(entry, user);
+  return next;
+}
+
+function retuneResult(result, user) {
+  return retuneResultValue(sanitizeResult(result), user);
+}
+
+function rankFor(ranks, value) {
+  return ranks.reduce((best, rank) => (value >= rank.min ? rank : best), ranks[0]);
+}
+
+function rankIndex(ranks, value) {
+  let index = 0;
+  for (let i = 0; i < ranks.length; i += 1) {
+    if (value >= ranks[i].min) index = i;
+  }
+  return index;
+}
+
+function rankLevel(ranks, value) {
+  return rankIndex(ranks, value) + 1;
+}
+
+function rankWithProgress(ranks, value) {
+  const index = rankIndex(ranks, value);
+  const current = ranks[index];
+  const next = ranks[index + 1] || null;
+  return {
+    name: current.name,
+    value,
+    currentMin: current.min,
+    nextMin: next ? next.min : null
+  };
+}
+
+function nextRankName(ranks, currentName) {
+  const index = ranks.findIndex((rank) => rank.name === currentName);
+  if (index < 0 || index + 1 >= ranks.length) return null;
+  return ranks[index + 1].name;
+}
+
+function rankProgressPercent(rank) {
+  if (!Number.isFinite(rank.currentMin)) return 0;
+  if (!rank.nextMin) return 100;
+  const span = rank.nextMin - rank.currentMin;
+  const current = rank.value - rank.currentMin;
+  return clamp(Math.floor((current / span) * 100), 0, 100);
+}
+
+function progressText(rank) {
+  if (!Number.isFinite(rank.currentMin)) return "";
+  if (!rank.nextMin) return "(MAX)";
+  const pct = rankProgressPercent(rank);
+  return `${bar(pct, 100)} ${pct}%`;
+}
+
+function bar(value, max) {
+  const width = 10;
+  const filled = Math.round((clamp(value, 0, max) / max) * width);
+  return `[${"#".repeat(filled)}${"-".repeat(width - filled)}]`;
+}
+
+function fmt(amount) {
+  const rounded = Math.floor(Math.abs(Number(amount) || 0));
+  const sign = amount < 0 ? "-" : "";
+  return `${sign}${rounded.toLocaleString("ja-JP")} ${CURRENCY_CODE}`;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function randInt(rng, min, max) {
+  return Math.floor(rng() * (max - min + 1)) + min;
+}
+
+function cooldownRemaining(lastIso, now, durationMs) {
+  if (!lastIso) return 0;
+  const elapsed = now - new Date(lastIso);
+  return Math.max(0, durationMs - elapsed);
+}
+
+function normalizeActivity(user) {
+  user.activity ||= {};
+  user.activity.textXp = Math.max(0, Math.floor(Number(user.activity.textXp) || 0));
+  user.activity.textMessages = Math.max(0, Math.floor(Number(user.activity.textMessages) || 0));
+  user.activity.vcXp = Math.max(0, Math.floor(Number(user.activity.vcXp) || 0));
+  user.activity.vcMinutes = Math.max(0, Math.floor(Number(user.activity.vcMinutes) || 0));
+  user.activity.vcDailyEarned = Math.max(0, Math.floor(Number(user.activity.vcDailyEarned) || 0));
+  user.activity.vcDailyMinutes = Math.max(0, Math.floor(Number(user.activity.vcDailyMinutes) || 0));
+}
+
+function applyRankBalanceMigration(state) {
+  if (!state || typeof state !== "object" || !state.users || state.rankBalanceVersion === RANK_BALANCE_VERSION) return false;
+  for (const user of Object.values(state.users || {})) {
+    if (!user || typeof user !== "object") continue;
+    normalizeActivity(user);
+    user.activity.textXp = Math.floor(user.activity.textXp / 8);
+    user.activity.vcXp = user.activity.vcMinutes > 0 ? user.activity.vcMinutes : Math.floor(user.activity.vcXp / 6);
+  }
+  state.rankBalanceVersion = RANK_BALANCE_VERSION;
+  return true;
+}
+
+const originalStoreLoad = JsonStore.prototype.load;
+JsonStore.prototype.load = function patchedLoad() {
+  const state = originalStoreLoad.call(this);
+  if (applyRankBalanceMigration(state)) {
+    try {
+      this.save(state);
+    } catch (error) {
+      console.warn(`TC/VCランク移行の保存に失敗しました: ${error.message}`);
+    }
+  }
+  return state;
+};
+
+class TunedEconomyEngine extends OriginalEconomyEngine {
+  constructor(state, options = {}) {
+    super(state, options);
+    applyRankBalanceMigration(this.state);
+    for (const user of Object.values(this.state.users || {})) {
+      if (user?.joined) this.updateTitle(user);
+    }
+  }
+}
+
+economy.EconomyEngine = TunedEconomyEngine;
+
+const originalRun = OriginalEconomyEngine.prototype.run;
+const originalPanel = OriginalEconomyEngine.prototype.panel;
+const originalUpdateTitle = OriginalEconomyEngine.prototype.updateTitle;
+
+TunedEconomyEngine.prototype.run = function patchedRun(input, actor) {
   if (isLoungeCommand(input)) return loungeRemovedResult();
   if (isManualVoiceSettlementCommand(input)) return automaticVoiceSettlementResult();
-  return sanitizeResult(originalRun.call(this, input, actor));
+  const result = originalRun.call(this, input, actor);
+  const user = actor?.id ? this.getUser(actor.id, actor.name) : null;
+  return retuneResult(result, user);
 };
 
-EconomyEngine.prototype.panel = function patchedPanel(user, panelIdRaw = "home") {
+TunedEconomyEngine.prototype.panel = function patchedPanel(user, panelIdRaw = "home") {
   const panelId = normalizePanelId(panelIdRaw);
   if (LOUNGE_PANEL_IDS.has(panelId)) return loungeRemovedResult();
-  return sanitizeResult(originalPanel.call(this, user, panelIdRaw));
+  return retuneResult(originalPanel.call(this, user, panelIdRaw), user);
 };
+
+TunedEconomyEngine.prototype.textLevel = function patchedTextLevel(user) {
+  return rankLevel(TEXT_RANKS, user.activity.textXp || 0);
+};
+
+TunedEconomyEngine.prototype.vcLevel = function patchedVcLevel(user) {
+  return rankLevel(VC_RANKS, user.activity.vcXp || 0);
+};
+
+TunedEconomyEngine.prototype.textRank = function patchedTextRank(user) {
+  return rankFor(TEXT_RANKS, user.activity.textXp || 0);
+};
+
+TunedEconomyEngine.prototype.vcRank = function patchedVcRank(user) {
+  return rankFor(VC_RANKS, user.activity.vcXp || 0);
+};
+
+TunedEconomyEngine.prototype.updateTitle = function patchedUpdateTitle(user) {
+  if (!user) return originalUpdateTitle.call(this, user);
+  const text = this.textRank(user).name;
+  const voice = this.vcRank(user).name;
+  if (text === "アイリス" || voice === "アイリス") {
+    user.title = "アイリス";
+    return user.title;
+  }
+  return originalUpdateTitle.call(this, user);
+};
+
+TunedEconomyEngine.prototype.awardTextActivity = function patchedAwardTextActivity(actor, meta = {}) {
+  const user = this.getUser(actor.id, actor.name);
+  const now = this.now();
+  const cooldownMs = meta.cooldownMs ?? TEXT_XP_COOLDOWN_MS;
+  const remaining = cooldownRemaining(user.activity.lastTextAt, now, cooldownMs);
+  if (remaining > 0) return null;
+
+  const before = rankFor(TEXT_RANKS, user.activity.textXp || 0);
+  const xp = randInt(this.rng, TEXT_XP_MIN, TEXT_XP_MAX);
+  const drip = randInt(this.rng, TEXT_DRIP_MIN, TEXT_DRIP_MAX);
+  user.activity.textXp = Math.max(0, Math.floor(Number(user.activity.textXp) || 0)) + xp;
+  user.activity.textMessages = Math.max(0, Math.floor(Number(user.activity.textMessages) || 0)) + 1;
+  user.activity.lastTextAt = now.toISOString();
+  user.wallet += drip;
+  user.lifetimeEarned += drip;
+  this.updateTitle(user);
+
+  const after = rankFor(TEXT_RANKS, user.activity.textXp || 0);
+  if (after.name !== before.name) {
+    const progress = rankWithProgress(TEXT_RANKS, user.activity.textXp || 0);
+    return {
+      ok: true,
+      kind: "text_rank_up",
+      title: "TCランク昇格",
+      lines: [`${user.name} が ${after.name} になりました。`, `TCレベル ${this.textLevel(user)} / 会話報酬 +${fmt(drip)} / TC経験値 +${xp}`],
+      meta: {
+        axis: "text",
+        userName: user.name,
+        previousRank: before.name,
+        newRank: after.name,
+        nextRank: progress.nextMin !== null ? nextRankName(TEXT_RANKS, after.name) : null,
+        nextRankAt: progress.nextMin,
+        progressPercent: rankProgressPercent(progress),
+        serverPosition: this.serverPositionByTextXp(user.id),
+        serverTotal: this.joinedUserCount(),
+        totalMessages: user.activity.textMessages,
+        xpTotal: user.activity.textXp,
+        xpGained: xp,
+        drip,
+        level: this.textLevel(user)
+      }
+    };
+  }
+
+  return { silent: true };
+};
+
+TunedEconomyEngine.prototype.awardVoiceMinutes = function patchedAwardVoiceMinutes(user, minutes, options = {}) {
+  this.resetVoiceDay(user);
+  const before = rankFor(VC_RANKS, user.activity.vcXp || 0);
+  const cappedMinutes = Math.min(Math.max(0, Math.floor(Number(minutes) || 0)), VC_MAX_CLAIM_MINUTES);
+  if (cappedMinutes <= 0) return { noop: true };
+
+  const xp = cappedMinutes * VC_XP_PER_MINUTE;
+  const salaryPerMinute = this.voiceSalaryPerMinute(user);
+  const rawDrip = Math.floor(cappedMinutes * salaryPerMinute);
+  const remaining = Math.max(0, this.voiceDailyCap(user) - user.activity.vcDailyEarned);
+  const drip = Math.min(rawDrip, remaining);
+
+  user.activity.vcMinutes += cappedMinutes;
+  user.activity.vcDailyMinutes += cappedMinutes;
+  user.activity.vcXp += xp;
+  if (drip > 0) {
+    user.wallet += drip;
+    user.lifetimeEarned += drip;
+    user.activity.vcDailyEarned += drip;
+  }
+  this.updateTitle(user);
+
+  const after = rankFor(VC_RANKS, user.activity.vcXp || 0);
+  const capLine = drip <= 0 ? "今日のVC Risは上限。ランクだけ伸びます。" : this.voiceRewardLine(user);
+  if (after.name !== before.name) {
+    const progress = rankWithProgress(VC_RANKS, user.activity.vcXp || 0);
+    return {
+      ok: true,
+      kind: "vc_rank_up",
+      title: "VCランク昇格",
+      silent: Boolean(options.silent),
+      lines: [`${user.name} が ${after.name} になりました。`, `VCレベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, capLine],
+      meta: {
+        axis: "vc",
+        userName: user.name,
+        previousRank: before.name,
+        newRank: after.name,
+        nextRank: progress.nextMin !== null ? nextRankName(VC_RANKS, after.name) : null,
+        nextRankAt: progress.nextMin,
+        progressPercent: rankProgressPercent(progress),
+        serverPosition: this.serverPositionByVcXp(user.id),
+        serverTotal: this.joinedUserCount(),
+        totalMinutes: user.activity.vcMinutes,
+        xpTotal: user.activity.vcXp,
+        xpGained: xp,
+        drip,
+        minutesThisClaim: cappedMinutes,
+        salaryPerMinute: this.voiceSalaryPerMinute(user),
+        level: this.vcLevel(user)
+      }
+    };
+  }
+
+  return {
+    ok: true,
+    kind: "vc_reward",
+    title: "VC報酬",
+    silent: Boolean(options.silent),
+    lines: [`VCレベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, capLine]
+  };
+};
+
+TunedEconomyEngine.prototype.simulateText = function patchedSimulateText(user, countRaw) {
+  const count = clamp(Math.floor(Number(countRaw) || 1), 1, 200);
+  const xp = count;
+  const money = count * 2;
+  user.activity.textMessages += count;
+  user.activity.textXp += xp;
+  user.wallet += money;
+  user.lifetimeEarned += money;
+  this.updateTitle(user);
+  return {
+    ok: true,
+    title: "TC活動をシミュレート",
+    lines: [`${count}メッセージ / TC経験値 +${xp} / +${fmt(money)}`, `TCランク: ${this.textRank(user).name}`]
+  };
+};
+
+TunedEconomyEngine.prototype.playerCard = function patchedPlayerCard(user) {
+  const net = Math.floor(this.netWorth(user));
+  const style = this.cardStyle(user);
+  const score = this.cardScore(user);
+  const textRank = rankWithProgress(TEXT_RANKS, user.activity.textXp || 0);
+  const vcRank = rankWithProgress(VC_RANKS, user.activity.vcXp || 0);
+  const title = `${user.name} / ${style.name}カード`;
+  const data = {
+    user,
+    style,
+    score,
+    net,
+    wallet: user.wallet,
+    textRank,
+    vcRank,
+    textLevel: this.textLevel(user),
+    vcLevel: this.vcLevel(user),
+    vcSalaryPerMinute: this.voiceSalaryPerMinute(user)
+  };
+  return {
+    ok: true,
+    title,
+    lines: renderTunedPlayerCardLines(data),
+    card: buildTunedDiscordProfileCard(data)
+  };
+};
+
+TunedEconomyEngine.prototype.cardScore = function patchedCardScore(user) {
+  const base = OriginalEconomyEngine.prototype.cardScore.call(this, user);
+  return base + rankIndex(TEXT_RANKS, user.activity.textXp || 0) + rankIndex(VC_RANKS, user.activity.vcXp || 0);
+};
+
+TunedEconomyEngine.prototype.leaderboard = function patchedLeaderboard(typeRaw = "net") {
+  const type = String(typeRaw || "net").toLowerCase();
+  if (!["text", "txt", "vc", "voice"].includes(type)) {
+    return retuneResult(OriginalEconomyEngine.prototype.leaderboard.call(this, typeRaw), null);
+  }
+
+  const users = Object.values(this.state.users).filter((user) => user.joined);
+  const isText = ["text", "txt"].includes(type);
+  const title = isText ? "TCランクランキング" : "VCランクランキング";
+  const ranks = isText ? TEXT_RANKS : VC_RANKS;
+  const score = (user) => isText ? user.activity.textXp || 0 : user.activity.vcXp || 0;
+  const ranked = users
+    .map((user) => ({ user, value: score(user) }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+
+  if (ranked.length === 0) return { ok: true, title, lines: ["まだ誰も経済圏に住んでいません。`join` からどうぞ。"] };
+  return {
+    ok: true,
+    title,
+    lines: ranked.map((entry, index) => `${index + 1}. ${entry.user.name} - ${rankFor(ranks, entry.value).name} / 経験値 ${entry.value}`)
+  };
+};
+
+function renderTunedPlayerCardLines(data) {
+  return [
+    `+------------------------------+`,
+    `| ${data.user.name}`,
+    `| 純資産 ${fmt(data.net)} / 財布 ${fmt(data.wallet)}`,
+    `| TC Lv.${data.textLevel} ${data.textRank.name} ${progressText(data.textRank)}`,
+    `| VC Lv.${data.vcLevel} ${data.vcRank.name} ${progressText(data.vcRank)}`,
+    `| VC給与 ${fmt(data.vcSalaryPerMinute)}/分`,
+    `+------------------------------+`
+  ];
+}
+
+function buildTunedDiscordProfileCard(data) {
+  return {
+    color: data.style.color,
+    title: data.user.name,
+    description: data.user.title || "アイリス市民",
+    fields: [
+      {
+        name: "WALLET",
+        value: [`財布 ${fmt(data.wallet)}`, `純資産 ${fmt(data.net)}`].join("\n"),
+        inline: true
+      },
+      {
+        name: "TC",
+        value: [`Lv.${data.textLevel} ${data.textRank.name}`, `経験値 ${data.user.activity.textXp}`, progressText(data.textRank) || "(初期)"].join("\n"),
+        inline: true
+      },
+      {
+        name: "VC",
+        value: [`Lv.${data.vcLevel} ${data.vcRank.name}`, `${data.user.activity.vcMinutes}分 / 経験値 ${data.user.activity.vcXp}`, progressText(data.vcRank) || "(初期)"].join("\n"),
+        inline: true
+      }
+    ],
+    footer: `型 ${data.style.name} / CARD ${data.score}`,
+    profile: {
+      name: data.user.name,
+      title: data.user.title || "アイリス市民",
+      styleName: data.style.name,
+      styleTagline: data.style.tagline,
+      premiumFrame: Boolean(data.user.inventory.frame),
+      color: data.style.color,
+      score: data.score,
+      wallet: data.wallet,
+      net: data.net,
+      text: {
+        name: data.textRank.name,
+        level: data.textLevel,
+        xp: data.user.activity.textXp,
+        messages: data.user.activity.textMessages,
+        progress: rankProgressPercent(data.textRank)
+      },
+      voice: {
+        name: data.vcRank.name,
+        level: data.vcLevel,
+        salaryPerMinute: data.vcSalaryPerMinute,
+        xp: data.user.activity.vcXp,
+        minutes: data.user.activity.vcMinutes,
+        progress: rankProgressPercent(data.vcRank)
+      },
+      economy: {
+        name: "-",
+        progress: 0
+      }
+    }
+  };
+}
 
 function patchSlashCommandBuilder(discord) {
   const SlashCommandBuilder = discord?.SlashCommandBuilder;
