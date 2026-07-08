@@ -3,6 +3,7 @@
 const { EconomyEngine } = require("./economy");
 
 const LOUNGE_PANEL_IDS = new Set(["lounge", "通話", "ラウンジ", "通話ラウンジ"]);
+const MANUAL_VOICE_SETTLEMENT_COMMANDS = new Set(["vc", "voice", "claimvc", "通話報酬", "vc精算", "通話精算"]);
 
 function normalizePanelId(value) {
   return String(value || "").trim().toLowerCase();
@@ -18,13 +19,29 @@ function isLoungeCommand(input) {
   return text === "lounge" || text === "通話" || text === "ラウンジ" || text === "通話ラウンジ" || text === "panel lounge" || text === "panel 通話" || text === "panel ラウンジ" || text === "panel 通話ラウンジ";
 }
 
+function isManualVoiceSettlementCommand(input) {
+  return MANUAL_VOICE_SETTLEMENT_COMMANDS.has(normalizePanelId(input));
+}
+
 function loungeRemovedResult() {
   return {
     ok: false,
     title: "通話ラウンジは廃止しました",
     lines: [
       "この入口は現在使えません。",
-      "VC報酬の精算が必要な場合は `vc` コマンドを使ってください。"
+      "VC報酬は退出・移動時と在室中の定期処理で自動精算されます。"
+    ]
+  };
+}
+
+function automaticVoiceSettlementResult() {
+  return {
+    ok: true,
+    title: "VC報酬は自動精算です",
+    lines: [
+      "VCに入ると在室時間が自動で記録されます。",
+      "退出・移動時に精算され、在室中も10分ごとに自動反映されます。",
+      "手動で `vc` を押す必要はありません。"
     ]
   };
 }
@@ -34,7 +51,10 @@ function stripLoungeFromText(value) {
   return value
     .replace(/(?:、|・)?通話ラウンジ/g, "")
     .replace(/二人宿・の/g, "二人宿の")
-    .replace(/、?通話。/g, "。");
+    .replace(/、?通話。/g, "。")
+    .replace(/VC精算/g, "VC自動精算")
+    .replace(/VC報酬を受け取る/g, "VC報酬は自動精算")
+    .replace(/在室分を途中精算/g, "在室中も定期的に自動反映");
 }
 
 function shouldDropComponent(item) {
@@ -42,6 +62,7 @@ function shouldDropComponent(item) {
   const values = [item.command, item.customId, item.custom_id, item.value, item.id];
   if (values.some((value) => typeof value === "string" && isLoungeRoute(value))) return true;
   if ((item.label === "通話" || item.label === "通話ラウンジ") && values.some((value) => typeof value === "string")) return true;
+  if (values.some((value) => typeof value === "string" && isManualVoiceSettlementCommand(value))) return true;
   return false;
 }
 
@@ -78,6 +99,7 @@ const originalPanel = EconomyEngine.prototype.panel;
 
 EconomyEngine.prototype.run = function patchedRun(input, actor) {
   if (isLoungeCommand(input)) return loungeRemovedResult();
+  if (isManualVoiceSettlementCommand(input)) return automaticVoiceSettlementResult();
   return sanitizeResult(originalRun.call(this, input, actor));
 };
 
