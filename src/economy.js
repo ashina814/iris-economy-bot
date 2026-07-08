@@ -138,10 +138,26 @@ const INN_CONFIG = {
 };
 
 const INVITE_CONFIG = {
-  rewardBase: 900,
   inviteeBonus: 250,
   dailyPaidLimit: 4
 };
+
+const INVITE_RANKS = [
+  { name: "勧誘見習い", min: 0, reward: 900 },
+  { name: "声かけ屋", min: 3, reward: 1300 },
+  { name: "人脈師", min: 10, reward: 1900 },
+  { name: "門番長", min: 20, reward: 2700 },
+  { name: "アイリスの広告塔", min: 35, reward: 3800 },
+  { name: "伝説の勧誘師", min: 50, reward: 5000 }
+];
+
+const BUMP_RANKS = [
+  { name: "はじめての宣伝", min: 0, reward: 500 },
+  { name: "常連宣伝員", min: 10, reward: 700 },
+  { name: "広報担当", min: 30, reward: 900 },
+  { name: "宣伝部長", min: 60, reward: 1200 },
+  { name: "アイリスの拡声器", min: 100, reward: 1500 }
+];
 
 const CARD_STYLES = [
   {
@@ -389,6 +405,8 @@ class EconomyEngine {
       "売上": "my-sales",
       "マーケット管理": "market-admin",
       "招待": "invite",
+      "貢献": "invite",
+      "bump": "invite",
       "管理": "admin",
       "運営": "admin"
     };
@@ -414,7 +432,7 @@ class EconomyEngine {
           buttons([
             panelButton("二人宿", "inn", "success"),
             panelButton("自分の店", "my-shop"),
-            panelButton("招待", "invite"),
+            panelButton("貢献", "invite"),
             panelButton("通知設定", "notify")
           ]),
           select("行き先を選ぶ", [
@@ -422,7 +440,7 @@ class EconomyEngine {
             option("マーケット", "panel:marketplace", "買う、見る、入札する"),
             option("自分の店", "panel:my-shop", "出品、売上、取引管理"),
             option("二人宿", "panel:inn", "2人用VCを作成するパネル"),
-            option("招待", "panel:invite", "招待報酬と招待ランキング"),
+            option("貢献", "panel:invite", "招待とBumpの階級・報酬・ランキング"),
             option("通知設定", "panel:notify", "DM通知のON/OFF")
           ])
         ]
@@ -519,18 +537,20 @@ class EconomyEngine {
         ]
       }),
       invite: () => ({
-        title: "招待台帳",
-        description: "招待成立数と報酬を確認できます。",
+        title: "貢献台帳",
+        description: "招待とBumpでサーバーに貢献すると階級が上がり、1回あたりの報酬も増えます。",
         color: 0x22c55e,
         fields: [
-          { name: "あなた", value: this.inviteLine(user), inline: true },
-          { name: "報酬", value: `招待成立 ${fmt(this.inviteReward(user))}\n相手にも ${fmt(INVITE_CONFIG.inviteeBonus)}`, inline: true },
-          { name: "条件", value: "招待で入る -> その人が `/eco join`。1日の有償招待には上限あり。", inline: false }
+          { name: "招待階級", value: `${this.inviteRankLine(user)}\n成立 ${user.invites.qualified}人 / 累計報酬 ${fmt(user.invites.earned)}`, inline: true },
+          { name: "Bump階級", value: `${this.bumpRankLine(user)}\n累計 ${user.bump.count}回 / 累計報酬 ${fmt(user.bump.earned)}`, inline: true },
+          { name: "今の報酬単価", value: `招待成立 ${fmt(this.inviteReward(user))} / Bump ${fmt(this.bumpReward(user))}\n招待された人にも ${fmt(INVITE_CONFIG.inviteeBonus)}`, inline: false },
+          { name: "条件", value: "招待: 招待した人が参加して初期資本を受け取ると成立（1日の有償上限あり）。Bump: DISBOARD で `/bump` すると自動で加算されます。", inline: false }
         ],
         components: [
           buttons([
             runButton("招待状況", "invite", "success"),
             runButton("招待ランキング", "rank invite"),
+            runButton("Bumpランキング", "rank bump", "primary"),
             panelButton("ホーム", "home")
           ])
         ]
@@ -596,7 +616,9 @@ class EconomyEngine {
         inviteBonus ? `招待成立: ${inviteBonus.inviter.name} に ${fmt(inviteBonus.reward)}、あなたに ${fmt(inviteBonus.inviteeBonus)}。` : null,
         "各パネルから機能を利用できます。",
         this.moneyLine(user)
-      ].filter(Boolean)
+      ].filter(Boolean),
+      inviteRankUp: inviteBonus?.rankUp || null,
+      inviterId: inviteBonus?.inviter?.id || null
     };
   }
 
@@ -661,11 +683,12 @@ class EconomyEngine {
       ok: true,
       title: "招待台帳",
       lines: [
+        `階級: ${this.inviteRankLine(user)}`,
         this.inviteLine(user),
         `成立報酬: ${fmt(this.inviteReward(user))} / 相手ボーナス ${fmt(INVITE_CONFIG.inviteeBonus)}`,
         `今日の有償招待: ${user.invites.dailyPaid}/${INVITE_CONFIG.dailyPaidLimit}`,
         `全体: 追跡 ${this.state.invites.totalTracked} / 成立 ${this.state.invites.totalQualified}`,
-        "招待で入った人が `/eco join` したら成立。即抜け農場は冷めるのでやめ。"
+        "招待で入った人が参加登録したら成立。即抜け農場は冷めるのでやめ。"
       ]
     };
   }
@@ -676,7 +699,62 @@ class EconomyEngine {
   }
 
   inviteReward(user) {
-    return INVITE_CONFIG.rewardBase + Math.min(user.invites.qualified, 20) * 45;
+    return rankFor(INVITE_RANKS, user.invites.qualified).reward;
+  }
+
+  inviteRankLine(user) {
+    const rank = rankWithProgress(INVITE_RANKS, user.invites.qualified);
+    const next = rank.nextMin !== null ? `次の階級まであと ${rank.nextMin - user.invites.qualified}人` : "最高階級";
+    return `${rank.name} / ${next}`;
+  }
+
+  bumpReward(user) {
+    return rankFor(BUMP_RANKS, user.bump.count).reward;
+  }
+
+  bumpRankLine(user) {
+    const rank = rankWithProgress(BUMP_RANKS, user.bump.count);
+    const next = rank.nextMin !== null ? `次の階級まであと ${rank.nextMin - user.bump.count}回` : "最高階級";
+    return `${rank.name} / ${next}`;
+  }
+
+  recordBump(actor) {
+    const user = this.getUser(actor.id, actor.name);
+    const before = rankFor(BUMP_RANKS, user.bump.count);
+    user.bump.count += 1;
+    const after = rankFor(BUMP_RANKS, user.bump.count);
+    const reward = after.reward;
+    user.wallet += reward;
+    user.lifetimeEarned += reward;
+    user.bump.earned += reward;
+    user.bump.lastBumpAt = this.now().toISOString();
+    this.log(user, "bump", reward, `サーバーbump ${user.bump.count}回目`);
+
+    let rankUp = null;
+    if (after.name !== before.name) {
+      const progress = rankWithProgress(BUMP_RANKS, user.bump.count);
+      rankUp = {
+        axis: "bump",
+        userName: user.name,
+        previousRank: before.name,
+        newRank: after.name,
+        nextRank: progress.nextMin !== null ? this.nextRankName(BUMP_RANKS, after.name) : null
+      };
+    }
+
+    return {
+      ok: true,
+      title: "Bump受付",
+      lines: [
+        `${user.name} がサーバーをBumpしました。（累計 ${user.bump.count}回）`,
+        `報酬 +${fmt(reward)} / 階級 ${after.name}`,
+        this.moneyLine(user)
+      ],
+      reward,
+      count: user.bump.count,
+      rankName: after.name,
+      rankUp
+    };
   }
 
   resetInviteDay(user) {
@@ -727,11 +805,13 @@ class EconomyEngine {
     if (!inviter || inviter.id === user.id) return null;
 
     this.resetInviteDay(inviter);
+    const beforeRank = rankFor(INVITE_RANKS, inviter.invites.qualified);
     user.invite.qualified = true;
     user.invite.qualifiedAt = this.now().toISOString();
     inviter.invites.pending = Math.max(0, inviter.invites.pending - 1);
     inviter.invites.qualified += 1;
     this.state.invites.totalQualified += 1;
+    const afterRank = rankFor(INVITE_RANKS, inviter.invites.qualified);
 
     const inviteeBonus = INVITE_CONFIG.inviteeBonus;
     user.wallet += inviteeBonus;
@@ -747,8 +827,20 @@ class EconomyEngine {
       this.state.invites.totalPaid += reward;
     }
 
+    let rankUp = null;
+    if (afterRank.name !== beforeRank.name) {
+      const progress = rankWithProgress(INVITE_RANKS, inviter.invites.qualified);
+      rankUp = {
+        axis: "invite",
+        userName: inviter.name,
+        previousRank: beforeRank.name,
+        newRank: afterRank.name,
+        nextRank: progress.nextMin !== null ? this.nextRankName(INVITE_RANKS, afterRank.name) : null
+      };
+    }
+
     this.log(inviter, "invite_reward", reward, user.name);
-    return { inviter, reward, inviteeBonus };
+    return { inviter, reward, inviteeBonus, rankUp };
   }
 
   inn() {
@@ -2777,7 +2869,11 @@ class EconomyEngine {
     } else if (["invite", "invites", "招待"].includes(type)) {
       title = "招待ランキング";
       score = (user) => user.invites.qualified;
-      label = (value) => `${value}人`;
+      label = (value, u) => `${value}人 / ${rankFor(INVITE_RANKS, value).name}`;
+    } else if (["bump", "バンプ"].includes(type)) {
+      title = "Bumpランキング";
+      score = (user) => user.bump?.count || 0;
+      label = (value) => `${value}回 / ${rankFor(BUMP_RANKS, value).name}`;
     }
 
     const ranked = users
@@ -3515,6 +3611,11 @@ function createUser(id, name) {
       day: dayKey(new Date()),
       dailyPaid: 0
     },
+    bump: {
+      count: 0,
+      earned: 0,
+      lastBumpAt: null
+    },
     invite: {
       referredBy: null,
       referredByName: null,
@@ -3593,6 +3694,7 @@ function migrateUser(user) {
     inventory: { ...fresh.inventory, ...(user.inventory || {}) },
     invites: { ...fresh.invites, ...(user.invites || {}) },
     invite: { ...fresh.invite, ...(user.invite || {}) },
+    bump: { ...fresh.bump, ...(user.bump || {}) },
     activity: { ...fresh.activity, ...(user.activity || {}) },
     marketplace: {
       ...fresh.marketplace,
@@ -3780,8 +3882,10 @@ function formatResult(result) {
 }
 
 module.exports = {
+  BUMP_RANKS,
   CURRENCY,
   ECONOMY_RANKS,
+  INVITE_RANKS,
   SHOP_ITEMS,
   TEXT_RANKS,
   VC_RANKS,

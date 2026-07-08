@@ -63,6 +63,7 @@ const yadoTimers = new Map();
 const rankPanelRefreshTimers = new Map();
 const salarySessions = new Map();
 const SALARY_SESSION_TTL_MS = 10 * 60 * 1000;
+const DISBOARD_BOT_ID = "302050872383242240";
 
 if (!token) {
   console.error("DISCORD_TOKEN が未設定です。");
@@ -368,7 +369,10 @@ async function replyInteractionError(interaction) {
 }
 
 client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
+  if (message.author.bot) {
+    if (message.author.id === DISBOARD_BOT_ID) await handleDisboardBump(message);
+    return;
+  }
   if (message.guild && message.channelId === panelState.rankPanel?.channelId) scheduleRankPanelRefresh(message.channel);
 
   const actor = actorFromMessage(message);
@@ -443,6 +447,14 @@ client.on(Events.GuildMemberAdd, async (member) => {
       title: "招待成立",
       lines: [`${result.inviter.name} -> ${result.invitee.name}`, ...joinResult.lines.slice(0, 2)]
     });
+    if (joinResult.inviteRankUp && joinResult.inviterId) {
+      const inviterDiscordId = extractDiscordUserId(joinResult.inviterId);
+      await sendRankAnnouncement(
+        { title: "招待階級昇格", lines: [], meta: joinResult.inviteRankUp },
+        inviterDiscordId,
+        member
+      );
+    }
   } else {
     await sendLog({
       ok: true,
@@ -860,6 +872,8 @@ function buildRankUpEmbed(result, discordUserId) {
 
 function rankUpColor(meta) {
   if (!meta) return 0x7c3aed;
+  if (meta.axis === "invite") return 0x22c55e;
+  if (meta.axis === "bump") return 0xf59e0b;
   const textColors = [0x64748b, 0x2563eb, 0x0891b2, 0x14b8a6, 0x7c3aed, 0xd97706];
   const vcColors = [0x64748b, 0x2563eb, 0x22c55e, 0x14b8a6, 0x4f46e5, 0xd97706];
   const ranks = ["観測者", "発言者", "会話設計士", "文脈編集者", "タイムライン統括", "言語圏の代表"];
@@ -1150,6 +1164,36 @@ async function placeMarketAuctionBidFromModal(interaction) {
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
   await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleDisboardBump(message) {
+  try {
+    if (!message.guild) return;
+    const description = message.embeds?.[0]?.description || "";
+    if (!description.includes("表示順をアップ") && !/Bump done/i.test(description)) return;
+    const bumper = message.interactionMetadata?.user || message.interaction?.user || null;
+    if (!bumper) return;
+    const member = await message.guild.members.fetch(bumper.id).catch(() => null);
+    const actor = {
+      id: `${message.guild.id}:${bumper.id}`,
+      name: member?.displayName || bumper.globalName || bumper.username
+    };
+    const result = engine.recordBump(actor);
+    store.save(engine.state);
+    await message.channel.send({
+      content: `<@${bumper.id}> Bumpありがとう！ **+${result.reward.toLocaleString("ja-JP")} Ris**（累計 ${result.count}回 / ${result.rankName}）`,
+      allowedMentions: { users: [bumper.id] }
+    }).catch(() => null);
+    if (result.rankUp) {
+      await sendRankAnnouncement(
+        { title: "Bump階級昇格", lines: [], meta: result.rankUp },
+        bumper.id,
+        message
+      );
+    }
+  } catch (error) {
+    console.warn(`Bump処理に失敗しました: ${error.message}`);
+  }
 }
 
 async function handleTransferSlash(interaction) {

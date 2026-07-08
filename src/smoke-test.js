@@ -411,6 +411,56 @@ assert(reopenResult.ok, "営業を再開できる");
 const activeAfterOpen = engine.activeListings();
 assert(activeAfterOpen.some((l) => l.sellerId === seller.id), "再開後は商品が活性一覧に戻る");
 
+// 招待階級とBump
+const { INVITE_RANKS, BUMP_RANKS } = require("./economy");
+assert(Array.isArray(INVITE_RANKS) && INVITE_RANKS.length === 6, "招待階級は6段");
+assert(Array.isArray(BUMP_RANKS) && BUMP_RANKS.length === 5, "Bump階級は5段");
+
+// 招待報酬が階級テーブル参照になっている（getUser は毎回移行コピーを返すので都度取り直す）
+assert.strictEqual(engine.inviteReward(engine.getUser("test:inviter-rank", "階級テスト招待者")), 900, "0人時は900 Ris");
+engine.getUser("test:inviter-rank", "階級テスト招待者").invites.qualified = 10;
+assert.strictEqual(engine.inviteReward(engine.getUser("test:inviter-rank", "階級テスト招待者")), 1900, "10人時は1,900 Ris");
+engine.getUser("test:inviter-rank", "階級テスト招待者").invites.qualified = 50;
+assert.strictEqual(engine.inviteReward(engine.getUser("test:inviter-rank", "階級テスト招待者")), 5000, "50人時は5,000 Ris");
+
+// 招待成立で昇格検知（2人目→3人目で 勧誘見習い→声かけ屋）
+const rankInviter = { id: "test:rank-inviter", name: "昇格する招待者" };
+engine.run("join", rankInviter);
+engine.getUser(rankInviter.id, rankInviter.name).invites.qualified = 2;
+const invitee2 = { id: "test:invitee-rankup", name: "3人目の招待され" };
+engine.recordInviteJoin(rankInviter, invitee2, { code: "rankup" });
+const joinRankUp = engine.run("join", invitee2);
+assert(joinRankUp.inviteRankUp, "3人目成立で招待階級昇格が発生");
+assert.strictEqual(joinRankUp.inviteRankUp.newRank, "声かけ屋", "新階級は声かけ屋");
+assert.strictEqual(joinRankUp.inviterId, rankInviter.id, "昇格者のIDが返る");
+
+// Bump: 報酬付与とカウント
+const bumper = { id: "test:bumper", name: "宣伝係" };
+engine.run("join", bumper);
+const bumperWalletBefore = engine.getUser(bumper.id, bumper.name).wallet;
+const bumpResult = engine.recordBump(bumper);
+assert(bumpResult.ok, "bump記録が成功");
+assert.strictEqual(bumpResult.reward, 500, "初回bumpは500 Ris");
+assert.strictEqual(engine.getUser(bumper.id, bumper.name).wallet, bumperWalletBefore + 500, "財布に500入る");
+assert.strictEqual(engine.getUser(bumper.id, bumper.name).bump.count, 1, "カウント1");
+
+// Bump昇格: 9回→10回で 常連宣伝員
+engine.getUser(bumper.id, bumper.name).bump.count = 9;
+const bumpRankUpResult = engine.recordBump(bumper);
+assert(bumpRankUpResult.rankUp, "10回目で昇格発生");
+assert.strictEqual(bumpRankUpResult.rankUp.newRank, "常連宣伝員", "新階級は常連宣伝員");
+assert.strictEqual(bumpRankUpResult.reward, 700, "昇格後の報酬単価700で支払われる");
+
+// Bumpランキング
+const bumpRanking = engine.run("rank bump", actor);
+assert(bumpRanking.title === "Bumpランキング", "rank bump が動く");
+assert(bumpRanking.lines.some((line) => line.includes("宣伝係")), "宣伝係がランキングに載る");
+
+// 貢献パネル
+const contribPanel = engine.run("panel invite", bumper);
+assert(contribPanel.panel.title === "貢献台帳", "貢献パネルが開く");
+assert(contribPanel.panel.fields.some((f) => f.name === "Bump階級"), "Bump階級フィールドがある");
+
 // 個人残高操作: セット/加算/減算
 const targetActor = { id: "test:balance", name: "残高テスト対象" };
 const adminOp = engine.getUser(admin.id, admin.name);
