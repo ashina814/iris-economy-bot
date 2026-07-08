@@ -192,6 +192,11 @@ function patchDiscordCoreSource(source) {
   );
 
   content = content.replace(
+    `      const inviterDiscordId = extractDiscordUserId(joinResult.inviterId);\n      await sendRankAnnouncement(\n        { title: "招待階級昇格", lines: [], meta: joinResult.inviteRankUp },\n        inviterDiscordId,\n        member\n      );`,
+    `      const inviterDiscordId = extractDiscordUserId(joinResult.inviterId);\n      const inviterMember = inviterDiscordId && member.guild\n        ? await member.guild.members.fetch(inviterDiscordId).catch(() => null)\n        : null;\n      const inviterUser = inviterDiscordId\n        ? await client.users.fetch(inviterDiscordId).catch(() => null)\n        : null;\n      const inviterContext = inviterMember\n        ? { user: inviterMember.user, member: inviterMember, guild: inviterMember.guild }\n        : { user: inviterUser, guild: member.guild, member: null };\n      await sendRankAnnouncement(\n        { title: "招待階級昇格", lines: [], meta: joinResult.inviteRankUp },\n        inviterDiscordId,\n        inviterContext\n      );`
+  );
+
+  content = content.replace(
     `    const description = message.embeds?.[0]?.description || "";\n    if (!description.includes("表示順をアップ") && !/Bump done/i.test(description)) return;`,
     `    const description = message.embeds?.[0]?.description || "";\n    const bumpText = [description, message.content || ""].join("\\n");\n    const isBumpOrUp = description.includes("表示順をアップ")\n      || /Bump done/i.test(bumpText)\n      || /Up done/i.test(bumpText)\n      || /\\/(?:bump|up)\\b/i.test(bumpText)\n      || /(?:bump|up)\\s*(?:done|success|complete|完了|成功)/i.test(bumpText);\n    if (!isBumpOrUp) return;`
   );
