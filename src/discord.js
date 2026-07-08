@@ -501,7 +501,8 @@ function buildSlashCommands() {
       .setDescription("残高、発言、通話ランクをプロフィールカードで表示します"),
     new SlashCommandBuilder()
       .setName("宿")
-      .setDescription("二人宿・通話ラウンジのパネルを開きます")
+      .setDescription("運営用: 二人宿・通話ラウンジのパネルを開きます")
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
       .addStringOption((option) =>
         option
           .setName("パネル")
@@ -542,7 +543,7 @@ function commandFromSlash(interaction) {
       return { command: "card", ephemeral: false, adminOnly: false };
     case "宿": {
       const panel = interaction.options.getString("パネル") || "inn";
-      return { command: `panel ${panel}`, ephemeral: false, adminOnly: false };
+      return { command: `panel ${panel}`, ephemeral: false, adminOnly: true };
     }
     case "マーケット":
       return { command: "panel marketplace", ephemeral: false, adminOnly: false };
@@ -596,6 +597,10 @@ function canRunCommand(context, command) {
     normalized === "panel market-review" ||
     normalized === "panel market-trades" ||
     normalized === "panel market-logs" ||
+    normalized === "panel inn" ||
+    normalized === "panel yado" ||
+    normalized === "panel 宿" ||
+    normalized === "panel 二人宿" ||
     normalized === "panel admin" ||
     normalized === "panel admin-balance" ||
     normalized === "panel admin-rank";
@@ -3212,7 +3217,7 @@ function fallbackComponents() {
     new ButtonBuilder().setCustomId("eco:panel:home").setLabel("ホーム").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("eco:panel:marketplace").setLabel("マーケット").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("eco:panel:my-shop").setLabel("自分の店").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("eco:panel:inn").setLabel("二人宿").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("eco:panel:lounge").setLabel("通話").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("eco:run:card").setLabel("カード").setStyle(ButtonStyle.Secondary)
   );
   return [row];

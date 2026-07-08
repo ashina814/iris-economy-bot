@@ -414,7 +414,7 @@ class EconomyEngine {
     const panels = {
       home: () => ({
         title: "アイリス",
-        description: "財布、ランク、マーケット、宿。よく使うものだけ置いています。",
+        description: "財布、ランク、マーケット、通話。よく使うものだけ置いています。",
         color: 0x0f766e,
         fields: [
           { name: "今日の回し方", value: this.loopSuggestion(user), inline: false },
@@ -430,7 +430,6 @@ class EconomyEngine {
             panelButton("通話", "lounge")
           ]),
           buttons([
-            panelButton("二人宿", "inn", "success"),
             panelButton("自分の店", "my-shop"),
             panelButton("貢献", "invite"),
             panelButton("通知設定", "notify")
@@ -439,7 +438,6 @@ class EconomyEngine {
             option("通話ラウンジ", "panel:lounge", "発言と通話ランク"),
             option("マーケット", "panel:marketplace", "買う、見る、入札する"),
             option("自分の店", "panel:my-shop", "出品、売上、取引管理"),
-            option("二人宿", "panel:inn", "2人用VCを作成するパネル"),
             option("貢献", "panel:invite", "招待とBumpの階級・報酬・ランキング"),
             option("通知設定", "panel:notify", "DM通知のON/OFF")
           ])
@@ -477,13 +475,11 @@ class EconomyEngine {
           buttons([
             runButton("カード", "card", "primary"),
             runButton("VC精算", "vc", "success"),
-            panelButton("二人宿", "inn", "success"),
             runButton("Text順位", "rank text"),
             runButton("VC順位", "rank vc")
           ]),
           select("ラウンジ操作", [
             option("VC報酬を受け取る", "run:vc", "在室分を途中精算"),
-            option("二人宿パネル", "panel:inn", "2人用VCを作成する"),
             option("プロフィールカード", "run:card", "今の見た目と総合ランク"),
             option("Textランキング", "run:rank text", "よく話す人ランキング"),
             option("VCランキング", "run:rank vc", "よく通話にいる人ランキング")
@@ -582,7 +578,7 @@ class EconomyEngine {
         "Discordでは `/マーケット`, `/自分の店`, `/管理` からマーケットを操作します。",
         "`panel` - ホームパネル",
         "`panel lounge` - 発言/通話パネル",
-        "`panel inn` - 二人宿パネル",
+        "`panel inn` - 二人宿パネル（運営用）",
         "`panel marketplace` - マーケット",
         "`panel my-shop` - 自分の店",
         "`panel invite` - 招待台帳",
