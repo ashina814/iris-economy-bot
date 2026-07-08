@@ -1898,6 +1898,11 @@ class EconomyEngine {
           customButton("昇格通知先をここに", "eco:admin:rank-notify-set", "success"),
           customButton("昇格通知先をクリア", "eco:admin:rank-notify-clear"),
           panelButton("運営パネル", "admin")
+        ]),
+        buttons([
+          customButton("TC一括リセット", "eco:admin:rank-reset-confirm:tc", "danger"),
+          customButton("VC一括リセット", "eco:admin:rank-reset-confirm:vc", "danger"),
+          customButton("TC/VC一括リセット", "eco:admin:rank-reset-confirm:both", "danger")
         ])
       ]
     };
@@ -3145,6 +3150,84 @@ class EconomyEngine {
   simulateVoice(user, minutesRaw) {
     const minutes = clamp(parsePositiveInt(minutesRaw) || 10, 1, 240);
     return this.awardVoiceMinutes(user, minutes);
+  }
+
+  resetActivityRanks(adminUser, axis = "both") {
+    const normalized = String(axis || "both").toLowerCase();
+    const resetText = normalized === "text" || normalized === "tc" || normalized === "both";
+    const resetVc = normalized === "vc" || normalized === "voice" || normalized === "both";
+
+    if (!resetText && !resetVc) {
+      return { ok: false, title: "リセット対象が不明", lines: ["TC / VC / both のどれかを指定してください。"] };
+    }
+
+    const now = this.now();
+    const nowIso = now.toISOString();
+    let touched = 0;
+    let textXpTotal = 0;
+    let textMessagesTotal = 0;
+    let vcXpTotal = 0;
+    let vcMinutesTotal = 0;
+    let activeVoiceSessions = 0;
+
+    for (const user of Object.values(this.state.users || {})) {
+      user.activity = {
+        ...createUser(user.id, user.name).activity,
+        ...(user.activity || {})
+      };
+
+      let changed = false;
+
+      if (resetText) {
+        textXpTotal += user.activity.textXp || 0;
+        textMessagesTotal += user.activity.textMessages || 0;
+
+        user.activity.textXp = 0;
+        user.activity.textMessages = 0;
+        user.activity.lastTextAt = null;
+        changed = true;
+      }
+
+      if (resetVc) {
+        vcXpTotal += user.activity.vcXp || 0;
+        vcMinutesTotal += user.activity.vcMinutes || 0;
+
+        user.activity.vcXp = 0;
+        user.activity.vcMinutes = 0;
+        user.activity.vcDailyEarned = 0;
+        user.activity.vcDailyMinutes = 0;
+        user.activity.vcDay = dayKey(now);
+
+        if (user.activity.voiceJoinedAt) {
+          user.activity.voiceJoinedAt = nowIso;
+          user.activity.voiceLastClaimAt = nowIso;
+          activeVoiceSessions += 1;
+        } else {
+          user.activity.voiceLastClaimAt = null;
+        }
+
+        changed = true;
+      }
+
+      if (changed) {
+        touched += 1;
+        this.updateTitle(user);
+      }
+    }
+
+    const label = resetText && resetVc ? "TC/VC" : resetText ? "TC" : "VC";
+    this.log(adminUser, "admin_rank_reset", 0, `${label}一括リセット / ${touched}人`);
+
+    return {
+      ok: true,
+      title: `${label}一括リセット完了`,
+      lines: [
+        `対象: ${touched}人`,
+        resetText ? `TC: ${textXpTotal.toLocaleString("ja-JP")} XP / ${textMessagesTotal.toLocaleString("ja-JP")} メッセージをリセット` : null,
+        resetVc ? `VC: ${vcXpTotal.toLocaleString("ja-JP")} XP / ${vcMinutesTotal.toLocaleString("ja-JP")} 分をリセット` : null,
+        resetVc && activeVoiceSessions ? `入室中VC: ${activeVoiceSessions}人は現在時刻から再計測にしました。` : null
+      ].filter(Boolean)
+    };
   }
 
   getUser(id, name) {

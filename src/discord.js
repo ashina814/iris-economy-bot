@@ -276,6 +276,18 @@ async function handleInteraction(interaction) {
       await clearRankNotifyChannel(interaction);
       return;
     }
+    if (command.startsWith("rank-reset-confirm ")) {
+      await confirmRankReset(interaction, command.split(/\s+/)[1]);
+      return;
+    }
+    if (command.startsWith("rank-reset-execute ")) {
+      await executeRankReset(interaction, command.split(/\s+/)[1]);
+      return;
+    }
+    if (command === "rank-reset-cancel") {
+      await interaction.reply({ content: "ランクリセットをキャンセルしました。", ephemeral: true });
+      return;
+    }
     if (command === "balance-user-set" || command === "balance-user-add" || command === "balance-user-sub") {
       await showBalanceUserPicker(interaction, command.split("-")[2]);
       return;
@@ -1283,6 +1295,64 @@ async function clearRankNotifyChannel(interaction) {
     content: `昇格通知先のカスタム設定を解除しました。以後は環境変数の設定先を使います: ${fallback}`,
     ephemeral: true
   });
+}
+
+async function confirmRankReset(interaction, axis) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+
+  const normalized = ["tc", "vc", "both"].includes(axis) ? axis : "both";
+  const label = normalized === "tc" ? "TC" : normalized === "vc" ? "VC" : "TC/VC";
+
+  const embed = new EmbedBuilder()
+    .setTitle(`${label}一括リセット - 確認`)
+    .setColor(0xef4444)
+    .setDescription("この操作は全住民のランク経験値をリセットします。取り消す場合は、実行せずに閉じてください。")
+    .addFields(
+      { name: "対象", value: label, inline: true },
+      { name: "影響", value: normalized === "tc" ? "発言XP・発言数" : normalized === "vc" ? "VC XP・VC分数・VC日次値" : "発言XP・発言数・VC XP・VC分数・VC日次値", inline: false }
+    );
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`eco:admin:rank-reset-execute:${normalized}`)
+      .setLabel(`${label}リセット実行`)
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId("eco:admin:rank-reset-cancel")
+      .setLabel("キャンセル")
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+}
+
+async function executeRankReset(interaction, axis) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+
+  const actor = actorFromInteraction(interaction);
+  const adminUser = engine.getUser(actor.id, actor.name);
+  const result = engine.resetActivityRanks(adminUser, axis);
+
+  store.save(engine.state);
+  decorateResultForDiscord(result, interaction);
+  await replyDiscord(interaction, result, { ephemeral: true });
+
+  if (result.ok) {
+    await sendLog({
+      ok: true,
+      title: result.title,
+      lines: [
+        `実行者: ${actor.name}`,
+        ...result.lines
+      ]
+    });
+  }
 }
 
 async function showBalanceUserPicker(interaction, mode) {
@@ -3239,6 +3309,9 @@ function commandFromComponent(interaction) {
     if (parts[1] === "admin" && parts[2] === "rank-panel-post") return "rank-panel-post";
     if (parts[1] === "admin" && parts[2] === "rank-notify-set") return "rank-notify-set";
     if (parts[1] === "admin" && parts[2] === "rank-notify-clear") return "rank-notify-clear";
+    if (parts[1] === "admin" && parts[2] === "rank-reset-confirm") return `rank-reset-confirm ${parts[3]}`;
+    if (parts[1] === "admin" && parts[2] === "rank-reset-execute") return `rank-reset-execute ${parts[3]}`;
+    if (parts[1] === "admin" && parts[2] === "rank-reset-cancel") return "rank-reset-cancel";
     if (parts[1] === "admin" && parts[2] === "balance-user-set") return "balance-user-set";
     if (parts[1] === "admin" && parts[2] === "balance-user-add") return "balance-user-add";
     if (parts[1] === "admin" && parts[2] === "balance-user-sub") return "balance-user-sub";
