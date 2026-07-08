@@ -8,6 +8,8 @@ const discord = require("discord.js");
 const memberDirectoryByGuild = new Map();
 const prefix = process.env.BOT_PREFIX || "!eco";
 const targetDiscordEntrypoint = path.join(__dirname, "discord.js");
+const targetDiscordCoreEntrypoint = path.join(__dirname, "discord-core.js");
+const targetEconomyEntrypoint = path.join(__dirname, "economy.js");
 
 function extractDiscordUserId(internalUserId) {
   const text = String(internalUserId || "");
@@ -143,19 +145,50 @@ function installDiscordEntrypointTransform() {
 
   const originalLoader = Module._extensions[".js"];
   Module._extensions[".js"] = function irisRankingTransform(module, filename) {
-    if (path.resolve(filename) !== path.resolve(targetDiscordEntrypoint)) {
-      return originalLoader(module, filename);
+    const resolved = path.resolve(filename);
+    let content = null;
+    if (resolved === path.resolve(targetDiscordEntrypoint)) {
+      content = patchRankingSource(fs.readFileSync(filename, "utf8"));
+    } else if (resolved === path.resolve(targetDiscordCoreEntrypoint)) {
+      content = patchBumpUpSource(fs.readFileSync(filename, "utf8"));
+    } else if (resolved === path.resolve(targetEconomyEntrypoint)) {
+      content = patchBumpUpLabels(fs.readFileSync(filename, "utf8"));
     }
 
-    let content = fs.readFileSync(filename, "utf8");
-    content = patchRankingSource(content);
+    if (content === null) return originalLoader(module, filename);
     return module._compile(content, filename);
   };
   Module._extensions[".js"].__irisRankingTransformPatched = true;
 }
 
+function patchBumpUpLabels(source) {
+  return source
+    .replaceAll("Bumpランキング", "Bump/Upランキング")
+    .replaceAll("Bump階級", "Bump/Up階級")
+    .replaceAll("Bump受付", "Bump/Up受付")
+    .replaceAll("Bumpしました", "Bump/Upしました")
+    .replaceAll("Bump ${fmt", "Bump/Up ${fmt")
+    .replaceAll("Bump: DISBOARD", "Bump/Up: DISBOARD")
+    .replaceAll("Bump の", "Bump/Up の")
+    .replaceAll("Bump 回数", "Bump/Up 回数");
+}
+
+function patchBumpUpSource(source) {
+  let content = patchBumpUpLabels(source);
+  content = content.replace(
+    `    const description = message.embeds?.[0]?.description || "";\n    if (!description.includes("表示順をアップ") && !/Bump done/i.test(description)) return;`,
+    `    const description = message.embeds?.[0]?.description || "";\n    const bumpText = [description, message.content || ""].join("\\n");\n    const isBumpOrUp = description.includes("表示順をアップ")\n      || /Bump done/i.test(bumpText)\n      || /Up done/i.test(bumpText)\n      || /\\/(?:bump|up)\\b/i.test(bumpText)\n      || /(?:bump|up)\\s*(?:done|success|complete|完了|成功)/i.test(bumpText);\n    if (!isBumpOrUp) return;`
+  );
+  content = content
+    .replaceAll("Bumpありがとう", "Bump/Upありがとう")
+    .replaceAll("Bump階級昇格", "Bump/Up階級昇格")
+    .replaceAll("Bump のランク", "Bump/Up のランク")
+    .replaceAll("Bump 回数", "Bump/Up 回数");
+  return content;
+}
+
 function patchRankingSource(source) {
-  let content = source;
+  let content = patchBumpUpLabels(source);
 
   content = content.replace(
     `function userMention(user) {\n  const discordId = extractDiscordUserId(user?.id);\n  return discordId ? \`<@\${discordId}>\` : (user?.name || "名無し");\n}\n`,
