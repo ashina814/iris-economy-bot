@@ -103,6 +103,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   await ensureRankPanel();
   startVoiceRewardSweeper();
   startMarketSweeper();
+  startYadoSweeper();
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -2974,15 +2975,47 @@ function scheduleYadoExpiry(ownerKey, expiresAt) {
 async function expireYadoRoom(ownerKey, reason) {
   const room = yadoState.rooms?.[ownerKey];
   if (!room) return;
-  const guild = client.guilds.cache.get(room.guildId);
-  const channel = guild ? await guild.channels.fetch(room.channelId).catch(() => null) : null;
-  clearYadoRoom(ownerKey);
-  if (!channel) return;
-  try {
-    await channel.delete(reason);
-  } catch (error) {
-    console.warn(`二人宿VC期限削除に失敗しました: ${error.message}`);
+  const guild = client.guilds.cache.get(room.guildId) || await client.guilds.fetch(room.guildId).catch(() => null);
+  if (!guild) {
+    // ギルドが取れない（一時障害の可能性）→ 記録は残して60秒後に再試行
+    scheduleYadoExpiry(ownerKey, Date.now() + 60_000);
+    return;
   }
+  let channel = null;
+  try {
+    channel = await guild.channels.fetch(room.channelId);
+  } catch (error) {
+    if (error?.code === 10003) {
+      // Unknown Channel = すでに消えている → 台帳だけ掃除
+      clearYadoRoom(ownerKey);
+      return;
+    }
+    console.warn(`二人宿VC取得に失敗しました（再試行します）: ${error.message}`);
+    scheduleYadoExpiry(ownerKey, Date.now() + 60_000);
+    return;
+  }
+  if (channel) {
+    try {
+      await channel.delete(reason);
+    } catch (error) {
+      // 削除に失敗した場合は台帳を消さず、後で再試行する（VCが残り続けるバグの元凶だった）
+      console.warn(`二人宿VC期限削除に失敗しました（再試行します）: ${error.message}`);
+      scheduleYadoExpiry(ownerKey, Date.now() + 60_000);
+      return;
+    }
+  }
+  clearYadoRoom(ownerKey);
+}
+
+function startYadoSweeper() {
+  // タイマー消失や削除失敗の取りこぼしを5分ごとに拾うフォールバック
+  setInterval(async () => {
+    for (const [ownerKey, room] of Object.entries(yadoState.rooms || {})) {
+      if (Date.now() >= room.expiresAt) {
+        await expireYadoRoom(ownerKey, "二人宿の12時間期限");
+      }
+    }
+  }, 5 * 60_000).unref?.();
 }
 
 function clearYadoRoomByChannel(channelId) {
@@ -3063,7 +3096,14 @@ function formatDiscord(result) {
 
 function buildEmbed(result, imageName = null) {
   if (result.panel) return buildPanelEmbed(result);
-  if (!result.card) return null;
+  if (!result.card) {
+    // パネルもカードも無いプレーン結果（ランキング、台帳、報酬結果など）も Embed で統一する
+    if (!result.title && !Array.isArray(result.lines)) return null;
+    return new EmbedBuilder()
+      .setTitle(String(result.title || "結果").slice(0, 256))
+      .setDescription((result.lines || []).join("\n").slice(0, 4000) || "-")
+      .setColor(result.ok ? 0x0f766e : 0xef4444);
+  }
   const embed = new EmbedBuilder()
     .setTitle(result.card.title || result.title)
     .setColor(result.card.color || 0x64748b);

@@ -679,18 +679,31 @@ class EconomyEngine {
   }
 
   inviteReport(user) {
-    return {
-      ok: true,
-      title: "招待台帳",
-      lines: [
-        `階級: ${this.inviteRankLine(user)}`,
-        this.inviteLine(user),
-        `成立報酬: ${fmt(this.inviteReward(user))} / 相手ボーナス ${fmt(INVITE_CONFIG.inviteeBonus)}`,
-        `今日の有償招待: ${user.invites.dailyPaid}/${INVITE_CONFIG.dailyPaidLimit}`,
-        `全体: 追跡 ${this.state.invites.totalTracked} / 成立 ${this.state.invites.totalQualified}`,
-        "招待で入った人が参加登録したら成立。即抜け農場は冷めるのでやめ。"
+    this.resetInviteDay(user);
+    const rank = rankWithProgress(INVITE_RANKS, user.invites.qualified);
+    const nextLine = rank.nextMin !== null
+      ? `${this.nextRankName(INVITE_RANKS, rank.name)} まであと **${rank.nextMin - user.invites.qualified}人**`
+      : "最高階級に到達";
+    const panel = {
+      title: `招待台帳 - ${rank.name}`,
+      description: `${user.name} の招待実績です。招待した人が参加して初期資本を受け取ると成立します。`,
+      color: 0x22c55e,
+      fields: [
+        { name: "階級", value: `**${rank.name}**\n${nextLine}`, inline: true },
+        { name: "実績", value: `成立 **${user.invites.qualified}人** / 待ち ${user.invites.pending}人\n累計報酬 ${fmt(user.invites.earned)}`, inline: true },
+        { name: "報酬単価", value: `成立ごとに **${fmt(this.inviteReward(user))}**\n招待された人にも ${fmt(INVITE_CONFIG.inviteeBonus)}`, inline: true },
+        { name: "本日", value: `有償招待 ${user.invites.dailyPaid}/${INVITE_CONFIG.dailyPaidLimit} 回`, inline: true },
+        { name: "サーバー全体", value: `追跡 ${this.state.invites.totalTracked} / 成立 ${this.state.invites.totalQualified}`, inline: true }
+      ],
+      components: [
+        buttons([
+          runButton("招待ランキング", "rank invite", "primary"),
+          panelButton("貢献台帳", "invite", "success"),
+          panelButton("ホーム", "home")
+        ])
       ]
     };
+    return this.panelResult(panel);
   }
 
   inviteLine(user) {
