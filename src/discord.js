@@ -490,6 +490,108 @@ function handleXpSettingsCommand(engine, input) {
   return xpSettingsPanel(engine);
 }
 
+function extractDiscordUserId(internalUserId) {
+  const text = String(internalUserId || "");
+  const index = text.indexOf(":");
+  if (index < 0) return null;
+  return text.slice(index + 1) || null;
+}
+
+function userMention(user) {
+  const discordId = extractDiscordUserId(user?.id);
+  return discordId ? `<@${discordId}>` : (user?.name || "名無し");
+}
+
+function leaderboardSpec(typeRaw) {
+  const type = normalizePanelId(typeRaw || "net");
+  if (["text", "txt", "tc", "発言"].includes(type)) {
+    return {
+      key: "text",
+      title: "TCランキング",
+      unit: "XP",
+      score: (user) => user.activity?.textXp || 0,
+      label: (value) => `${rankFor(TEXT_RANKS, value).name} / ${value.toLocaleString("ja-JP")} XP`
+    };
+  }
+  if (["vc", "voice", "通話"].includes(type)) {
+    return {
+      key: "vc",
+      title: "VCランキング",
+      unit: "XP",
+      score: (user) => user.activity?.vcXp || 0,
+      label: (value, user) => `${rankFor(VC_RANKS, value).name} / ${value.toLocaleString("ja-JP")} XP / ${(user.activity?.vcMinutes || 0).toLocaleString("ja-JP")}分`
+    };
+  }
+  if (["invite", "invites", "招待"].includes(type)) {
+    return {
+      key: "invite",
+      title: "招待ランキング",
+      unit: "人",
+      score: (user) => user.invites?.qualified || 0,
+      label: (value) => `${value.toLocaleString("ja-JP")}人`
+    };
+  }
+  if (["bump", "バンプ"].includes(type)) {
+    return {
+      key: "bump",
+      title: "Bumpランキング",
+      unit: "回",
+      score: (user) => user.bump?.count || 0,
+      label: (value) => `${value.toLocaleString("ja-JP")}回`
+    };
+  }
+  return {
+    key: "net",
+    title: "純資産ランキング",
+    unit: CURRENCY_CODE,
+    score: (user) => Math.floor(Number(user.wallet) || 0),
+    label: (value) => fmt(value)
+  };
+}
+
+function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
+  const spec = leaderboardSpec(typeRaw);
+  const users = Object.values(engine.state.users || {}).filter((user) => user.joined);
+  const ranked = users
+    .map((user) => ({ user, value: spec.score(user) }))
+    .sort((a, b) => b.value - a.value || String(a.user.name || "").localeCompare(String(b.user.name || ""), "ja"));
+
+  if (ranked.length === 0) {
+    return { ok: true, title: spec.title, lines: ["まだ誰も経済圏に住んでいません。`join` からどうぞ。"] };
+  }
+
+  const actorId = actor?.id || null;
+  const selfIndex = actorId ? ranked.findIndex((entry) => entry.user.id === actorId) : -1;
+  const top = ranked.slice(0, 10);
+  const lines = top.map((entry, index) => {
+    const selfMark = entry.user.id === actorId ? " ← あなた" : "";
+    return `${index + 1}. ${userMention(entry.user)} - ${spec.label(entry.value, entry.user)}${selfMark}`;
+  });
+
+  if (actorId) {
+    lines.push("");
+    if (selfIndex >= 0) {
+      const self = ranked[selfIndex];
+      lines.push(`あなた: ${selfIndex + 1}位 / ${ranked.length}人中`);
+      lines.push(`${userMention(self.user)} - ${spec.label(self.value, self.user)}`);
+      if (selfIndex >= 10 && ranked[9]) {
+        const needed = Math.max(1, ranked[9].value - self.value + 1);
+        lines.push(`Top10まであと ${needed.toLocaleString("ja-JP")} ${spec.unit}`);
+      }
+    } else {
+      const self = engine.getUser(actor.id, actor.name);
+      lines.push("あなた: まだランキング対象外です。");
+      lines.push(`${userMention(self)} - ${spec.label(spec.score(self), self)}`);
+    }
+  }
+
+  return {
+    ok: true,
+    title: spec.title,
+    lines
+  };
+}
+
 function applyRankBalanceMigration(state) {
   if (!state || typeof state !== "object" || !state.users) return false;
   let changed = false;
@@ -546,10 +648,13 @@ const originalUpdateTitle = OriginalEconomyEngine.prototype.updateTitle;
 
 TunedEconomyEngine.prototype.run = function patchedRun(input, actor) {
   const text = String(input || "").trim();
+  const parts = text.split(/\s+/);
+  const command = normalizePanelId(parts[0]);
   if (isLoungeCommand(text)) return loungeRemovedResult();
   if (isManualVoiceSettlementCommand(text)) return automaticVoiceSettlementResult();
   if (/^rankxp(?:\s|$)/i.test(text) || /^xp-settings(?:\s|$)/i.test(text)) return handleXpSettingsCommand(this, text);
   if (/^panel\s+rank-xp-settings$/i.test(text)) return xpSettingsPanel(this);
+  if (["rank", "leaderboard", "ランキング"].includes(command)) return buildMentionLeaderboard(this, actor, parts[1] || "net");
 
   const result = originalRun.call(this, input, actor);
   const user = actor?.id ? this.getUser(actor.id, actor.name) : null;
@@ -750,27 +855,7 @@ TunedEconomyEngine.prototype.cardScore = function patchedCardScore(user) {
 };
 
 TunedEconomyEngine.prototype.leaderboard = function patchedLeaderboard(typeRaw = "net") {
-  const type = String(typeRaw || "net").toLowerCase();
-  if (!["text", "txt", "vc", "voice"].includes(type)) {
-    return retuneResult(OriginalEconomyEngine.prototype.leaderboard.call(this, typeRaw), null, this);
-  }
-
-  const users = Object.values(this.state.users).filter((user) => user.joined);
-  const isText = ["text", "txt"].includes(type);
-  const title = isText ? "TCランクランキング" : "VCランクランキング";
-  const ranks = isText ? TEXT_RANKS : VC_RANKS;
-  const score = (user) => isText ? user.activity.textXp || 0 : user.activity.vcXp || 0;
-  const ranked = users
-    .map((user) => ({ user, value: score(user) }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
-
-  if (ranked.length === 0) return { ok: true, title, lines: ["まだ誰も経済圏に住んでいません。`join` からどうぞ。"] };
-  return {
-    ok: true,
-    title,
-    lines: ranked.map((entry, index) => `${index + 1}. ${entry.user.name} - ${rankFor(ranks, entry.value).name} / 経験値 ${entry.value}`)
-  };
+  return buildMentionLeaderboard(this, null, typeRaw);
 };
 
 TunedEconomyEngine.prototype.voiceRewardLine = function patchedVoiceRewardLine(user) {
