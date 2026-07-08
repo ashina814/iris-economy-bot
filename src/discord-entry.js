@@ -168,18 +168,18 @@ function patchRankingSource(source) {
   );
 
   content = content.replace(
-    `  const lines = top.map((entry, index) => {\n    const selfMark = entry.user.id === actorId ? " ← あなた" : "";\n    return \`${index + 1}. \${userMention(entry.user)} - \${spec.label(entry.value, entry.user)}\${selfMark}\`;\n  });`,
-    `  const lines = top.map((entry, index) => {\n    const selfMark = entry.user.id === actorId ? " ← あなた" : "";\n    const member = memberRecordForUser(entry.user, memberDirectory);\n    return \`${index + 1}. \${userMention(entry.user, member)} - \${spec.label(entry.value, entry.user)}\${selfMark}\`;\n  });`
+    `  const lines = top.map((entry, index) => {\n    const selfMark = entry.user.id === actorId ? " ← あなた" : "";\n    return \`\${index + 1}. \${userMention(entry.user)} - \${spec.label(entry.value, entry.user)}\${selfMark}\`;\n  });`,
+    `  const lines = top.map((entry, index) => {\n    const selfMark = entry.user.id === actorId ? " ← あなた" : "";\n    const member = memberRecordForUser(entry.user, memberDirectory);\n    return \`\${index + 1}. \${userMention(entry.user, member)} - \${spec.label(entry.value, entry.user)}\${selfMark}\`;\n  });`
   );
 
   content = content.replace(
-    `      lines.push(\`${userMention(self.user)} - \${spec.label(self.value, self.user)}\`);`,
-    `      lines.push(\`${userMention(self.user, memberRecordForUser(self.user, memberDirectory))} - \${spec.label(self.value, self.user)}\`);`
+    `      lines.push(\`\${userMention(self.user)} - \${spec.label(self.value, self.user)}\`);`,
+    `      lines.push(\`\${userMention(self.user, memberRecordForUser(self.user, memberDirectory))} - \${spec.label(self.value, self.user)}\`);`
   );
 
   content = content.replace(
-    `      lines.push(\`${userMention(self)} - \${spec.label(spec.score(self), self)}\`);`,
-    `      lines.push(\`${userMention(self, memberRecordForUser(self, memberDirectory))} - \${spec.label(spec.score(self), self)}\`);`
+    `      lines.push(\`\${userMention(self)} - \${spec.label(spec.score(self), self)}\`);`,
+    `      lines.push(\`\${userMention(self, memberRecordForUser(self, memberDirectory))} - \${spec.label(spec.score(self), self)}\`);`
   );
 
   return content;
