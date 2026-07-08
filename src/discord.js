@@ -896,7 +896,8 @@ function progressBar(percent) {
 async function handleRankPanelButton(interaction) {
   const action = interaction.customId.split(":")[2];
   const actor = actorFromInteraction(interaction);
-  const command = action === "tc" ? "rank text" : action === "vc" ? "rank vc" : "card";
+  const commands = { tc: "rank text", vc: "rank vc", invite: "rank invite", bump: "rank bump" };
+  const command = commands[action] || "card";
   const result = engine.run(command, actor);
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
@@ -2202,17 +2203,20 @@ async function postRankPanel(channel) {
 function buildRankPanelPayload() {
   const embed = new EmbedBuilder()
     .setTitle("ランク確認")
-    .setDescription("発言・通話の経験値とランクを確認できます。ボタンから自分のランクと、サーバー内順位を見られます。")
+    .setDescription("発言・通話・招待・Bump のランクとサーバー内順位を確認できます。")
     .setColor(0x7c3aed)
     .addFields(
-      { name: "発言ランク", value: "サーバー内での発言量に応じて経験値・レベル・ランクが上がります。", inline: true },
-      { name: "通話ランク", value: "VCの滞在時間で経験値・レベル・ランクが上がり、分給も上がります。", inline: true },
-      { name: "使い方", value: "「自分のランク」で自身のカードを確認、「発言ランキング」「通話ランキング」でトップ10を確認できます。", inline: false }
+      { name: "発言ランク", value: "発言量に応じて経験値・レベル・ランクが上がります。", inline: true },
+      { name: "通話ランク", value: "VC滞在時間で経験値が増え、分給も上がります。", inline: true },
+      { name: "招待・Bump階級", value: "招待成立数と DISBOARD の Bump 回数で階級が上がり、1回あたりの報酬が増えます。", inline: false },
+      { name: "使い方", value: "「自分のランク」で自身のカード、各ランキングボタンでトップ10を確認できます。", inline: false }
     );
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("eco:rank:me").setLabel("自分のランク").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("eco:rank:tc").setLabel("発言ランキング").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("eco:rank:vc").setLabel("通話ランキング").setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("eco:rank:vc").setLabel("通話ランキング").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("eco:rank:invite").setLabel("招待ランキング").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("eco:rank:bump").setLabel("Bumpランキング").setStyle(ButtonStyle.Success)
   );
   return { embeds: [embed], components: [row] };
 }
