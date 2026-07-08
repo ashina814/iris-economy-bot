@@ -214,8 +214,8 @@ function patchRankingSource(source) {
   );
 
   content = content.replace(
-    `lines: [\`${user.name} が ${after.name} になりました。\`, \`VCレベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}\`, capLine],`,
-    `lines: [\`${user.name} が ${after.name} になりました。\`],`
+    'lines: [`${user.name} が ${after.name} になりました。`, `VCレベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, capLine],',
+    'lines: [`${user.name} が ${after.name} になりました。`],'
   );
 
   content = content.replace(
