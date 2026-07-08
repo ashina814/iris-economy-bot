@@ -187,6 +187,11 @@ function patchDiscordCoreSource(source) {
   );
 
   content = content.replace(
+    `async function sendRankAnnouncement(result, discordUserId, context = null) {`,
+    `function compactVcRankAnnouncement(result) {\n  if (result?.kind !== "vc_rank_up" && result?.meta?.axis !== "vc") return result;\n  const next = { ...result };\n  next.lines = Array.isArray(result.lines) && result.lines.length ? [result.lines[0]] : [];\n  if (result.meta) {\n    next.meta = { ...result.meta };\n    delete next.meta.minutesThisClaim;\n    delete next.meta.xpGained;\n    delete next.meta.drip;\n    delete next.meta.salaryPerMinute;\n  }\n  return next;\n}\n\nasync function sendRankAnnouncement(result, discordUserId, context = null) {\n  result = compactVcRankAnnouncement(result);`
+  );
+
+  content = content.replace(
     `    const description = message.embeds?.[0]?.description || "";\n    if (!description.includes("表示順をアップ") && !/Bump done/i.test(description)) return;`,
     `    const description = message.embeds?.[0]?.description || "";\n    const bumpText = [description, message.content || ""].join("\\n");\n    const isBumpOrUp = description.includes("表示順をアップ")\n      || /Bump done/i.test(bumpText)\n      || /Up done/i.test(bumpText)\n      || /\\/(?:bump|up)\\b/i.test(bumpText)\n      || /(?:bump|up)\\s*(?:done|success|complete|完了|成功)/i.test(bumpText);\n    if (!isBumpOrUp) return;`
   );
@@ -202,6 +207,16 @@ function patchDiscordCoreSource(source) {
 
 function patchRankingSource(source) {
   let content = patchBumpUpLabels(source);
+
+  content = content.replace(
+    '      label: (value, user) => `${rankFor(VC_RANKS, value).name} / ${value.toLocaleString("ja-JP")} XP / ${(user.activity?.vcMinutes || 0).toLocaleString("ja-JP")}分`',
+    '      label: (value) => `${rankFor(VC_RANKS, value).name} / ${value.toLocaleString("ja-JP")} XP`'
+  );
+
+  content = content.replace(
+    `lines: [\`${user.name} が ${after.name} になりました。\`, \`VCレベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}\`, capLine],`,
+    `lines: [\`${user.name} が ${after.name} になりました。\`],`
+  );
 
   content = content.replace(
     `function userMention(user) {\n  const discordId = extractDiscordUserId(user?.id);\n  return discordId ? \`<@\${discordId}>\` : (user?.name || "名無し");\n}\n`,
