@@ -9,9 +9,17 @@ function normalizePanelId(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeLabel(value) {
+  return String(value || "").trim();
+}
+
 function isLoungeRoute(value) {
   const text = normalizePanelId(value);
   return text === "lounge" || text === "panel lounge" || text === "panel:lounge" || text.endsWith(":lounge");
+}
+
+function isLoungeLabel(value) {
+  return ["通話", "通話ラウンジ", "ラウンジ"].includes(normalizeLabel(value));
 }
 
 function isLoungeCommand(input) {
@@ -61,7 +69,7 @@ function shouldDropComponent(item) {
   if (!item || typeof item !== "object") return false;
   const values = [item.command, item.customId, item.custom_id, item.value, item.id];
   if (values.some((value) => typeof value === "string" && isLoungeRoute(value))) return true;
-  if ((item.label === "通話" || item.label === "通話ラウンジ") && values.some((value) => typeof value === "string")) return true;
+  if (isLoungeLabel(item.label) || isLoungeLabel(item.name)) return true;
   if (values.some((value) => typeof value === "string" && isManualVoiceSettlementCommand(value))) return true;
   return false;
 }
