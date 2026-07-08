@@ -150,7 +150,7 @@ function installDiscordEntrypointTransform() {
     if (resolved === path.resolve(targetDiscordEntrypoint)) {
       content = patchRankingSource(fs.readFileSync(filename, "utf8"));
     } else if (resolved === path.resolve(targetDiscordCoreEntrypoint)) {
-      content = patchBumpUpSource(fs.readFileSync(filename, "utf8"));
+      content = patchDiscordCoreSource(fs.readFileSync(filename, "utf8"));
     } else if (resolved === path.resolve(targetEconomyEntrypoint)) {
       content = patchBumpUpLabels(fs.readFileSync(filename, "utf8"));
     }
@@ -173,17 +173,30 @@ function patchBumpUpLabels(source) {
     .replaceAll("Bump 回数", "Bump/Up 回数");
 }
 
-function patchBumpUpSource(source) {
+function patchDiscordCoreSource(source) {
   let content = patchBumpUpLabels(source);
+
+  content = content.replace(
+    `async function handleInteraction(interaction) {`,
+    `function rankXpSettingsLine() {\n  const settings = engine.xpSettings?.() || {};\n  const textXpMin = Math.max(1, Math.floor(Number(settings.textXpMin) || 1));\n  const textXpMax = Math.max(textXpMin, Math.floor(Number(settings.textXpMax) || 2));\n  const textCooldownSec = Math.max(1, Math.floor(Number(settings.textCooldownSec) || 60));\n  const vcXpPerMinute = Math.max(1, Math.floor(Number(settings.vcXpPerMinute) || 1));\n  return [\n    \`TC XP: \${textXpMin}〜\${textXpMax} / 有効発言\`,\n    \`TC CD: \${textCooldownSec}秒\`,\n    \`VC XP: \${vcXpPerMinute} / 分\`\n  ].join("\\n");\n}\n\nasync function replyStableAdminRankPanel(interaction) {\n  if (!isAdmin(interaction)) {\n    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });\n    return;\n  }\n\n  const xpLine = rankXpSettingsLine();\n  const embed = new EmbedBuilder()\n    .setTitle("ランク設定")\n    .setDescription("ランク確認パネル、昇格通知先、TC/VC XP設定を管理します。")\n    .setColor(0x334155)\n    .addFields(\n      { name: "ランク確認パネル", value: "このチャンネルに住民向けの常設ランキングパネルを送信できます。", inline: false },\n      { name: "昇格通知", value: "通知先をこのチャンネルに設定、または解除できます。", inline: true },\n      { name: "TC/VC XP設定", value: xpLine, inline: true }\n    );\n\n  const row1 = new ActionRowBuilder().addComponents(\n    new ButtonBuilder().setCustomId("eco:admin:rank-panel-post").setLabel("ランク確認パネル送信").setStyle(ButtonStyle.Primary),\n    new ButtonBuilder().setCustomId("eco:admin:rank-notify-set").setLabel("通知先をここにする").setStyle(ButtonStyle.Success),\n    new ButtonBuilder().setCustomId("eco:admin:rank-notify-clear").setLabel("通知先解除").setStyle(ButtonStyle.Danger)\n  );\n  const row2 = new ActionRowBuilder().addComponents(\n    new ButtonBuilder().setCustomId("eco:panel:rank-xp-settings").setLabel("XP設定").setStyle(ButtonStyle.Primary),\n    new ButtonBuilder().setCustomId("eco:panel:admin").setLabel("運営パネル").setStyle(ButtonStyle.Secondary)\n  );\n\n  if (interaction.deferred || interaction.replied) {\n    await interaction.editReply({ content: "", embeds: [embed], components: [row1, row2] });\n  } else {\n    await interaction.update({ content: "", embeds: [embed], components: [row1, row2] });\n  }\n}\n\nasync function handleInteraction(interaction) {`
+  );
+
+  content = content.replace(
+    `    const command = commandFromComponent(interaction);`,
+    `    if (interaction.isButton?.() && interaction.customId === "eco:panel:admin-rank") {\n      await replyStableAdminRankPanel(interaction);\n      return;\n    }\n    const command = commandFromComponent(interaction);`
+  );
+
   content = content.replace(
     `    const description = message.embeds?.[0]?.description || "";\n    if (!description.includes("表示順をアップ") && !/Bump done/i.test(description)) return;`,
     `    const description = message.embeds?.[0]?.description || "";\n    const bumpText = [description, message.content || ""].join("\\n");\n    const isBumpOrUp = description.includes("表示順をアップ")\n      || /Bump done/i.test(bumpText)\n      || /Up done/i.test(bumpText)\n      || /\\/(?:bump|up)\\b/i.test(bumpText)\n      || /(?:bump|up)\\s*(?:done|success|complete|完了|成功)/i.test(bumpText);\n    if (!isBumpOrUp) return;`
   );
+
   content = content
     .replaceAll("Bumpありがとう", "Bump/Upありがとう")
     .replaceAll("Bump階級昇格", "Bump/Up階級昇格")
     .replaceAll("Bump のランク", "Bump/Up のランク")
     .replaceAll("Bump 回数", "Bump/Up 回数");
+
   return content;
 }
 
