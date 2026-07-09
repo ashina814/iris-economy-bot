@@ -84,6 +84,11 @@ function isShopRelatedInteraction(interaction) {
   return false;
 }
 
+function isSlowYadoInteraction(interaction) {
+  const id = String(interaction?.customId || "");
+  return id === "eco:run:create-yado-vc" || id === "eco:user:secret-yado";
+}
+
 function shopMaintenanceResult() {
   return {
     ok: false,
@@ -114,6 +119,21 @@ async function replyShopMaintenance(interaction) {
   }
 }
 
+function predeferInteraction(interaction, reason) {
+  if (!interaction?.isRepliable?.() || interaction.deferred || interaction.replied || interaction.__irisPreDeferPromise) return;
+  interaction.__irisPreDeferPromise = interaction.deferReply({ ephemeral: true })
+    .then(() => {
+      interaction.__irisPreDeferred = true;
+      console.warn(`[interaction-guard] deferred ${reason}`);
+      return true;
+    })
+    .catch((error) => {
+      interaction.__irisPreDeferError = error;
+      console.warn(`[interaction-guard] defer failed for ${reason}: ${error.message}`);
+      return false;
+    });
+}
+
 function installGuildMemberAddContext() {
   const Client = discord.Client;
   if (!Client?.prototype || Client.prototype.__irisManualJoinContextInstalled) return;
@@ -124,9 +144,15 @@ function installGuildMemberAddContext() {
       return guildMemberAddContext.run({ suppressStarterGrant: true }, () => originalEmit.call(this, eventName, ...args));
     }
 
-    if (isInteractionCreateEvent(eventName) && isShopRelatedInteraction(args[0])) {
-      replyShopMaintenance(args[0]).catch((error) => console.warn(`[shop-maintenance] interaction guard failed: ${error.message}`));
-      return true;
+    if (isInteractionCreateEvent(eventName)) {
+      const interaction = args[0];
+      if (isShopRelatedInteraction(interaction)) {
+        replyShopMaintenance(interaction).catch((error) => console.warn(`[shop-maintenance] interaction guard failed: ${error.message}`));
+        return true;
+      }
+      if (isSlowYadoInteraction(interaction)) {
+        predeferInteraction(interaction, interaction.customId || "yado");
+      }
     }
 
     return originalEmit.call(this, eventName, ...args);
@@ -226,8 +252,22 @@ function patchResponseMethod(prototype, methodName) {
   if (prototype[flag]) return;
 
   const original = prototype[methodName];
-  prototype[methodName] = function irisComponentGuardedResponse(options, ...args) {
-    return original.call(this, sanitizeInteractionPayload(options), ...args);
+  prototype[methodName] = async function irisGuardedResponse(options, ...args) {
+    const payload = sanitizeInteractionPayload(options);
+    if (this.__irisPreDeferPromise) {
+      await this.__irisPreDeferPromise;
+    }
+
+    if (methodName === "reply" && (this.deferred || this.replied)) {
+      if (this.deferred && !this.replied && typeof this.editReply === "function") {
+        return this.editReply(payload);
+      }
+      if (typeof this.followUp === "function") {
+        return this.followUp(payload);
+      }
+    }
+
+    return original.call(this, payload, ...args);
   };
   prototype[flag] = true;
 }
