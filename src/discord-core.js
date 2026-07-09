@@ -15,6 +15,7 @@ const {
   AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ChannelSelectMenuBuilder,
   ChannelType,
   Client,
   EmbedBuilder,
@@ -211,6 +212,14 @@ async function handleInteraction(interaction) {
     }
     if (interaction.customId === "eco:role:balance-set") {
       await handleBalanceRoleSelect(interaction);
+      return;
+    }
+    return;
+  }
+
+  if (interaction.isChannelSelectMenu?.()) {
+    if (interaction.customId.startsWith("eco:vcxp:")) {
+      await handleVcXpLocationChannelSelect(interaction);
       return;
     }
     return;
@@ -433,7 +442,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
   }
 
   if (left || moved) {
-    const result = engine.finishVoiceSession(actor);
+    const result = engine.finishVoiceSession(actor, voiceRewardOptionsForChannel(oldState.channel));
     if (moved) engine.startVoiceSession(actor, newState.channelId);
     await cleanupTemporaryVoiceChannel(oldState.channel);
     store.save(engine.state);
@@ -601,6 +610,15 @@ function actorFromMember(member) {
   };
 }
 
+function voiceRewardOptionsForChannel(channel) {
+  const context = {
+    channelId: channel?.id || null,
+    parentId: channel?.parentId || null
+  };
+  const xpMultiplier = engine.vcXpMultiplierForVoiceContext?.(context) ?? 1;
+  return { ...context, xpMultiplier };
+}
+
 function actorFromUser(guildId, user) {
   return {
     id: `${guildId}:${user.id}`,
@@ -622,7 +640,12 @@ function canRunCommand(context, command) {
     normalized === "panel 二人宿" ||
     normalized === "panel admin" ||
     normalized === "panel admin-balance" ||
-    normalized === "panel admin-rank";
+    normalized === "panel admin-rank" ||
+    normalized === "panel rank-xp-settings" ||
+    normalized === "panel vc-xp-location-settings" ||
+    normalized === "panel vc-xp-location" ||
+    normalized.startsWith("rankxp") ||
+    normalized.startsWith("xp-settings");
   if (!restricted) return true;
   return isAdmin(context);
 }
@@ -1302,6 +1325,46 @@ async function clearRankNotifyChannel(interaction) {
     content: `昇格通知先のカスタム設定を解除しました。以後は環境変数の設定先を使います: ${fallback}`,
     ephemeral: true
   });
+}
+
+async function handleVcXpLocationChannelSelect(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+
+  const selectedId = interaction.values?.[0];
+  const action = interaction.customId.split(":")[2];
+  const selected = selectedId && interaction.guild
+    ? await interaction.guild.channels.fetch(selectedId).catch(() => null)
+    : null;
+  if (!selected || selected.guildId !== interaction.guildId) {
+    await interaction.reply({ content: "このサーバー内のチャンネルを選んでください。", ephemeral: true });
+    return;
+  }
+
+  if (action === "category-add") {
+    if (selected.type !== ChannelType.GuildCategory) {
+      await interaction.reply({ content: "カテゴリだけを選んでください。", ephemeral: true });
+      return;
+    }
+    engine.addVcFullXpTarget?.("category", selected.id);
+  } else if (action === "channel-add") {
+    if (selected.type !== ChannelType.GuildVoice) {
+      await interaction.reply({ content: "VCチャンネルだけを選んでください。", ephemeral: true });
+      return;
+    }
+    engine.addVcFullXpTarget?.("channel", selected.id);
+  } else {
+    await interaction.reply({ content: "不明なVC XP設定操作です。", ephemeral: true });
+    return;
+  }
+
+  const actor = actorFromInteraction(interaction);
+  const result = engine.run("rankxp vc-location", actor);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await updateDiscord(interaction, result);
 }
 
 async function confirmRankReset(interaction, axis) {
@@ -3418,7 +3481,7 @@ function startVoiceRewardSweeper() {
         continue;
       }
 
-      const result = engine.claimVoiceReward(user, { silent: true });
+      const result = engine.claimVoiceReward(user, { silent: true, ...voiceRewardOptionsForChannel(voiceState.channel) });
       if (result && !result.noop) changed = true;
     }
 
@@ -3547,6 +3610,25 @@ function buildComponents(result, options = {}) {
             }))
           )
       );
+      return row;
+    }
+
+    if (component.type === "channel-select") {
+      const typeMap = {
+        category: ChannelType.GuildCategory,
+        voice: ChannelType.GuildVoice
+      };
+      const channelTypes = (component.channelTypes || [])
+        .map((type) => typeMap[type])
+        .filter((type) => type !== undefined);
+      const menu = new ChannelSelectMenuBuilder()
+        .setCustomId(String(component.customId || `eco:channel-select:${rowIndex}`).slice(0, 100))
+        .setPlaceholder(component.placeholder || "チャンネルを選択")
+        .setMinValues(1)
+        .setMaxValues(1)
+        .setDisabled(Boolean(component.disabled));
+      if (channelTypes.length) menu.addChannelTypes(...channelTypes);
+      row.addComponents(menu);
       return row;
     }
 
