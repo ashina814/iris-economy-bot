@@ -142,6 +142,21 @@ const INVITE_CONFIG = {
   dailyPaidLimit: 4
 };
 
+const INVITE_CAMPAIGN_DEFAULTS = {
+  name: "IRIS Invite Campaign: Welcome Week",
+  settings: {
+    joinRewardRis: 1000,
+    retentionHours: 24,
+    retentionRewardRis: 2000,
+    retentionTicketReward: 1,
+    vcMinutesRequired: 15,
+    vcTicketReward: 1,
+    invitedUserJoinBonusRis: 1000,
+    invitedUserVcBonusRis: 1000,
+    shopViewBonusRis: 500
+  }
+};
+
 const INVITE_RANKS = [
   { name: "勧誘見習い", min: 0, reward: 900 },
   { name: "声かけ屋", min: 3, reward: 1300 },
@@ -235,6 +250,7 @@ function createInitialState() {
       totalPaid: 0,
       recent: []
     },
+    inviteCampaign: createInviteCampaignState(),
     inn: {
       nextId: 1,
       rooms: [],
@@ -298,6 +314,11 @@ class EconomyEngine {
       case "invites":
       case "招待":
         result = this.inviteReport(user);
+        break;
+      case "campaign":
+      case "invite-campaign":
+      case "キャンペーン":
+        result = this.campaignCommand(user, parsed.args);
         break;
       case "help":
       case "h":
@@ -407,6 +428,11 @@ class EconomyEngine {
       "招待": "invite",
       "貢献": "invite",
       "bump": "invite",
+      "campaign": "campaign",
+      "キャンペーン": "campaign",
+      "campaign shop": "campaign-shop",
+      "campaign-shop": "campaign-shop",
+      "campaign管理": "admin-campaign",
       "管理": "admin",
       "運営": "admin"
     };
@@ -457,6 +483,11 @@ class EconomyEngine {
       "market-review": () => this.marketReviewPanel(),
       "market-trades": () => this.marketTradesPanel(),
       "market-logs": () => this.marketLogsPanel(),
+      "campaign": () => this.campaignStatusPanel(user),
+      "campaign-shop": () => this.campaignShopPanel(user),
+      "campaign-leaderboard": () => this.campaignLeaderboardPanel(user),
+      "admin-campaign": () => this.adminCampaignPanel(user),
+      "campaign-pending": () => this.campaignPendingPanel(user),
       "admin-balance": () => this.adminBalancePanel(user),
       "admin-rank": () => this.adminRankPanel(user),
       "search-results": () => this.searchResultsPanel(user),
@@ -511,6 +542,7 @@ class EconomyEngine {
           { name: "マーケット管理", value: "公式商品、審査、取引対応、公式オークション", inline: true },
           { name: "残高操作", value: "個人セット/加算/減算、ロール一括セット、給与配布（一括加算）", inline: true },
           { name: "ランク設定", value: "昇格通知先の指定、ランク確認パネルの設置", inline: true },
+          { name: "Invite Campaign", value: "定期開催型の招待キャンペーン管理", inline: true },
           { name: "パネル送信", value: "住民向けの常設パネルをこのチャンネルへ送信できます。", inline: false }
         ],
         components: [
@@ -518,6 +550,7 @@ class EconomyEngine {
             panelButton("マーケット管理", "market-admin", "primary"),
             panelButton("残高操作", "admin-balance", "success"),
             panelButton("ランク設定", "admin-rank"),
+            panelButton("Campaign管理", "admin-campaign"),
             customButton("常設マーケット送信", "eco:market:post-panel"),
             panelButton("ホーム", "home")
           ]),
@@ -526,30 +559,13 @@ class EconomyEngine {
             option("マーケット", "panel:marketplace", "買う側の入口"),
             option("自分の店", "panel:my-shop", "売る側の入口"),
             option("マーケット管理", "panel:market-admin", "公式商品、審査、取引対応"),
+            option("Campaign管理", "panel:admin-campaign", "IRIS Invite Campaign"),
             option("二人宿", "panel:inn", "2人用VC作成パネル"),
             option("招待", "panel:invite", "招待台帳")
           ])
         ]
       }),
-      invite: () => ({
-        title: "貢献台帳",
-        description: "招待とBumpでサーバーに貢献すると階級が上がり、1回あたりの報酬も増えます。",
-        color: 0x22c55e,
-        fields: [
-          { name: "招待階級", value: `${this.inviteRankLine(user)}\n成立 ${user.invites.qualified}人 / 累計報酬 ${fmt(user.invites.earned)}`, inline: true },
-          { name: "Bump階級", value: `${this.bumpRankLine(user)}\n累計 ${user.bump.count}回 / 累計報酬 ${fmt(user.bump.earned)}`, inline: true },
-          { name: "今の報酬単価", value: `招待成立 ${fmt(this.inviteReward(user))} / Bump ${fmt(this.bumpReward(user))}\n招待された人にも ${fmt(INVITE_CONFIG.inviteeBonus)}`, inline: false },
-          { name: "条件", value: "招待: 招待した人が参加して初期資本を受け取ると成立（1日の有償上限あり）。Bump: DISBOARD で `/bump` すると自動で加算されます。", inline: false }
-        ],
-        components: [
-          buttons([
-            runButton("招待状況", "invite", "success"),
-            runButton("招待ランキング", "rank invite"),
-            runButton("Bumpランキング", "rank bump", "primary"),
-            panelButton("ホーム", "home")
-          ])
-        ]
-      })
+      invite: () => this.contributionPanel(user)
     };
 
     const panel = (panels[panelId] || panels.home)();
@@ -674,6 +690,7 @@ class EconomyEngine {
   }
 
   inviteReport(user) {
+    this.evaluateCampaignRetention();
     this.resetInviteDay(user);
     const rank = rankWithProgress(INVITE_RANKS, user.invites.qualified);
     const nextLine = rank.nextMin !== null
@@ -692,6 +709,8 @@ class EconomyEngine {
       ],
       components: [
         buttons([
+          runButton("Campaign状況", "campaign status", "success", !this.state.inviteCampaign.active),
+          runButton("Campaignランキング", "campaign leaderboard", "primary", !this.state.inviteCampaign.active),
           runButton("招待ランキング", "rank invite", "primary"),
           panelButton("貢献台帳", "invite", "success"),
           panelButton("ホーム", "home")
@@ -699,6 +718,436 @@ class EconomyEngine {
       ]
     };
     return this.panelResult(panel);
+  }
+
+  contributionPanel(user) {
+    this.evaluateCampaignRetention();
+    const fields = [
+      { name: "招待階級", value: `${this.inviteRankLine(user)}\n成立 ${user.invites.qualified}人 / 累計報酬 ${fmt(user.invites.earned)}`, inline: true },
+      { name: "Bump階級", value: `${this.bumpRankLine(user)}\n累計 ${user.bump.count}回 / 累計報酬 ${fmt(user.bump.earned)}`, inline: true },
+      { name: "今の報酬単価", value: `招待成立 ${fmt(this.inviteReward(user))} / Bump ${fmt(this.bumpReward(user))}\n招待された人にも ${fmt(INVITE_CONFIG.inviteeBonus)}`, inline: false },
+      { name: "条件", value: "招待: 招待した人が参加して初期資本を受け取ると成立（1日の有償上限あり）。Bump: DISBOARD で `/bump` すると自動で加算されます。", inline: false }
+    ];
+    const components = [];
+    if (this.state.inviteCampaign.active) {
+      fields.unshift({
+        name: "IRIS Invite Campaign 開催中",
+        value: "招待された人が24時間在籍・VC参加まで進むと追加報酬があります。\nCampaign Ticket は Campaign Shop で使用できます。",
+        inline: false
+      });
+      components.push(buttons([
+        runButton("Campaign状況", "campaign status", "success"),
+        runButton("Campaignランキング", "campaign leaderboard", "primary"),
+        runButton("Campaign Shop", "campaign shop"),
+        runButton("招待ランキング", "rank invite"),
+        panelButton("ホーム", "home")
+      ]));
+    } else {
+      components.push(buttons([
+        runButton("招待状況", "invite", "success"),
+        runButton("招待ランキング", "rank invite"),
+        runButton("Bumpランキング", "rank bump", "primary"),
+        panelButton("ホーム", "home")
+      ]));
+    }
+    return {
+      title: "貢献台帳",
+      description: "招待とBumpでサーバーに貢献すると階級が上がり、1回あたりの報酬も増えます。",
+      color: this.state.inviteCampaign.active ? 0x14b8a6 : 0x22c55e,
+      fields,
+      components
+    };
+  }
+
+  campaignCommand(user, args = []) {
+    const action = String(args[0] || "status").toLowerCase();
+    if (["status", "me", "progress"].includes(action)) return this.panelResult(this.campaignStatusPanel(user));
+    if (["leaderboard", "rank", "ranking"].includes(action)) return this.panelResult(this.campaignLeaderboardPanel(user));
+    if (["shop", "store"].includes(action)) return this.panelResult(this.campaignShopPanel(user));
+    if (["admin", "manage"].includes(action)) return this.panelResult(this.adminCampaignPanel(user));
+    if (action === "start") return this.startInviteCampaign(user);
+    if (action === "stop") return this.stopInviteCampaign(user);
+    if (action === "pending") return this.panelResult(this.campaignPendingPanel(user));
+    if (action === "reset-confirm") return this.panelResult(this.campaignResetConfirmPanel(user));
+    if (action === "reset") return this.resetInviteCampaign(user);
+    if (action === "cancel-reset") return this.panelResult(this.adminCampaignPanel(user));
+    return this.panelResult(this.campaignStatusPanel(user));
+  }
+
+  campaignStatsFor(userId) {
+    const campaign = this.state.inviteCampaign;
+    if (!campaign.userStats[userId]) {
+      campaign.userStats[userId] = {
+        invited: 0,
+        retained: 0,
+        vcQualified: 0,
+        ticketsEarned: 0,
+        risEarned: 0
+      };
+    }
+    return campaign.userStats[userId];
+  }
+
+  campaignTicketLine(user) {
+    return `${user.inviteCampaign.tickets}枚`;
+  }
+
+  campaignStatusPanel(user) {
+    this.evaluateCampaignRetention();
+    const campaign = this.state.inviteCampaign;
+    const stats = this.campaignStatsFor(user.id);
+    const nextMilestone = this.campaignNextMilestone(user);
+    return {
+      title: campaign.name,
+      description: campaign.active
+        ? "あなたのIRIS Invite Campaign進捗です。招待、24h定着、VC参加を中心に評価します。"
+        : "現在アクティブなInvite Campaignはありません。基盤は次回開催に備えて待機中です。",
+      color: campaign.active ? 0x14b8a6 : 0x64748b,
+      fields: [
+        { name: "状態", value: campaign.active ? "開催中" : "停止中", inline: true },
+        { name: "Campaign Ticket", value: this.campaignTicketLine(user), inline: true },
+        { name: "あなたの進捗", value: `招待 ${stats.invited}人\n24h定着 ${stats.retained}人\nVC達成 ${stats.vcQualified}人`, inline: true },
+        { name: "獲得", value: `Ticket ${stats.ticketsEarned}枚\nRis ${fmt(stats.risEarned)}`, inline: true },
+        { name: "次の目標", value: nextMilestone, inline: false }
+      ],
+      components: [
+        buttons([
+          runButton("Campaignランキング", "campaign leaderboard", "primary"),
+          runButton("Campaign Shop", "campaign shop", "success"),
+          panelButton("貢献台帳", "invite"),
+          panelButton("ホーム", "home")
+        ])
+      ]
+    };
+  }
+
+  campaignNextMilestone(user) {
+    const campaign = this.state.inviteCampaign;
+    const invited = Object.values(campaign.invitedUsers).filter((entry) => entry.inviterId === user.id);
+    const pendingRetention = invited.find((entry) => !entry.rewardsPaid?.retention && !this.campaignInviteeLeft(entry.invitedUserId));
+    if (pendingRetention) return `${pendingRetention.invitedUserName} さんの24h定着待ち`;
+    const pendingVc = invited.find((entry) => !entry.rewardsPaid?.vc);
+    if (pendingVc) return `${pendingVc.invitedUserName} さんのVC ${campaign.settings.vcMinutesRequired}分待ち`;
+    return campaign.active ? "次の招待で参加報酬と定着/VC報酬を狙えます。" : "次回キャンペーン開始を待っています。";
+  }
+
+  campaignLeaderboardPanel(user) {
+    this.evaluateCampaignRetention();
+    const rows = Object.entries(this.state.inviteCampaign.userStats || {})
+      .map(([userId, stats]) => ({
+        userId,
+        name: this.state.users[userId]?.name || userId,
+        ...stats,
+        score: (stats.retained || 0) + (stats.vcQualified || 0)
+      }))
+      .sort((a, b) => b.score - a.score || (b.invited || 0) - (a.invited || 0) || (b.ticketsEarned || 0) - (a.ticketsEarned || 0))
+      .slice(0, 10);
+    return {
+      title: "Campaignランキング",
+      description: "24h定着 + VC達成を主軸に並べます。単純な招待数だけでは順位を決めません。",
+      color: 0x14b8a6,
+      fields: rows.length
+        ? rows.map((row, index) => ({
+            name: `${index + 1}. ${row.name}`,
+            value: `招待 ${row.invited || 0} / 24h ${row.retained || 0} / VC ${row.vcQualified || 0} / Ticket ${row.ticketsEarned || 0}`,
+            inline: false
+          }))
+        : [{ name: "まだ記録なし", value: "キャンペーン対象の招待が記録されると表示されます。", inline: false }],
+      components: [buttons([
+        runButton("自分の状況", "campaign status", "success"),
+        runButton("Campaign Shop", "campaign shop"),
+        panelButton("貢献台帳", "invite"),
+        panelButton("ホーム", "home")
+      ])]
+    };
+  }
+
+  campaignShopPanel(user) {
+    const shopBonus = this.claimCampaignShopViewBonus(user);
+    const campaign = this.state.inviteCampaign;
+    return {
+      title: "Campaign Shop",
+      description: "Campaign Ticket の確認と、今後の交換導線の入口です。Phase 1では交換商品の安全な台帳基盤までを用意しています。",
+      color: 0x0f766e,
+      fields: [
+        { name: "Campaign Ticket", value: this.campaignTicketLine(user), inline: true },
+        { name: "交換商品", value: "交換商品は次回PRで追加予定です。壊れた在庫や未実装効果を作らないため、Phase 1では表示と導線に留めます。", inline: false },
+        { name: "Shopタッチボーナス", value: shopBonus ? `初回訪問ボーナス ${fmt(shopBonus)} を受け取りました。` : "招待された対象者は初回訪問時に小さなボーナスを受け取れます。", inline: false },
+        { name: "開催状況", value: campaign.active ? `${campaign.name} 開催中` : "現在は停止中", inline: false }
+      ],
+      components: [buttons([
+        panelButton("マーケット", "marketplace", "primary"),
+        panelButton("貢献台帳", "invite", "success"),
+        runButton("Campaign状況", "campaign status"),
+        panelButton("持ち物", "market-inventory")
+      ])]
+    };
+  }
+
+  adminCampaignPanel(user) {
+    this.evaluateCampaignRetention();
+    const campaign = this.state.inviteCampaign;
+    const summary = this.campaignSummary();
+    return {
+      title: "IRIS Invite Campaign 管理",
+      description: "招待から24h定着・VC参加までを見る定期開催型キャンペーンの管理パネルです。",
+      color: campaign.active ? 0x14b8a6 : 0x64748b,
+      fields: [
+        { name: "状態", value: campaign.active ? "active" : "inactive", inline: true },
+        { name: "キャンペーン名", value: campaign.name, inline: true },
+        { name: "期間", value: `開始 ${campaign.startsAt || "-"}\n終了 ${campaign.endsAt || "-"}`, inline: false },
+        { name: "Join reward", value: `招待者 ${fmt(campaign.settings.joinRewardRis)}\n新規 ${fmt(campaign.settings.invitedUserJoinBonusRis)}`, inline: true },
+        { name: "Retention", value: `${campaign.settings.retentionHours}h / ${fmt(campaign.settings.retentionRewardRis)} + Ticket ${campaign.settings.retentionTicketReward}`, inline: true },
+        { name: "VC", value: `${campaign.settings.vcMinutesRequired}分 / 招待者 Ticket ${campaign.settings.vcTicketReward}\n新規 ${fmt(campaign.settings.invitedUserVcBonusRis)}`, inline: true },
+        { name: "集計", value: `招待 ${summary.totalInvited} / 24h ${summary.retained} / VC ${summary.vcQualified}\nTicket ${summary.totalTicketsIssued} / Ris ${fmt(summary.totalRisPaid)}`, inline: false }
+      ],
+      components: [
+        buttons([
+          runButton("Start campaign", "campaign start", "success", campaign.active),
+          runButton("Stop campaign", "campaign stop", "danger", !campaign.active),
+          runButton("View status", "campaign admin"),
+          runButton("Leaderboard", "campaign leaderboard")
+        ]),
+        buttons([
+          runButton("Pending invites", "campaign pending"),
+          runButton("Reset campaign data", "campaign reset-confirm", "danger"),
+          panelButton("運営パネル", "admin"),
+          panelButton("貢献台帳", "invite")
+        ]),
+        buttons([
+          runButton("Post campaign panel", "campaign status", "secondary", true)
+        ])
+      ]
+    };
+  }
+
+  campaignPendingPanel(user) {
+    this.evaluateCampaignRetention();
+    const entries = Object.values(this.state.inviteCampaign.invitedUsers || {})
+      .filter((entry) => !entry.rewardsPaid?.retention || !entry.rewardsPaid?.vc)
+      .sort((a, b) => new Date(b.joinedAt || 0) - new Date(a.joinedAt || 0))
+      .slice(0, 10);
+    return {
+      title: "Campaign pending invites",
+      description: "24h定着またはVC達成が未完了の招待です。",
+      color: 0xf59e0b,
+      fields: entries.length
+        ? entries.map((entry) => ({
+            name: entry.invitedUserName,
+            value: `招待者 ${entry.inviterName}\njoined ${entry.joinedAt || "-"}\n24h ${entry.rewardsPaid?.retention ? "paid" : "pending"} / VC ${entry.rewardsPaid?.vc ? "paid" : "pending"}`,
+            inline: false
+          }))
+        : [{ name: "pendingなし", value: "未精算のキャンペーン招待はありません。", inline: false }],
+      components: [buttons([
+        panelButton("Campaign管理", "admin-campaign", "primary"),
+        runButton("Leaderboard", "campaign leaderboard"),
+        panelButton("運営パネル", "admin")
+      ])]
+    };
+  }
+
+  campaignResetConfirmPanel(user) {
+    return {
+      title: "Campaign data reset 確認",
+      description: "現在のキャンペーン記録、ユーザー別Campaign Ticket/獲得記録をリセットします。通常の招待/Bump/財布履歴は消しません。",
+      color: 0xef4444,
+      fields: [
+        { name: "対象", value: "inviteCampaign.invitedUsers / userStats / logs / user.inviteCampaign", inline: false }
+      ],
+      components: [buttons([
+        runButton("本当にリセット", "campaign reset", "danger"),
+        runButton("やめる", "campaign cancel-reset")
+      ])]
+    };
+  }
+
+  startInviteCampaign(user) {
+    const campaign = this.state.inviteCampaign;
+    if (campaign.active) return { ok: true, title: "Campaign already active", lines: [`${campaign.name} は開催中です。`], panel: this.adminCampaignPanel(user) };
+    campaign.active = true;
+    campaign.name = campaign.name || INVITE_CAMPAIGN_DEFAULTS.name;
+    campaign.startsAt = this.now().toISOString();
+    campaign.endsAt = null;
+    this.campaignLog("campaign_started", `${user.name} が ${campaign.name} を開始しました。`);
+    return { ok: true, title: "Campaign started", lines: [`${campaign.name} を開始しました。`], panel: this.adminCampaignPanel(user) };
+  }
+
+  stopInviteCampaign(user) {
+    const campaign = this.state.inviteCampaign;
+    if (!campaign.active) return { ok: true, title: "Campaign inactive", lines: [`${campaign.name} は停止中です。`], panel: this.adminCampaignPanel(user) };
+    this.evaluateCampaignRetention();
+    campaign.active = false;
+    campaign.endsAt = this.now().toISOString();
+    this.campaignLog("campaign_stopped", `${user.name} が ${campaign.name} を停止しました。`);
+    return { ok: true, title: "Campaign stopped", lines: [`${campaign.name} を停止しました。`], panel: this.adminCampaignPanel(user) };
+  }
+
+  resetInviteCampaign(user) {
+    const current = this.state.inviteCampaign;
+    this.state.inviteCampaign = createInviteCampaignState({
+      active: false,
+      name: current.name || INVITE_CAMPAIGN_DEFAULTS.name,
+      settings: { ...current.settings }
+    });
+    for (const member of Object.values(this.state.users || {})) {
+      member.inviteCampaign = createUser(member.id, member.name).inviteCampaign;
+    }
+    this.campaignLog("campaign_reset", `${user.name} がCampaign dataをリセットしました。`);
+    return { ok: true, title: "Campaign data reset", lines: ["キャンペーン記録をリセットしました。通常の招待/Bump/財布は変更していません。"], panel: this.adminCampaignPanel(user) };
+  }
+
+  campaignSummary() {
+    const campaign = this.state.inviteCampaign;
+    const stats = Object.values(campaign.userStats || {});
+    return {
+      totalInvited: Object.keys(campaign.invitedUsers || {}).length,
+      retained: stats.reduce((sum, entry) => sum + (entry.retained || 0), 0),
+      vcQualified: stats.reduce((sum, entry) => sum + (entry.vcQualified || 0), 0),
+      totalTicketsIssued: stats.reduce((sum, entry) => sum + (entry.ticketsEarned || 0), 0),
+      totalRisPaid: stats.reduce((sum, entry) => sum + (entry.risEarned || 0), 0)
+    };
+  }
+
+  campaignLog(event, message, data = {}) {
+    const campaign = this.state.inviteCampaign;
+    campaign.logs.push({ at: this.now().toISOString(), event, message, data });
+    campaign.logs = campaign.logs.slice(-80);
+  }
+
+  addCampaignRis(user, amount, note) {
+    const value = Math.max(0, Math.floor(Number(amount) || 0));
+    if (value <= 0) return 0;
+    user.wallet += value;
+    user.lifetimeEarned += value;
+    user.inviteCampaign.risEarned += value;
+    const stats = this.campaignStatsFor(user.id);
+    stats.risEarned += value;
+    this.log(user, "invite_campaign", value, note || this.state.inviteCampaign.name);
+    return value;
+  }
+
+  addCampaignTickets(user, count, note) {
+    const value = Math.max(0, Math.floor(Number(count) || 0));
+    if (value <= 0) return 0;
+    user.inviteCampaign.tickets += value;
+    user.inviteCampaign.ticketsEarned += value;
+    const stats = this.campaignStatsFor(user.id);
+    stats.ticketsEarned += value;
+    this.log(user, "campaign_ticket", value, note || this.state.inviteCampaign.name);
+    return value;
+  }
+
+  recordCampaignInviteJoin(inviter, invitee, meta = {}) {
+    const campaign = this.state.inviteCampaign;
+    if (!campaign.active) return null;
+    if (!inviter?.id || !invitee?.id || inviter.id === invitee.id || meta.bot) return null;
+    if (campaign.invitedUsers[invitee.id]) return null;
+    const entry = {
+      inviterId: inviter.id,
+      inviterName: inviter.name,
+      invitedUserId: invitee.id,
+      invitedUserName: invitee.name,
+      joinedAt: this.now().toISOString(),
+      retainedAt: null,
+      vcQualifiedAt: null,
+      shopViewedAt: null,
+      inviteCode: meta.code || null,
+      rewardsPaid: {
+        join: false,
+        retention: false,
+        vc: false,
+        shopView: false
+      }
+    };
+    campaign.invitedUsers[invitee.id] = entry;
+    const stats = this.campaignStatsFor(inviter.id);
+    stats.invited += 1;
+
+    if (!entry.rewardsPaid.join) {
+      const inviterPaid = this.addCampaignRis(inviter, campaign.settings.joinRewardRis, `Campaign join: ${invitee.name}`);
+      const inviteePaid = this.addCampaignRis(invitee, campaign.settings.invitedUserJoinBonusRis, `Campaign invited join: ${inviter.name}`);
+      entry.rewardsPaid.join = true;
+      this.campaignLog("invited_user_joined", `${inviter.name} が ${invitee.name} を招待しました。`, { inviterPaid, inviteePaid });
+    }
+    return entry;
+  }
+
+  campaignInviteeLeft(invitedUserId) {
+    const user = this.state.users[invitedUserId];
+    return Boolean(user?.invite?.leftAt);
+  }
+
+  recordCampaignInviteLeave(invitee) {
+    const entry = this.state.inviteCampaign.invitedUsers[invitee.id];
+    if (entry) entry.leftAt = this.now().toISOString();
+  }
+
+  evaluateCampaignRetention() {
+    const campaign = this.state.inviteCampaign;
+    if (!campaign.active) return [];
+    const now = this.now().getTime();
+    const paid = [];
+    for (const entry of Object.values(campaign.invitedUsers || {})) {
+      if (entry.rewardsPaid?.retention) continue;
+      if (this.campaignInviteeLeft(entry.invitedUserId)) continue;
+      const joinedAt = new Date(entry.joinedAt || 0).getTime();
+      if (!Number.isFinite(joinedAt) || now - joinedAt < campaign.settings.retentionHours * 3600000) continue;
+      const inviter = this.state.users[entry.inviterId];
+      if (!inviter || inviter.id === entry.invitedUserId) continue;
+      this.addCampaignRis(inviter, campaign.settings.retentionRewardRis, `Campaign 24h retention: ${entry.invitedUserName}`);
+      this.addCampaignTickets(inviter, campaign.settings.retentionTicketReward, `Campaign 24h retention: ${entry.invitedUserName}`);
+      entry.retainedAt = this.now().toISOString();
+      entry.rewardsPaid.retention = true;
+      const stats = this.campaignStatsFor(inviter.id);
+      stats.retained += 1;
+      this.campaignLog("invited_user_retained", `${entry.invitedUserName} が24h定着しました。`, { inviterId: inviter.id });
+      this.campaignLogActiveInviteMilestones(inviter);
+      paid.push(entry);
+    }
+    return paid;
+  }
+
+  qualifyCampaignVc(user) {
+    const campaign = this.state.inviteCampaign;
+    if (!campaign.active) return null;
+    const entry = campaign.invitedUsers[user.id];
+    if (!entry || entry.rewardsPaid?.vc) return null;
+    if ((user.activity?.vcMinutes || 0) < campaign.settings.vcMinutesRequired) return null;
+    const inviter = this.state.users[entry.inviterId];
+    if (!inviter || inviter.id === user.id) return null;
+    this.addCampaignTickets(inviter, campaign.settings.vcTicketReward, `Campaign VC: ${user.name}`);
+    this.addCampaignRis(user, campaign.settings.invitedUserVcBonusRis, `Campaign VC bonus: ${inviter.name}`);
+    entry.vcQualifiedAt = this.now().toISOString();
+    entry.rewardsPaid.vc = true;
+    const stats = this.campaignStatsFor(inviter.id);
+    stats.vcQualified += 1;
+    this.campaignLog("invited_user_vc_qualified", `${user.name} がVC ${campaign.settings.vcMinutesRequired}分を達成しました。`, { inviterId: inviter.id });
+    this.campaignLogActiveInviteMilestones(inviter);
+    return entry;
+  }
+
+  claimCampaignShopViewBonus(user) {
+    const campaign = this.state.inviteCampaign;
+    if (!campaign.active) return 0;
+    const entry = campaign.invitedUsers[user.id];
+    if (!entry || entry.rewardsPaid?.shopView) return 0;
+    const paid = this.addCampaignRis(user, campaign.settings.shopViewBonusRis, "Campaign Shop first view");
+    entry.shopViewedAt = this.now().toISOString();
+    entry.rewardsPaid.shopView = true;
+    this.campaignLog("campaign_shop_viewed", `${user.name} がCampaign Shopを開きました。`, { paid });
+    return paid;
+  }
+
+  campaignLogActiveInviteMilestones(inviter) {
+    const stats = this.campaignStatsFor(inviter.id);
+    const score = (stats.retained || 0) + (stats.vcQualified || 0);
+    for (const mark of [3, 5, 10]) {
+      const key = `active_${mark}`;
+      if (score >= mark && !inviter.inviteCampaign.milestonesLogged.includes(key)) {
+        inviter.inviteCampaign.milestonesLogged.push(key);
+        this.campaignLog("active_invite_milestone", `${inviter.name} が active invite ${mark} を達成しました。`, { inviterId: inviter.id, mark });
+      }
+    }
   }
 
   inviteLine(user) {
@@ -795,12 +1244,14 @@ class EconomyEngine {
       code: meta.code || null
     });
     this.state.invites.recent = this.state.invites.recent.slice(-20);
+    this.recordCampaignInviteJoin(inviter, invitee, meta);
     return { ok: true, inviter, invitee };
   }
 
   recordInviteLeave(inviteeActor) {
     const invitee = this.getUser(inviteeActor.id, inviteeActor.name);
     invitee.invite.leftAt = this.now().toISOString();
+    this.recordCampaignInviteLeave(invitee);
     if (invitee.invite.referredBy && !invitee.invite.qualified) {
       const inviter = this.state.users[invitee.invite.referredBy];
       if (inviter) inviter.invites.pending = Math.max(0, (inviter.invites.pending || 0) - 1);
@@ -1018,6 +1469,7 @@ class EconomyEngine {
     if (["shops", "user-shops"].includes(action)) return this.panelResult(this.userShopsPanel(user));
     if (["recommended", "recommend", "today"].includes(action)) return this.panelResult(this.recommendedShelfPanel(user));
     if (["affordable", "can-buy", "available"].includes(action)) return this.panelResult(this.affordableItemsPanel(user));
+    if (["campaign-shop", "campaign"].includes(action)) return this.panelResult(this.campaignShopPanel(user));
     if (["auction", "auctions"].includes(action)) return this.panelResult(this.officialAuctionsPanel(user));
     if (["inventory", "history"].includes(action)) return this.panelResult(this.marketInventoryPanel(user));
     if (["my", "my-shop"].includes(action)) return this.myShop(user);
@@ -1135,30 +1587,44 @@ class EconomyEngine {
     const shopStatus = shop.shopOpened
       ? `${shop.shopName || "未設定"} / ${(shop.shopStatus || "open") === "open" ? "営業中" : "休業中"}`
       : "未開店";
+    const fields = [
+      { name: "残高", value: this.moneyLine(user), inline: true },
+      { name: "今日のおすすめ", value: recommended ? `${recommended.item.name}\n${recommended.reason} / ${fmt(this.itemPrice(recommended.id))}` : "公式商品を準備中です。", inline: true },
+      { name: "民営出品", value: `${this.activeListings().length}件（${this.openShopSellerIds().size}店）`, inline: true },
+      { name: "自分の店", value: shopStatus, inline: false }
+    ];
+    const components = [
+      buttons([
+        panelButton("公式商品を見る", "official-shop", "primary"),
+        panelButton("ユーザー商品を見る", "user-shops", "primary"),
+        runButton("今日のおすすめ", "marketplace recommended", "primary"),
+        runButton("今買えるもの", "marketplace affordable"),
+        panelButton("持ち物を見る", "market-inventory")
+      ]),
+      buttons([
+        panelButton("自分の店", "my-shop"),
+        customButton("絞り込みで探す", "eco:shop:search-open"),
+        panelButton("公式オークション", "official-auctions")
+      ])
+    ];
+    if (this.state.inviteCampaign.active) {
+      fields.splice(3, 0, {
+        name: "Campaign Shop",
+        value: `${this.state.inviteCampaign.name}\nCampaign Ticket: ${this.campaignTicketLine(user)}`,
+        inline: false
+      });
+      components.push(buttons([
+        runButton("Campaign Shop", "marketplace campaign-shop", "success"),
+        runButton("Campaign状況", "campaign status"),
+        runButton("Campaignランキング", "campaign leaderboard")
+      ]));
+    }
     return {
       title: "マーケット",
       description: "商品を探して、詳細を見て、確認してから購入できます。売る側の管理も下の控えめな導線から行えます。",
       color: 0x7c3aed,
-      fields: [
-        { name: "残高", value: this.moneyLine(user), inline: true },
-        { name: "今日のおすすめ", value: recommended ? `${recommended.item.name}\n${recommended.reason} / ${fmt(this.itemPrice(recommended.id))}` : "公式商品を準備中です。", inline: true },
-        { name: "民営出品", value: `${this.activeListings().length}件（${this.openShopSellerIds().size}店）`, inline: true },
-        { name: "自分の店", value: shopStatus, inline: false }
-      ],
-      components: [
-        buttons([
-          panelButton("公式商品を見る", "official-shop", "primary"),
-          panelButton("ユーザー商品を見る", "user-shops", "primary"),
-          runButton("今日のおすすめ", "marketplace recommended", "primary"),
-          runButton("今買えるもの", "marketplace affordable"),
-          panelButton("持ち物を見る", "market-inventory")
-        ]),
-        buttons([
-          panelButton("自分の店", "my-shop"),
-          customButton("絞り込みで探す", "eco:shop:search-open"),
-          panelButton("公式オークション", "official-auctions")
-        ])
-      ]
+      fields,
+      components
     };
   }
 
@@ -3297,9 +3763,11 @@ class EconomyEngine {
       user.lifetimeEarned += drip;
       user.activity.vcDailyEarned += drip;
     }
+    const campaignVc = this.qualifyCampaignVc(user);
 
     const after = rankFor(VC_RANKS, user.activity.vcXp);
     const capLine = drip <= 0 ? "今日のVC Risは上限。ランクだけ伸びます。" : this.voiceRewardLine(user);
+    const campaignLine = campaignVc ? `Campaign VC達成: 招待者にTicket、あなたに ${fmt(this.state.inviteCampaign.settings.invitedUserVcBonusRis)}。` : null;
     if (after.name !== before.name) {
       const progress = rankWithProgress(VC_RANKS, user.activity.vcXp);
       return {
@@ -3307,7 +3775,7 @@ class EconomyEngine {
         kind: "vc_rank_up",
         title: "通話ランク昇格",
         silent: Boolean(options.silent),
-        lines: [`${user.name} が ${after.name} になりました。`, `通話レベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, capLine],
+        lines: [`${user.name} が ${after.name} になりました。`, `通話レベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, campaignLine, capLine].filter(Boolean),
         meta: {
           axis: "vc",
           userName: user.name,
@@ -3334,7 +3802,7 @@ class EconomyEngine {
       kind: "vc_reward",
       title: "VC報酬",
       silent: Boolean(options.silent),
-      lines: [`通話レベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, capLine]
+      lines: [`通話レベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, campaignLine, capLine].filter(Boolean)
     };
   }
 
@@ -4012,10 +4480,33 @@ function createUser(id, name) {
         mode: "permanent"
       }
     },
+    inviteCampaign: {
+      tickets: 0,
+      ticketsEarned: 0,
+      risEarned: 0,
+      milestonesLogged: []
+    },
     lastDaily: null,
     lastWork: null,
     lastSubsidy: null,
     notifyEnabled: false
+  };
+}
+
+function createInviteCampaignState(overrides = {}) {
+  const settings = {
+    ...INVITE_CAMPAIGN_DEFAULTS.settings,
+    ...((overrides && overrides.settings) || {})
+  };
+  return {
+    active: Boolean(overrides.active),
+    name: overrides.name || INVITE_CAMPAIGN_DEFAULTS.name,
+    startsAt: overrides.startsAt || null,
+    endsAt: overrides.endsAt || null,
+    settings,
+    invitedUsers: { ...((overrides && overrides.invitedUsers) || {}) },
+    userStats: { ...((overrides && overrides.userStats) || {}) },
+    logs: Array.isArray(overrides.logs) ? overrides.logs : []
   };
 }
 
@@ -4035,6 +4526,13 @@ function migrateState(state) {
   next.marketplace.nextAuctionId = Math.max(1, Number(next.marketplace.nextAuctionId) || 1);
   next.invites = { ...base.invites, ...(next.invites || {}) };
   next.invites.recent = Array.isArray(next.invites.recent) ? next.invites.recent : [];
+  next.inviteCampaign = createInviteCampaignState(next.inviteCampaign || {});
+  next.inviteCampaign.invitedUsers = Object.fromEntries(
+    Object.entries(next.inviteCampaign.invitedUsers || {}).map(([id, entry]) => [id, migrateCampaignInviteEntry(entry)])
+  );
+  next.inviteCampaign.userStats = Object.fromEntries(
+    Object.entries(next.inviteCampaign.userStats || {}).map(([id, stats]) => [id, migrateCampaignUserStats(stats)])
+  );
   next.inn = { ...base.inn, ...(next.inn || {}) };
   next.inn.rooms = Array.isArray(next.inn.rooms) ? next.inn.rooms : [];
   next.inn.history = Array.isArray(next.inn.history) ? next.inn.history : [];
@@ -4064,6 +4562,11 @@ function migrateUser(user) {
       ...(user.marketplace || {}),
       listingDraft: { ...fresh.marketplace.listingDraft, ...((user.marketplace || {}).listingDraft || {}) },
       inventory: Array.isArray((user.marketplace || {}).inventory) ? user.marketplace.inventory : []
+    },
+    inviteCampaign: {
+      ...fresh.inviteCampaign,
+      ...(user.inviteCampaign || {}),
+      milestonesLogged: Array.isArray(user.inviteCampaign?.milestonesLogged) ? user.inviteCampaign.milestonesLogged : []
     }
   };
   delete merged.debt;
@@ -4074,6 +4577,37 @@ function migrateUser(user) {
   delete merged.casino;
   delete merged.inn;
   return merged;
+}
+
+function migrateCampaignInviteEntry(entry = {}) {
+  return {
+    inviterId: entry.inviterId || null,
+    inviterName: entry.inviterName || "",
+    invitedUserId: entry.invitedUserId || null,
+    invitedUserName: entry.invitedUserName || "",
+    joinedAt: entry.joinedAt || null,
+    retainedAt: entry.retainedAt || null,
+    vcQualifiedAt: entry.vcQualifiedAt || null,
+    shopViewedAt: entry.shopViewedAt || null,
+    leftAt: entry.leftAt || null,
+    inviteCode: entry.inviteCode || null,
+    rewardsPaid: {
+      join: Boolean(entry.rewardsPaid?.join),
+      retention: Boolean(entry.rewardsPaid?.retention),
+      vc: Boolean(entry.rewardsPaid?.vc),
+      shopView: Boolean(entry.rewardsPaid?.shopView)
+    }
+  };
+}
+
+function migrateCampaignUserStats(stats = {}) {
+  return {
+    invited: Math.max(0, Number(stats.invited) || 0),
+    retained: Math.max(0, Number(stats.retained) || 0),
+    vcQualified: Math.max(0, Number(stats.vcQualified) || 0),
+    ticketsEarned: Math.max(0, Number(stats.ticketsEarned) || 0),
+    risEarned: Math.max(0, Number(stats.risEarned) || 0)
+  };
 }
 
 function parseInput(input) {

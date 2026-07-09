@@ -87,6 +87,61 @@ assert(joinResult.ok, "join が成功する必要があります");
 const freshUser = freshEngine.state.users[freshActor.id];
 assert.strictEqual(freshUser.wallet, 100000, `初期配布は素の10万Ris（実際: ${freshUser.wallet}）`);
 
+const migratedCampaignEngine = new EconomyEngine({ version: 4, users: {} }, { rng });
+assert(migratedCampaignEngine.state.inviteCampaign, "inactive campaign state が安全に補完される必要があります");
+const inactiveCampaignPanel = migratedCampaignEngine.run("campaign status", { id: "test:inactive", name: "非開催確認" });
+assert(inactiveCampaignPanel.panel, "inactive campaign panel が表示できる必要があります");
+
+let campaignNow = new Date("2026-07-01T00:00:00.000Z");
+const campaignEngine = new EconomyEngine(createInitialState(), { rng, now: () => campaignNow });
+const campaignAdmin = { id: "test:campaign-admin", name: "Campaign管理者" };
+const campaignInviter = { id: "test:campaign-inviter", name: "招待者" };
+const campaignInvitee = { id: "test:campaign-invitee", name: "招待された人" };
+campaignEngine.run("join", campaignAdmin);
+campaignEngine.run("join", campaignInviter);
+const startCampaign = campaignEngine.run("campaign start", campaignAdmin);
+assert(startCampaign.ok && campaignEngine.state.inviteCampaign.active, "campaign start が成功する必要があります");
+const activeInvitePanel = campaignEngine.run("panel invite", campaignInviter);
+assert(JSON.stringify(activeInvitePanel.panel).includes("IRIS Invite Campaign 開催中"), "貢献パネルにcampaignバナーが必要です");
+const inactiveMarketBefore = migratedCampaignEngine.run("panel marketplace", { id: "test:market-inactive", name: "市場非開催" });
+assert(!JSON.stringify(inactiveMarketBefore.panel).includes("Campaign Shop"), "非開催時のmarketplaceにCampaign Shopを出さない必要があります");
+const activeMarket = campaignEngine.run("panel marketplace", campaignInviter);
+assert(JSON.stringify(activeMarket.panel).includes("Campaign Shop"), "開催中のmarketplaceにCampaign Shop入口が必要です");
+
+campaignEngine.recordInviteJoin(campaignInviter, campaignInvitee, { code: "iris-test" });
+let campaignInviteeUser = campaignEngine.getUser(campaignInvitee.id, campaignInvitee.name);
+let campaignInviterUser = campaignEngine.getUser(campaignInviter.id, campaignInviter.name);
+const afterCampaignJoinInviterWallet = campaignInviterUser.wallet;
+const afterCampaignJoinInviteeWallet = campaignInviteeUser.wallet;
+campaignEngine.recordInviteJoin(campaignInviter, campaignInvitee, { code: "iris-test" });
+assert.strictEqual(campaignInviterUser.wallet, afterCampaignJoinInviterWallet, "campaign join reward は二重支払いされてはいけません");
+assert.strictEqual(campaignInviteeUser.wallet, afterCampaignJoinInviteeWallet, "invited user join bonus は二重支払いされてはいけません");
+campaignEngine.run("join", campaignInvitee);
+campaignInviteeUser = campaignEngine.getUser(campaignInvitee.id, campaignInvitee.name);
+campaignInviterUser = campaignEngine.getUser(campaignInviter.id, campaignInviter.name);
+
+campaignNow = new Date("2026-07-02T01:00:00.000Z");
+campaignEngine.evaluateCampaignRetention();
+const afterRetentionWallet = campaignInviterUser.wallet;
+const afterRetentionTickets = campaignInviterUser.inviteCampaign.tickets;
+campaignEngine.evaluateCampaignRetention();
+assert.strictEqual(campaignInviterUser.wallet, afterRetentionWallet, "retention reward は二重支払いされてはいけません");
+assert.strictEqual(campaignInviterUser.inviteCampaign.tickets, afterRetentionTickets, "retention ticket は二重付与されてはいけません");
+
+const beforeVcMinutes = campaignInviteeUser.activity.vcMinutes;
+campaignEngine.awardVoiceMinutes(campaignInviteeUser, 15);
+assert.strictEqual(campaignInviteeUser.activity.vcMinutes, beforeVcMinutes + 15, "campaign VC判定で通常VC分数を減らしてはいけません");
+assert(campaignInviterUser.inviteCampaign.tickets > afterRetentionTickets, "VC達成で招待者にCampaign Ticketが付与される必要があります");
+const ticketsAfterVc = campaignInviterUser.inviteCampaign.tickets;
+campaignEngine.awardVoiceMinutes(campaignInviteeUser, 15);
+assert.strictEqual(campaignInviterUser.inviteCampaign.tickets, ticketsAfterVc, "VC campaign reward は二重付与されてはいけません");
+
+const campaignShop = campaignEngine.run("campaign shop", campaignInvitee);
+assert(campaignShop.panel, "Campaign Shop panel が表示できる必要があります");
+assert(!JSON.stringify(campaignShop.panel.components).includes("work"), "Campaign Shopにworkを出してはいけません");
+const stopCampaign = campaignEngine.run("campaign stop", campaignAdmin);
+assert(stopCampaign.ok && !campaignEngine.state.inviteCampaign.active, "campaign stop が成功する必要があります");
+
 const seller = { id: "test:seller", name: "売り手" };
 const buyer = { id: "test:buyer", name: "買い手" };
 engine.run("join", seller);
