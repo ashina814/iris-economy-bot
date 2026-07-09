@@ -16,7 +16,10 @@ const DEFAULT_XP_SETTINGS = Object.freeze({
   textXpMax: 2,
   textDripMin: 1,
   textDripMax: 4,
-  vcXpPerMinute: 1
+  vcXpPerMinute: 1,
+  vcFullXpCategoryIds: [],
+  vcFullXpChannelIds: [],
+  vcOutsideXpRate: 0.2
 });
 
 const XP_SETTING_LIMITS = Object.freeze({
@@ -235,7 +238,7 @@ function decorateTunedPanels(result, engine) {
     if (!panel.fields.some((field) => field?.name === "TC/VC XP設定")) {
       panel.fields.splice(3, 0, {
         name: "TC/VC XP設定",
-        value: "TC獲得XP、TCクールダウン、VC XP/分を調整できます。",
+        value: "TC獲得XP、TCクールダウン、VC XP/分、VC場所別倍率を調整できます。",
         inline: true
       });
     }
@@ -256,10 +259,18 @@ function decorateTunedPanels(result, engine) {
         inline: false
       });
     }
+    if (!panel.fields.some((field) => field?.name === "VC XP倍率")) {
+      panel.fields.push({
+        name: "VC XP倍率",
+        value: engine ? vcXpLocationSummary(engine.xpSettings()) : "通常XP対象カテゴリ/VCと対象外倍率を管理できます。",
+        inline: false
+      });
+    }
 
     panel.components ||= [];
     panel.components.push(buttons([
       panelButton("XP設定", "rank-xp-settings", "primary"),
+      panelButton("VC XP倍率設定", "vc-xp-location-settings", "success"),
       panelButton("運営パネル", "admin")
     ]));
   }
@@ -364,6 +375,17 @@ function normalizeActivity(user) {
   user.activity.vcDailyMinutes = Math.max(0, Math.floor(Number(user.activity.vcDailyMinutes) || 0));
 }
 
+function cleanDiscordIdList(value) {
+  const list = Array.isArray(value) ? value : [];
+  return Array.from(new Set(list.map((id) => String(id || "").trim()).filter((id) => /^\d{5,32}$/.test(id))));
+}
+
+function clampRate(value, fallback) {
+  const rate = Number(value);
+  if (!Number.isFinite(rate)) return fallback;
+  return Math.min(1, Math.max(0, rate));
+}
+
 function cleanXpSettings(raw = {}) {
   const settings = { ...DEFAULT_XP_SETTINGS, ...(raw || {}) };
   for (const [key, [min, max]] of Object.entries(XP_SETTING_LIMITS)) {
@@ -371,6 +393,9 @@ function cleanXpSettings(raw = {}) {
   }
   if (settings.textXpMax < settings.textXpMin) settings.textXpMax = settings.textXpMin;
   if (settings.textDripMax < settings.textDripMin) settings.textDripMax = settings.textDripMin;
+  settings.vcFullXpCategoryIds = cleanDiscordIdList(settings.vcFullXpCategoryIds);
+  settings.vcFullXpChannelIds = cleanDiscordIdList(settings.vcFullXpChannelIds);
+  settings.vcOutsideXpRate = clampRate(settings.vcOutsideXpRate, DEFAULT_XP_SETTINGS.vcOutsideXpRate);
   return settings;
 }
 
@@ -380,6 +405,12 @@ function getXpSettings(state) {
 }
 
 function applyXpPreset(state, preset) {
+  const current = getXpSettings(state);
+  const locationSettings = {
+    vcFullXpCategoryIds: current.vcFullXpCategoryIds,
+    vcFullXpChannelIds: current.vcFullXpChannelIds,
+    vcOutsideXpRate: current.vcOutsideXpRate
+  };
   if (preset === "light") {
     state.rankXpSettings = cleanXpSettings({
       textCooldownSec: 45,
@@ -387,7 +418,8 @@ function applyXpPreset(state, preset) {
       textXpMax: 3,
       textDripMin: 2,
       textDripMax: 6,
-      vcXpPerMinute: 2
+      vcXpPerMinute: 2,
+      ...locationSettings
     });
   } else if (preset === "heavy") {
     state.rankXpSettings = cleanXpSettings({
@@ -396,10 +428,11 @@ function applyXpPreset(state, preset) {
       textXpMax: 1,
       textDripMin: 1,
       textDripMax: 3,
-      vcXpPerMinute: 1
+      vcXpPerMinute: 1,
+      ...locationSettings
     });
   } else {
-    state.rankXpSettings = cleanXpSettings(DEFAULT_XP_SETTINGS);
+    state.rankXpSettings = cleanXpSettings({ ...DEFAULT_XP_SETTINGS, ...locationSettings });
   }
   return state.rankXpSettings;
 }
@@ -419,6 +452,71 @@ function xpSettingsSummary(settings) {
     `TC Ris: ${settings.textDripMin}〜${settings.textDripMax} / 有効発言`,
     `VC XP: ${settings.vcXpPerMinute} / 分`
   ].join("\n");
+}
+
+function ratePercent(rate) {
+  return `${Math.round(clampRate(rate, DEFAULT_XP_SETTINGS.vcOutsideXpRate) * 100)}%`;
+}
+
+function vcXpLocationSummary(settings) {
+  const categoryCount = settings.vcFullXpCategoryIds.length;
+  const channelCount = settings.vcFullXpChannelIds.length;
+  return [
+    `通常XPカテゴリ: ${categoryCount}件`,
+    `通常XPチャンネル: ${channelCount}件`,
+    `対象外倍率: ${ratePercent(settings.vcOutsideXpRate)}`,
+    "対象未設定時は全VC 100%"
+  ].join("\n");
+}
+
+function channelMentionList(ids) {
+  return ids.length ? ids.map((id) => `<#${id}>`).join("\n") : "未設定";
+}
+
+function channelSelect(customId, placeholder, channelTypes) {
+  return { type: "channel-select", customId, placeholder, channelTypes };
+}
+
+function vcXpLocationPanel(engine, message = null) {
+  const settings = engine.xpSettings();
+  return {
+    ok: true,
+    title: "VC XP倍率設定",
+    lines: [
+      message,
+      vcXpLocationSummary(settings),
+      "20%では標準1XP/分のとき、おおよそ5分で1XPです。"
+    ].filter(Boolean),
+    panel: {
+      title: "VC XP倍率設定",
+      description: "通常XP対象のカテゴリ/VCではVC XPを100%付与し、それ以外では対象外倍率を適用します。",
+      color: 0x0ea5e9,
+      fields: [
+        { name: "通常XPカテゴリ", value: `${settings.vcFullXpCategoryIds.length}件\n${channelMentionList(settings.vcFullXpCategoryIds)}`, inline: true },
+        { name: "通常XPチャンネル", value: `${settings.vcFullXpChannelIds.length}件\n${channelMentionList(settings.vcFullXpChannelIds)}`, inline: true },
+        { name: "対象外倍率", value: `${ratePercent(settings.vcOutsideXpRate)}\n20%は標準1XP/分で約5分=1XP`, inline: true },
+        { name: "挙動", value: "通常XP対象が1件もない場合は既存互換として全VCを100%扱いにします。Ris報酬とVC分数は倍率の影響を受けません。", inline: false }
+      ],
+      components: [
+        { type: "buttons", items: [
+          { kind: "custom", label: "カテゴリを追加", customId: "eco:vcxp:noop:category", style: "secondary", disabled: true },
+          { kind: "custom", label: "VCを追加", customId: "eco:vcxp:noop:channel", style: "secondary", disabled: true },
+          panelButton("対象一覧", "vc-xp-location-settings")
+        ] },
+        channelSelect("eco:vcxp:category-add", "通常XPカテゴリを追加", ["category"]),
+        channelSelect("eco:vcxp:channel-add", "通常XP VCを追加", ["voice"]),
+        { type: "buttons", items: [
+          runButton("倍率を20%にする", "rankxp vc-location rate 0.2", "primary"),
+          runButton("倍率を30%にする", "rankxp vc-location rate 0.3"),
+          runButton("倍率を50%にする", "rankxp vc-location rate 0.5")
+        ] },
+        { type: "buttons", items: [
+          runButton("対象を全解除", "rankxp vc-location clear", "danger", settings.vcFullXpCategoryIds.length + settings.vcFullXpChannelIds.length === 0),
+          panelButton("戻る", "admin-rank")
+        ] }
+      ]
+    }
+  };
 }
 
 function xpSettingsPanel(engine, message = null) {
@@ -460,6 +558,10 @@ function xpSettingsPanel(engine, message = null) {
           runButton("TC CD +15秒", "rankxp adjust textCooldownSec 15"),
           runButton("VC XP +1", "rankxp adjust vcXpPerMinute 1"),
           runButton("VC XP -1", "rankxp adjust vcXpPerMinute -1")
+        ]),
+        buttons([
+          panelButton("VC XP倍率設定", "vc-xp-location-settings", "primary"),
+          panelButton("ランク設定", "admin-rank")
         ])
       ]
     }
@@ -471,6 +573,26 @@ function handleXpSettingsCommand(engine, input) {
   const action = String(parts[1] || "show").toLowerCase();
 
   if (action === "show") return xpSettingsPanel(engine);
+  if (["vc-location", "vclocation", "vcxp-location"].includes(action)) {
+    const subAction = String(parts[2] || "show").toLowerCase();
+    if (subAction === "show" || subAction === "list") return vcXpLocationPanel(engine);
+    if (subAction === "rate") {
+      const rate = clampRate(parts[3], null);
+      if (rate === null) return vcXpLocationPanel(engine, "倍率が不正です。");
+      const settings = engine.xpSettings();
+      settings.vcOutsideXpRate = rate;
+      engine.state.rankXpSettings = cleanXpSettings(settings);
+      return vcXpLocationPanel(engine, `対象外倍率を ${ratePercent(rate)} にしました。`);
+    }
+    if (subAction === "clear") {
+      const settings = engine.xpSettings();
+      settings.vcFullXpCategoryIds = [];
+      settings.vcFullXpChannelIds = [];
+      engine.state.rankXpSettings = cleanXpSettings(settings);
+      return vcXpLocationPanel(engine, "通常XP対象をすべて解除しました。");
+    }
+    return vcXpLocationPanel(engine);
+  }
   if (action === "preset") {
     const preset = String(parts[2] || "standard").toLowerCase();
     applyXpPreset(engine.state, preset);
@@ -654,6 +776,7 @@ TunedEconomyEngine.prototype.run = function patchedRun(input, actor) {
   if (isManualVoiceSettlementCommand(text)) return automaticVoiceSettlementResult();
   if (/^rankxp(?:\s|$)/i.test(text) || /^xp-settings(?:\s|$)/i.test(text)) return handleXpSettingsCommand(this, text);
   if (/^panel\s+rank-xp-settings$/i.test(text)) return xpSettingsPanel(this);
+  if (/^panel\s+vc-xp-location-settings$/i.test(text)) return vcXpLocationPanel(this);
   if (["rank", "leaderboard", "ランキング"].includes(command)) return buildMentionLeaderboard(this, actor, parts[1] || "net");
 
   const result = originalRun.call(this, input, actor);
@@ -665,6 +788,7 @@ TunedEconomyEngine.prototype.panel = function patchedPanel(user, panelIdRaw = "h
   const panelId = normalizePanelId(panelIdRaw);
   if (LOUNGE_PANEL_IDS.has(panelId)) return loungeRemovedResult();
   if (panelId === "rank-xp-settings" || panelId === "xp-settings") return xpSettingsPanel(this);
+  if (panelId === "vc-xp-location-settings" || panelId === "vc-xp-location") return vcXpLocationPanel(this);
   return retuneResult(originalPanel.call(this, user, panelIdRaw), user, this);
 };
 
@@ -674,6 +798,26 @@ TunedEconomyEngine.prototype.textLevel = function patchedTextLevel(user) {
 
 TunedEconomyEngine.prototype.vcLevel = function patchedVcLevel(user) {
   return rankLevel(VC_RANKS, user.activity.vcXp || 0);
+};
+
+TunedEconomyEngine.prototype.vcXpMultiplierForVoiceContext = function vcXpMultiplierForVoiceContext(context = {}) {
+  const settings = this.xpSettings();
+  const channelIds = settings.vcFullXpChannelIds || [];
+  const categoryIds = settings.vcFullXpCategoryIds || [];
+  if (channelIds.length === 0 && categoryIds.length === 0) return 1;
+  const channelId = String(context.channelId || "");
+  const parentId = String(context.parentId || context.categoryId || "");
+  if (channelId && channelIds.includes(channelId)) return 1;
+  if (parentId && categoryIds.includes(parentId)) return 1;
+  return settings.vcOutsideXpRate;
+};
+
+TunedEconomyEngine.prototype.addVcFullXpTarget = function addVcFullXpTarget(kind, id) {
+  const settings = this.xpSettings();
+  const key = kind === "category" ? "vcFullXpCategoryIds" : "vcFullXpChannelIds";
+  settings[key] = cleanDiscordIdList([...(settings[key] || []), id]);
+  this.state.rankXpSettings = cleanXpSettings(settings);
+  return this.state.rankXpSettings;
 };
 
 TunedEconomyEngine.prototype.textRank = function patchedTextRank(user) {
@@ -750,7 +894,8 @@ TunedEconomyEngine.prototype.awardVoiceMinutes = function patchedAwardVoiceMinut
   const cappedMinutes = Math.min(Math.max(0, Math.floor(Number(minutes) || 0)), VC_MAX_CLAIM_MINUTES);
   if (cappedMinutes <= 0) return { noop: true };
 
-  const xp = cappedMinutes * settings.vcXpPerMinute;
+  const xpMultiplier = clampRate(options.xpMultiplier, 1);
+  const xp = Math.floor(cappedMinutes * settings.vcXpPerMinute * xpMultiplier);
   const salaryPerMinute = this.voiceSalaryPerMinute(user);
   const rawDrip = Math.floor(cappedMinutes * salaryPerMinute);
   const remaining = Math.max(0, this.voiceDailyCap(user) - user.activity.vcDailyEarned);
@@ -789,6 +934,7 @@ TunedEconomyEngine.prototype.awardVoiceMinutes = function patchedAwardVoiceMinut
         totalMinutes: user.activity.vcMinutes,
         xpTotal: user.activity.vcXp,
         xpGained: xp,
+        xpMultiplier,
         drip,
         minutesThisClaim: cappedMinutes,
         salaryPerMinute: this.voiceSalaryPerMinute(user),
@@ -802,7 +948,8 @@ TunedEconomyEngine.prototype.awardVoiceMinutes = function patchedAwardVoiceMinut
     kind: "vc_reward",
     title: "VC報酬",
     silent: Boolean(options.silent),
-    lines: [`VCレベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, capLine]
+    lines: [`VCレベル ${this.vcLevel(user)} / 通話 ${cappedMinutes}分 / 経験値 +${xp} / +${fmt(drip)}`, capLine],
+    meta: { xpMultiplier, xpGained: xp, minutesThisClaim: cappedMinutes, drip }
   };
 };
 

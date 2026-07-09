@@ -144,6 +144,20 @@ const vcClaim = engine.run("vc", actor);
 assert(vcClaim.title === "VC報酬" || vcClaim.title === "VCランク昇格", "VC在室分を精算できる必要があります");
 assert(engine.state.users[actor.id].activity.vcDailyEarned > 0, "VC日次Risが増える必要があります");
 
+const rateActor = { id: "test:vc-rate", name: "VC倍率テスター" };
+engine.run("join", rateActor);
+engine.startVoiceSession(rateActor, "voice:outside");
+const rateUser = engine.getUser(rateActor.id, rateActor.name);
+rateUser.activity.voiceJoinedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+rateUser.activity.voiceLastClaimAt = rateUser.activity.voiceJoinedAt;
+const beforeRateWallet = rateUser.wallet;
+const rateClaim = engine.finishVoiceSession(rateActor, { xpMultiplier: 0.2 });
+const rateUserAfter = engine.state.users[rateActor.id];
+assert(rateClaim, "VC倍率つき精算が結果を返す必要があります");
+assert.strictEqual(rateUserAfter.activity.vcMinutes, 10, "VC分数は倍率で減らさない必要があります");
+assert.strictEqual(rateUserAfter.activity.vcXp, 12, "VC XPだけ20%倍率を適用する必要があります");
+assert.strictEqual(rateUserAfter.wallet - beforeRateWallet, 40, "VC Ris報酬は倍率で減らさない必要があります");
+
 const invitee = { id: "test:invitee", name: "招待された人" };
 const tracked = engine.recordInviteJoin(actor, invitee, { code: "abc123" });
 assert(tracked?.ok, "招待を追跡できる必要があります");

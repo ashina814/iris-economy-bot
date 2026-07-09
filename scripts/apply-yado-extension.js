@@ -11,7 +11,8 @@ function fail(label) {
 }
 
 function replaceOnce(label, oldValue, newValue) {
-  if (source.includes(newValue)) return;
+  const normalizedSource = source.replace(/\r\n/g, "\n");
+  if (normalizedSource.includes(newValue)) return;
   if (!source.includes(oldValue)) fail(label);
   source = source.replace(oldValue, newValue);
 }

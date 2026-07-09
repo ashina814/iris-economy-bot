@@ -1889,13 +1889,15 @@ class EconomyEngine {
       color: 0x7c3aed,
       fields: [
         { name: "ランク確認パネル", value: "住民が自分のランクと順位を見るための常設パネル。テキストチャンネルに1枚置くだけ。", inline: false },
-        { name: "昇格通知先", value: "発言/通話ランクが上がった時にお祝いメッセージを投稿するチャンネル。未設定なら環境変数を使います。", inline: false }
+        { name: "昇格通知先", value: "発言/通話ランクが上がった時にお祝いメッセージを投稿するチャンネル。未設定なら環境変数を使います。", inline: false },
+        { name: "VC XP倍率設定", value: "通常XP対象カテゴリ/VCと、対象外VCのXP倍率を管理します。", inline: false }
       ],
       components: [
         buttons([
           customButton("ランク確認パネル設置", "eco:admin:rank-panel-post", "primary"),
           customButton("昇格通知先をここに", "eco:admin:rank-notify-set", "success"),
           customButton("昇格通知先をクリア", "eco:admin:rank-notify-clear"),
+          panelButton("VC XP倍率設定", "vc-xp-location-settings", "primary"),
           panelButton("運営パネル", "admin")
         ]),
         buttons([
@@ -2961,11 +2963,11 @@ class EconomyEngine {
     }
   }
 
-  finishVoiceSession(actor) {
+  finishVoiceSession(actor, options = {}) {
     const user = this.getUser(actor.id, actor.name);
     if (!user.activity.voiceJoinedAt) return null;
 
-    const result = this.claimVoiceReward(user, { ending: true });
+    const result = this.claimVoiceReward(user, { ...options, ending: true });
     user.activity.voiceJoinedAt = null;
     user.activity.voiceLastClaimAt = null;
     user.activity.voiceChannelId = null;
@@ -3012,7 +3014,8 @@ class EconomyEngine {
     this.resetVoiceDay(user);
     const before = rankFor(VC_RANKS, user.activity.vcXp);
     const cappedMinutes = Math.min(minutes, VOICE_REWARD_CONFIG.maxClaimMinutes);
-    const xp = cappedMinutes * VOICE_REWARD_CONFIG.xpPerMinute;
+    const xpMultiplier = Number.isFinite(Number(options.xpMultiplier)) ? Math.max(0, Number(options.xpMultiplier)) : 1;
+    const xp = Math.floor(cappedMinutes * VOICE_REWARD_CONFIG.xpPerMinute * xpMultiplier);
     const salaryPerMinute = this.voiceSalaryPerMinute(user);
     const rawDrip = Math.floor(cappedMinutes * salaryPerMinute);
     const remaining = Math.max(0, this.voiceDailyCap(user) - user.activity.vcDailyEarned);
