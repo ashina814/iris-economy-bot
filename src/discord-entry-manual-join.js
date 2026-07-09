@@ -60,4 +60,4 @@ function installManualJoinGrantGuard() {
 installGuildMemberAddContext();
 installManualJoinGrantGuard();
 
-require("./discord-entry-tc-compact.js");
+require("./discord-entry.js");
