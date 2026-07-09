@@ -8,10 +8,13 @@ const targetEntrypoint = path.join(__dirname, "discord-entry.js");
 
 function sourceReplacementPatch(oldValue, newValue) {
   return [
-    "  content = content.replace(",
-    `    ${JSON.stringify(oldValue)},`,
-    `    ${JSON.stringify(newValue)}`,
-    "  );"
+    `  if (!content.includes(${JSON.stringify(newValue)})) {`,
+    `    if (!content.includes(${JSON.stringify(oldValue)})) throw new Error("Yado runtime patch insertion point not found.");`,
+    "    content = content.replace(",
+    `      ${JSON.stringify(oldValue)},`,
+    `      ${JSON.stringify(newValue)}`,
+    "    );",
+    "  }"
   ].join("\n");
 }
 
@@ -29,7 +32,10 @@ function injectYadoPanelTextPatch(source) {
 }
 
 function injectYadoExtensionPatch(source) {
-  if (source.includes("宿延長と宿内カウントダウン更新を追加する。")) return source;
+  if (
+    source.includes("宿延長・管理操作UI・安全操作を追加する。") ||
+    source.includes("宿延長と宿内カウントダウン更新を追加する。")
+  ) return source;
 
   const replacements = [
     sourceReplacementPatch(
@@ -68,7 +74,10 @@ function injectYadoExtensionPatch(source) {
 
   const yadoPatch = [
     "",
-    "  // 宿延長と宿内カウントダウン更新を追加する。",
+    "  // 宿延長・管理操作UI・安全操作を追加する。",
+    "  if (content.includes(\"宿延長・管理操作UI・安全操作を追加する。\")) {",
+    "    return content;",
+    "  }",
     ...replacements
   ].join("\n");
   const insertionPoint = "\n  return content;\n}\n\nfunction patchRankingSource";
