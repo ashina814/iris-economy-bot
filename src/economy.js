@@ -487,20 +487,19 @@ class EconomyEngine {
         ]
       }),
       inn: () => ({
-        title: "二人宿",
-        description: "このカテゴリに宿VCを作成します。作成後、宿内の管理パネルから名前と人数を変更できます。",
+        title: "🏨 二人宿",
+        description: "一時的な通話部屋を発行します。\n公開宿は雑談用、シークレット宿は相手指定の密談用です。\n作成後、宿内の管理パネルから名前・人数・期限を調整できます。",
         color: 0x14b8a6,
         fields: [
-          { name: "公開宿", value: "無料 / 誰でも見える / 基本2人", inline: true },
-          { name: "シークレット宿", value: "10,000 Ris / 選んだ相手と自分だけ見える", inline: true },
-          { name: "人数追加", value: "どちらも追加1人につき5,000 Ris", inline: true },
-          { name: "期限", value: "12時間で自動終了", inline: true },
-          { name: "制限", value: "1人につき作成できる宿は1つまで。空になった宿VCは自動削除されます。", inline: false }
+          { name: "公開宿", value: "無料 / 通常VC / 雑談・待ち合わせ向け", inline: true },
+          { name: "シークレット宿", value: "10,000 Ris / 自分と相手だけ / 個別通話・相談向け", inline: true },
+          { name: "共通仕様", value: "基本2人 / 12時間で自動終了 / 1人1部屋まで", inline: false },
+          { name: "追加・延長", value: "人数追加 5,000 Ris / 延長は宿内パネルから", inline: false }
         ],
         components: [
           buttons([
             runButton("公開宿を作る", "create-yado-vc", "primary"),
-            runButton("シークレット宿", "choose-secret-yado", "danger")
+            runButton("シークレット宿を作る", "choose-secret-yado", "danger")
           ])
         ]
       }),
@@ -860,7 +859,7 @@ class EconomyEngine {
         "二人宿はDiscordの固定パネルから使います。",
         "運営が `/管理` からカテゴリ内のテキストチャンネルにパネルを送信します。",
         "公開宿は無料。シークレット宿は10,000 Risで、選んだ相手と自分だけが見えるVCです。",
-        "宿名と人数は、作成後に宿内の管理パネルから変更できます。追加人数は1人ごとに5,000 Risです。"
+        "宿名・人数・期限は、作成後に宿内の管理パネルから調整できます。追加人数は1人ごとに5,000 Risです。"
       ]
     };
   }
