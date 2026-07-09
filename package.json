@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "アイリス向けの独自通貨Ris、通話報酬、二人宿、マーケット、民営ショップ、招待、給与配布を持つDiscord経済圏ボット。",
-  "main": "src/discord-entry-tc-compact.js",
+  "main": "src/discord-entry-manual-join.js",
   "scripts": {
-    "start": "node src/discord-entry-tc-compact.js",
+    "start": "node src/discord-entry-manual-join.js",
     "play": "node src/cli.js",
-    "discord": "node src/discord-entry-tc-compact.js",
+    "discord": "node src/discord-entry-manual-join.js",
     "smoke": "node src/smoke-test.js",
-    "check": "node --check src/economy.js && node --check src/discord.js && node --check src/discord-entry.js && node --check src/discord-entry-tc-compact.js && node --check src/discord-core.js",
+    "check": "node --check src/economy.js && node --check src/discord.js && node --check src/discord-entry.js && node --check src/discord-entry-tc-compact.js && node --check src/discord-entry-manual-join.js && node --check src/discord-core.js",
     "patch:yado": "node scripts/apply-yado-extension.js",
     "deploy": "git fetch origin && git reset --hard origin/main && npm install --omit=dev && npm run patch:yado && npm run check && npm run smoke",
     "deploy:safe": "bash scripts/deploy-safe.sh"
