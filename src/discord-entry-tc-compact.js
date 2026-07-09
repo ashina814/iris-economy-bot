@@ -15,6 +15,19 @@ function sourceReplacementPatch(oldValue, newValue) {
   ].join("\n");
 }
 
+function injectYadoPanelTextPatch(source) {
+  if (source.includes("二人宿入口へ延長案内を追加する。")) return source;
+
+  const oldValue = '    .replaceAll("Bump の", "Bump/Up の")\n    .replaceAll("Bump 回数", "Bump/Up 回数");';
+  const newValue = '    .replaceAll("Bump の", "Bump/Up の")\n    .replaceAll("Bump 回数", "Bump/Up 回数")\n    // 二人宿入口へ延長案内を追加する。\n    .replaceAll(\n      \'description: "このカテゴリに宿VCを作成します。作成後、宿内の管理パネルから名前と人数を変更できます。",\',\n      \'description: "このカテゴリに宿VCを作成します。作成後、宿内の管理パネルから名前・人数・期限延長を変更できます。",\'\n    )\n    .replaceAll(\n      \'{ name: "期限", value: "12時間で自動終了", inline: true },\',\n      \'{ name: "期限", value: "12時間で自動終了 / 宿内パネルから延長可", inline: true },\'\n    )\n    .replaceAll(\n      \'"宿名と人数は、作成後に宿内の管理パネルから変更できます。追加人数は1人ごとに5,000 Risです。"\',\n      \'"宿名・人数・期限延長は、作成後に宿内の管理パネルから変更できます。追加人数は1人ごとに5,000 Ris、延長は公開宿1,500 Ris / シークレット宿3,000 Risです。"\'\n    );';
+
+  if (!source.includes(oldValue)) {
+    throw new Error("Yado panel text patch insertion point not found.");
+  }
+
+  return source.replace(oldValue, newValue);
+}
+
 function injectYadoExtensionPatch(source) {
   if (source.includes("宿延長と宿内カウントダウン更新を追加する。")) return source;
 
@@ -94,7 +107,7 @@ function injectTcRankCompactPatch(source) {
 }
 
 function injectEntrypointPatch(source) {
-  return injectYadoExtensionPatch(injectTcRankCompactPatch(source));
+  return injectYadoPanelTextPatch(injectYadoExtensionPatch(injectTcRankCompactPatch(source)));
 }
 
 function installEntrypointPatch() {
