@@ -6,10 +6,13 @@ const path = require("path");
 const corePath = path.join(__dirname, "..", "src", "discord-core.js");
 let source = fs.readFileSync(corePath, "utf8");
 
-function replaceOnce(label, oldValue, newValue) {
+function replaceOnce(label, oldValue, newValue, options = {}) {
+  const required = options.required !== false;
   if (source.includes(newValue)) return;
   if (!source.includes(oldValue)) {
-    throw new Error(`apply-yado-extension: ${label} insertion point not found`);
+    if (required) throw new Error(`apply-yado-extension: ${label} insertion point not found`);
+    console.warn(`apply-yado-extension: ${label} insertion point not found; skipped`);
+    return;
   }
   source = source.replace(oldValue, newValue);
 }
@@ -65,13 +68,15 @@ replaceOnce(
 replaceOnce(
   "entry panel description",
   '        description: "このカテゴリに宿VCを作成します。作成後、宿内の管理パネルから名前と人数を変更できます。",',
-  '        description: "このカテゴリに宿VCを作成します。作成後、宿内の管理パネルから名前・人数・期限延長を変更できます。",'
+  '        description: "このカテゴリに宿VCを作成します。作成後、宿内の管理パネルから名前・人数・期限延長を変更できます。",',
+  { required: false }
 );
 
 replaceOnce(
   "entry panel duration",
   '          { name: "期限", value: "12時間で自動終了", inline: true },',
-  '          { name: "期限", value: "12時間で自動終了 / 宿内パネルから延長可", inline: true },'
+  '          { name: "期限", value: "12時間で自動終了 / 宿内パネルから延長可", inline: true },',
+  { required: false }
 );
 
 fs.writeFileSync(corePath, source);
