@@ -1016,6 +1016,8 @@ class EconomyEngine {
     if (["top", "home"].includes(action)) return this.marketplace(user);
     if (["official", "official-shop"].includes(action)) return this.panelResult(this.officialShopPanel(user));
     if (["shops", "user-shops"].includes(action)) return this.panelResult(this.userShopsPanel(user));
+    if (["recommended", "recommend", "today"].includes(action)) return this.panelResult(this.recommendedShelfPanel(user));
+    if (["affordable", "can-buy", "available"].includes(action)) return this.panelResult(this.affordableItemsPanel(user));
     if (["auction", "auctions"].includes(action)) return this.panelResult(this.officialAuctionsPanel(user));
     if (["inventory", "history"].includes(action)) return this.panelResult(this.marketInventoryPanel(user));
     if (["my", "my-shop"].includes(action)) return this.myShop(user);
@@ -1023,6 +1025,7 @@ class EconomyEngine {
     if (action === "confirm") return this.panelResult(this.officialConfirmPanel(user, args[1]));
     if (action === "buy") return this.buyItem(user, args[1]);
     if (action === "listing") return this.panelResult(this.userListingPanel(user, args[1]));
+    if (["listing-shelf", "listing-category", "category"].includes(action)) return this.panelResult(this.userListingShelfPanel(user, args[1]));
     if (action === "listing-confirm") return this.panelResult(this.userListingConfirmPanel(user, args[1]));
     if (action === "listing-buy") return this.buyUserListing(user, args[1]);
     if (action === "auction") return this.panelResult(this.auctionDetailPanel(user, args[1]));
@@ -1055,28 +1058,184 @@ class EconomyEngine {
     };
   }
 
+  recommendedOfficialItems() {
+    const preferred = [
+      ["coupon", "初心者向け"],
+      ["stamp", "便利枠"],
+      ["roompass", "チケット"],
+      ["frame", "見た目用"]
+    ];
+    const picked = preferred
+      .filter(([id]) => SHOP_ITEMS[id])
+      .map(([id, reason]) => ({ id, item: SHOP_ITEMS[id], reason }));
+    for (const [id, item] of Object.entries(SHOP_ITEMS)) {
+      if (id === "chair") continue;
+      if (picked.some((entry) => entry.id === id)) continue;
+      picked.push({ id, item, reason: item.price >= 10000 ? "高額者向け" : "初心者向け" });
+      if (picked.length >= 5) break;
+    }
+    return picked.slice(0, 5);
+  }
+
+  insufficientBalanceComponents() {
+    return [
+      buttons([
+        runButton("ログボ", "daily", "success"),
+        runButton("VC精算", "vc", "success"),
+        runButton("招待・Bump確認", "invite"),
+        runButton("今買えるもの", "marketplace affordable", "primary"),
+        panelButton("マーケットへ戻る", "marketplace")
+      ])
+    ];
+  }
+
+  insufficientBalancePanel({ title = "残高が足りません", itemName = "商品", needed = 0, current = 0, backCommand = "marketplace" } = {}) {
+    const shortage = Math.max(0, needed - current);
+    return {
+      title,
+      description: `${itemName} の購入に必要なRisが足りません。`,
+      color: 0xef4444,
+      fields: [
+        { name: "必要額", value: fmt(needed), inline: true },
+        { name: "現在残高", value: fmt(current), inline: true },
+        { name: "不足額", value: fmt(shortage), inline: true }
+      ],
+      components: [
+        ...this.insufficientBalanceComponents(),
+        buttons([runButton("商品へ戻る", backCommand)])
+      ]
+    };
+  }
+
+  purchaseCompletePanel(user, { title = "購入完了", itemName, price, description = "", anotherCommand = "marketplace recommended", useCommand = null } = {}) {
+    const actionButtons = [
+      panelButton("持ち物を見る", "market-inventory", "primary")
+    ];
+    if (useCommand) actionButtons.push(runButton("使う", useCommand, "success"));
+    actionButtons.push(
+      runButton("もう一つ見る", anotherCommand),
+      panelButton("マーケットへ戻る", "marketplace")
+    );
+    return {
+      title,
+      description: description || "購入が完了しました。次の操作を選べます。",
+      color: 0x22c55e,
+      fields: [
+        { name: "商品", value: itemName || "-", inline: true },
+        { name: "支払い", value: fmt(price || 0), inline: true },
+        { name: "残高", value: fmt(user.wallet), inline: true }
+      ],
+      components: [buttons(actionButtons)]
+    };
+  }
+
   marketplacePanel(user) {
     const shop = user.marketplace || {};
+    const recommended = this.recommendedOfficialItems()[0];
+    const shopStatus = shop.shopOpened
+      ? `${shop.shopName || "未設定"} / ${(shop.shopStatus || "open") === "open" ? "営業中" : "休業中"}`
+      : "未開店";
     return {
       title: "マーケット",
-      description: "買う（公式/民営/競売）、売る（自分の店）、確認する（持ち物）。売り手も歓迎です。",
+      description: "商品を探して、詳細を見て、確認してから購入できます。売る側の管理も下の控えめな導線から行えます。",
       color: 0x7c3aed,
       fields: [
         { name: "残高", value: this.moneyLine(user), inline: true },
+        { name: "今日のおすすめ", value: recommended ? `${recommended.item.name}\n${recommended.reason} / ${fmt(this.itemPrice(recommended.id))}` : "公式商品を準備中です。", inline: true },
         { name: "民営出品", value: `${this.activeListings().length}件（${this.openShopSellerIds().size}店）`, inline: true },
-        { name: "あなたの店", value: shop.shopOpened ? `${shop.shopName || "未設定"}（${(shop.shopStatus || "open") === "open" ? "営業中" : "休業中"}）` : "未開店", inline: true }
+        { name: "自分の店", value: shopStatus, inline: false }
       ],
       components: [
         buttons([
-          panelButton("公式ショップ", "official-shop", "primary"),
-          panelButton("民営ショップ", "user-shops", "primary"),
-          panelButton("公式オークション", "official-auctions"),
-          panelButton("持ち物", "market-inventory")
+          panelButton("公式商品を見る", "official-shop", "primary"),
+          panelButton("ユーザー商品を見る", "user-shops", "primary"),
+          runButton("今日のおすすめ", "marketplace recommended", "primary"),
+          runButton("今買えるもの", "marketplace affordable"),
+          panelButton("持ち物を見る", "market-inventory")
         ]),
         buttons([
-          panelButton(shop.shopOpened ? "自分の店を管理" : "店を開いて売る", "my-shop", "success"),
-          panelButton(shop.shopOpened ? "商品を出品" : "店の開き方", "listing-new"),
-          customButton("絞り込みで探す", "eco:shop:search-open")
+          panelButton("自分の店", "my-shop"),
+          customButton("絞り込みで探す", "eco:shop:search-open"),
+          panelButton("公式オークション", "official-auctions")
+        ])
+      ]
+    };
+  }
+
+  recommendedShelfPanel(user) {
+    const entries = this.recommendedOfficialItems();
+    return {
+      title: "今日のおすすめ",
+      description: "公式商品を中心に、目的別に見やすく並べています。購入前には必ず詳細と確認画面を挟みます。",
+      color: 0x8b5cf6,
+      fields: entries.map((entry, index) => ({
+        name: `${index + 1}. ${entry.item.name}`,
+        value: `${entry.reason} / ${fmt(this.itemPrice(entry.id))}\n${String(entry.item.description || "").slice(0, 80)}`,
+        inline: true
+      })),
+      components: [
+        buttons(entries.slice(0, 5).map((entry, index) =>
+          runButton(`${index + 1}を見る`, `marketplace product ${entry.id}`, index === 0 ? "primary" : "secondary")
+        )),
+        buttons([
+          panelButton("公式ショップへ", "official-shop"),
+          panelButton("マーケットへ戻る", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  affordableItemsPanel(user) {
+    const official = Object.entries(SHOP_ITEMS)
+      .map(([id, item]) => ({
+        id,
+        source: "公式",
+        name: item.name,
+        type: item.type,
+        price: this.itemPrice(id),
+        command: `marketplace product ${id}`
+      }))
+      .filter((entry) => entry.price <= user.wallet && (user.inventory[entry.id] || 0) < SHOP_ITEMS[entry.id].max);
+    const privateListings = this.activeListings()
+      .filter((listing) => listing.price <= user.wallet && listing.sellerId !== user.id)
+      .map((listing) => ({
+        id: listing.id,
+        source: "民営",
+        name: listing.name,
+        type: productTypeLabel(listing.type),
+        price: listing.price,
+        sellerName: listing.sellerName,
+        command: `marketplace listing ${listing.id}`
+      }));
+    const entries = [...official, ...privateListings].sort((a, b) => a.price - b.price).slice(0, 10);
+    if (!entries.length) {
+      return {
+        title: "今買えるもの",
+        description: "現在の残高で買える商品は見つかりませんでした。",
+        color: 0xef4444,
+        fields: [
+          { name: "残高", value: this.moneyLine(user), inline: false },
+          { name: "次の行動", value: "ログボ、VC精算、招待・Bump確認、または安い商品の再確認へ進めます。", inline: false }
+        ],
+        components: this.insufficientBalanceComponents()
+      };
+    }
+    return {
+      title: "今買えるもの",
+      description: "現在の残高で購入できる商品です。安い順で最大10件まで表示します。",
+      color: 0x16a34a,
+      fields: entries.map((entry, index) => ({
+        name: `${index + 1}. ${entry.name}`.slice(0, 256),
+        value: `${entry.source} / ${entry.type} / ${fmt(entry.price)}${entry.sellerName ? `\n販売者 ${entry.sellerName}` : ""}`,
+        inline: true
+      })),
+      components: [
+        select("買える商品を選ぶ", entries.slice(0, 10).map((entry, index) =>
+          option(`${index + 1}. ${entry.name}`.slice(0, 90), `run:${entry.command}`, `${entry.source} / ${fmt(entry.price)}`.slice(0, 100))
+        )),
+        buttons([
+          panelButton("持ち物を見る", "market-inventory"),
+          panelButton("マーケットへ戻る", "marketplace")
         ])
       ]
     };
@@ -1138,6 +1297,14 @@ class EconomyEngine {
     if (!item) return this.marketplacePanel(user);
     const price = this.itemPrice(id);
     const shortage = Math.max(0, price - user.wallet);
+    const components = [
+      buttons([
+        runButton("購入する", `marketplace buy ${id}`, "success", shortage > 0),
+        panelButton("やめる", "official-shop"),
+        panelButton("マーケット", "marketplace")
+      ])
+    ];
+    if (shortage > 0) components.push(...this.insufficientBalanceComponents());
     return {
       title: "購入確認",
       description: "内容を確認してから購入してください。",
@@ -1146,15 +1313,11 @@ class EconomyEngine {
         { name: "商品", value: item.name, inline: true },
         { name: "価格", value: fmt(price), inline: true },
         { name: "販売者", value: "公式", inline: true },
-        { name: "残高", value: `${fmt(user.wallet)}${shortage ? `\n不足 ${fmt(shortage)}` : ""}`, inline: false }
+        { name: "必要額", value: fmt(price), inline: true },
+        { name: "現在残高", value: fmt(user.wallet), inline: true },
+        { name: "不足額", value: shortage ? fmt(shortage) : "なし", inline: true }
       ],
-      components: [
-        buttons([
-          runButton("購入する", `marketplace buy ${id}`, "success", shortage > 0),
-          panelButton("やめる", "official-shop"),
-          panelButton("マーケット", "marketplace")
-        ])
-      ]
+      components
     };
   }
 
@@ -1166,6 +1329,16 @@ class EconomyEngine {
       .filter(Boolean)
       .slice(0, 25);
     const components = [
+      select("カテゴリで探す", [
+        option("ロール", "run:marketplace listing-shelf role", "ロール付与など"),
+        option("称号", "run:marketplace listing-shelf title", "肩書き・表示用"),
+        option("アイテム", "run:marketplace listing-shelf item", "通常アイテム"),
+        option("チケット", "run:marketplace listing-shelf ticket", "利用券・入場券"),
+        option("権利", "run:marketplace listing-shelf right", "権利系の商品"),
+        option("サービス", "run:marketplace listing-shelf service", "手動対応の商品"),
+        option("新着", "run:marketplace listing-shelf new", "最近の出品"),
+        option("安い順", "run:marketplace listing-shelf cheap", "価格の安い商品")
+      ]),
       buttons([
         customButton("絞り込みで探す", "eco:shop:search-open", "primary"),
         panelButton("マーケット", "marketplace"),
@@ -1188,6 +1361,62 @@ class EconomyEngine {
       fields: listings.slice(0, 6).map((listing) => ({
         name: listing.name,
         value: `${fmt(listing.price)} / ${saleModeLabel(listing.mode)} / 在庫 ${listing.stock}\n販売者 ${listing.sellerName}`,
+        inline: true
+      })),
+      components
+    };
+  }
+
+  userListingShelfPanel(user, shelfRaw = "new") {
+    const shelf = String(shelfRaw || "new").toLowerCase();
+    const typeAliases = {
+      role: "role",
+      "ロール": "role",
+      title: "title",
+      "称号": "title",
+      item: "item",
+      "アイテム": "item",
+      ticket: "ticket",
+      "チケット": "ticket",
+      right: "right",
+      "権利": "right",
+      service: "service",
+      "サービス": "service"
+    };
+    const typeKey = typeAliases[shelf] || null;
+    let listings = this.activeListings().filter((listing) => listing.sellerId !== user.id);
+    let title = "民営ショップ 新着";
+    let description = "最近出品された商品です。";
+    if (typeKey) {
+      listings = listings.filter((listing) => listing.type === typeKey);
+      title = `民営ショップ ${productTypeLabel(typeKey)}`;
+      description = `${productTypeLabel(typeKey)}カテゴリの商品です。`;
+    } else if (["cheap", "price", "安い順"].includes(shelf)) {
+      title = "民営ショップ 安い順";
+      description = "価格の安い商品から表示します。";
+      listings.sort((a, b) => a.price - b.price);
+    } else {
+      listings.sort((a, b) => b.id - a.id);
+    }
+    listings = listings.slice(0, 10);
+    const components = [];
+    if (listings.length) {
+      components.push(select("商品を選ぶ", listings.map((listing, index) =>
+        option(`${index + 1}. ${listing.name}`.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`.slice(0, 100))
+      )));
+    }
+    components.push(buttons([
+      panelButton("民営ショップ", "user-shops", "primary"),
+      customButton("絞り込みで探す", "eco:shop:search-open"),
+      panelButton("マーケット", "marketplace")
+    ]));
+    return {
+      title,
+      description: listings.length ? `${description} 上位10件までを表示します。` : "この棚に表示できる商品はまだありません。",
+      color: 0x0f766e,
+      fields: listings.map((listing) => ({
+        name: listing.name.slice(0, 256),
+        value: `${fmt(listing.price)} / ${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}\n販売者 ${listing.sellerName}`,
         inline: true
       })),
       components
@@ -1303,6 +1532,14 @@ class EconomyEngine {
     const listing = this.findListing(id);
     if (!listing || listing.status !== "active") return this.userShopsPanel(user);
     const shortage = Math.max(0, listing.price - user.wallet);
+    const components = [
+      buttons([
+        runButton("購入する", `marketplace listing-buy ${listing.id}`, "success", shortage > 0 || listing.sellerId === user.id),
+        panelButton("やめる", "user-shops"),
+        panelButton("マーケット", "marketplace")
+      ])
+    ];
+    if (shortage > 0) components.push(...this.insufficientBalanceComponents());
     return {
       title: "購入確認",
       description: "民営商品です。内容と販売者を確認してください。",
@@ -1312,15 +1549,11 @@ class EconomyEngine {
         { name: "価格", value: fmt(listing.price), inline: true },
         { name: "販売者", value: listing.sellerName, inline: true },
         { name: "方式", value: saleModeLabel(listing.mode), inline: true },
-        { name: "残高", value: `${fmt(user.wallet)}${shortage ? `\n不足 ${fmt(shortage)}` : ""}`, inline: false }
+        { name: "必要額", value: fmt(listing.price), inline: true },
+        { name: "現在残高", value: fmt(user.wallet), inline: true },
+        { name: "不足額", value: shortage ? fmt(shortage) : "なし", inline: true }
       ],
-      components: [
-        buttons([
-          runButton("購入する", `marketplace listing-buy ${listing.id}`, "success", shortage > 0 || listing.sellerId === user.id),
-          panelButton("やめる", "user-shops"),
-          panelButton("マーケット", "marketplace")
-        ])
-      ]
+      components
     };
   }
 
@@ -2045,14 +2278,21 @@ class EconomyEngine {
       return { ok: false, title: "現在休業中", lines: ["この店は現在休業中で購入できません。時間をおいてください。"] };
     }
     if (user.wallet < listing.price) {
+      const panel = this.insufficientBalancePanel({
+        itemName: listing.name,
+        needed: listing.price,
+        current: user.wallet,
+        backCommand: `marketplace listing ${listing.id}`
+      });
       return {
         ok: false,
-        title: "残高が足りません",
+        title: panel.title,
         lines: [
           `必要: ${fmt(listing.price)}`,
           `現在: ${fmt(user.wallet)}`,
           `不足: ${fmt(listing.price - user.wallet)}`
-        ]
+        ],
+        panel
       };
     }
 
@@ -2106,7 +2346,13 @@ class EconomyEngine {
         `残高: ${fmt(user.wallet)}`,
         listing.manual ? "この商品は販売者の手動対応が必要です。取引中の商品から確認できます。" : "付与が完了しました。"
       ],
-      panel: listing.manual ? this.marketInventoryPanel(user) : this.userShopsPanel(user),
+      panel: this.purchaseCompletePanel(user, {
+        title: listing.manual ? "購入完了（対応待ち）" : "購入完了",
+        itemName: listing.name,
+        price: listing.price,
+        description: listing.manual ? "販売者の手動対応が必要です。取引状況は持ち物から確認できます。" : "購入品は持ち物に記録されました。",
+        anotherCommand: `marketplace shop-view ${listing.sellerId}`
+      }),
       notifications: [
         {
           userId: seller.id,
@@ -2814,7 +3060,23 @@ class EconomyEngine {
 
     const price = this.itemPrice(id);
     if (user.wallet < price) {
-      return { ok: false, title: "Risが足りない", lines: [`${item.name} には ${fmt(price)} 必要です。`, this.moneyLine(user)] };
+      const panel = this.insufficientBalancePanel({
+        title: "Risが足りません",
+        itemName: item.name,
+        needed: price,
+        current: user.wallet,
+        backCommand: `marketplace product ${id}`
+      });
+      return {
+        ok: false,
+        title: panel.title,
+        lines: [
+          `必要: ${fmt(price)}`,
+          `現在: ${fmt(user.wallet)}`,
+          `不足: ${fmt(price - user.wallet)}`
+        ],
+        panel
+      };
     }
 
     user.wallet -= price;
@@ -2825,7 +3087,14 @@ class EconomyEngine {
     return {
       ok: true,
       title: "購入完了",
-      lines: [`${item.name} を買いました。`, item.description, this.moneyLine(user)]
+      lines: [`${item.name} を買いました。`, item.description, this.moneyLine(user)],
+      panel: this.purchaseCompletePanel(user, {
+        itemName: item.name,
+        price,
+        description: item.description,
+        anotherCommand: "marketplace recommended",
+        useCommand: item.kind === "consumable" ? `use ${id}` : null
+      })
     };
   }
 
