@@ -639,11 +639,18 @@ function canRunCommand(context, command) {
     normalized === "panel 宿" ||
     normalized === "panel 二人宿" ||
     normalized === "panel admin" ||
+    normalized === "panel admin-campaign" ||
+    normalized === "panel campaign-pending" ||
     normalized === "panel admin-balance" ||
     normalized === "panel admin-rank" ||
     normalized === "panel rank-xp-settings" ||
     normalized === "panel vc-xp-location-settings" ||
     normalized === "panel vc-xp-location" ||
+    normalized.startsWith("campaign start") ||
+    normalized.startsWith("campaign stop") ||
+    normalized.startsWith("campaign admin") ||
+    normalized.startsWith("campaign pending") ||
+    normalized.startsWith("campaign reset") ||
     normalized.startsWith("rankxp") ||
     normalized.startsWith("xp-settings");
   if (!restricted) return true;
