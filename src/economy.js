@@ -689,18 +689,26 @@ class EconomyEngine {
     if (!normalized.ok) return normalized;
     const { transactionId, discordUserId, sessionId, game, bet } = normalized;
     const existing = this.state.casino.transactions[transactionId];
-    if (existing) return this.idempotentCasinoReservation(existing, normalized);
+    if (existing) {
+      const scoped = this.scopedCasinoTransaction(existing, guildId);
+      if (!scoped.ok) return scoped;
+      return this.idempotentCasinoReservation(existing, normalized);
+    }
 
     const resolved = this.resolveCasinoUserRecord(guildId, discordUserId);
     const user = resolved.user;
     if (!user) {
       return resolved.error;
     }
+    const currentWalletCheck = this.nextCasinoWallet(user, 0);
+    if (!currentWalletCheck.ok) return currentWalletCheck;
     if (user.wallet < bet) {
       return { ok: false, code: "INSUFFICIENT_FUNDS", status: 409, message: "insufficient wallet balance", wallet: user.wallet, bet };
     }
+    const walletCheck = this.nextCasinoWallet(user, -bet);
+    if (!walletCheck.ok) return walletCheck;
 
-    user.wallet -= bet;
+    user.wallet = walletCheck.wallet;
     const now = this.now().toISOString();
     const transaction = {
       transactionId,
@@ -722,11 +730,13 @@ class EconomyEngine {
     return { ok: true, status: 201, changed: true, transaction: this.publicCasinoTransaction(transaction), wallet: user.wallet };
   }
 
-  settleCasinoReservation(transactionIdRaw, data = {}, limits = {}) {
+  settleCasinoReservation(transactionIdRaw, data = {}, guildId, limits = {}) {
     const transactionId = cleanToken(transactionIdRaw, 120);
     if (!transactionId) return { ok: false, code: "INVALID_TRANSACTION_ID", status: 400, message: "transactionId is required" };
     const transaction = this.state.casino.transactions[transactionId];
     if (!transaction) return { ok: false, code: "TRANSACTION_NOT_FOUND", status: 404, message: "transaction not found" };
+    const scoped = this.scopedCasinoTransaction(transaction, guildId);
+    if (!scoped.ok) return scoped;
     const payout = parseIntegerField(data.payout);
     if (!Number.isSafeInteger(payout) || payout < 0) {
       return { ok: false, code: "INVALID_PAYOUT", status: 400, message: "payout must be a non-negative integer" };
@@ -748,10 +758,14 @@ class EconomyEngine {
 
     const user = this.state.users[transaction.userId];
     if (!user) return { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" };
-    user.wallet += payout;
     const net = payout - transaction.bet;
-    if (net > 0) user.lifetimeEarned += net;
-    else if (net < 0) user.lifetimeLost += -net;
+    const walletCheck = this.nextCasinoWallet(user, payout);
+    if (!walletCheck.ok) return walletCheck;
+    const lifetimeCheck = this.nextCasinoLifetimeTotals(user, net);
+    if (!lifetimeCheck.ok) return lifetimeCheck;
+    user.wallet = walletCheck.wallet;
+    user.lifetimeEarned = lifetimeCheck.lifetimeEarned;
+    user.lifetimeLost = lifetimeCheck.lifetimeLost;
     transaction.status = "settled";
     transaction.payout = payout;
     transaction.settledAt = this.now().toISOString();
@@ -759,11 +773,13 @@ class EconomyEngine {
     return { ok: true, status: 200, changed: true, transaction: this.publicCasinoTransaction(transaction), wallet: user.wallet };
   }
 
-  cancelCasinoReservation(transactionIdRaw) {
+  cancelCasinoReservation(transactionIdRaw, guildId) {
     const transactionId = cleanToken(transactionIdRaw, 120);
     if (!transactionId) return { ok: false, code: "INVALID_TRANSACTION_ID", status: 400, message: "transactionId is required" };
     const transaction = this.state.casino.transactions[transactionId];
     if (!transaction) return { ok: false, code: "TRANSACTION_NOT_FOUND", status: 404, message: "transaction not found" };
+    const scoped = this.scopedCasinoTransaction(transaction, guildId);
+    if (!scoped.ok) return scoped;
     if (transaction.status === "cancelled") {
       const user = this.state.users[transaction.userId];
       return { ok: true, status: 200, changed: false, transaction: this.publicCasinoTransaction(transaction), wallet: user?.wallet ?? null };
@@ -774,7 +790,9 @@ class EconomyEngine {
 
     const user = this.state.users[transaction.userId];
     if (!user) return { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" };
-    user.wallet += transaction.bet;
+    const walletCheck = this.nextCasinoWallet(user, transaction.bet);
+    if (!walletCheck.ok) return walletCheck;
+    user.wallet = walletCheck.wallet;
     transaction.status = "cancelled";
     transaction.cancelledAt = this.now().toISOString();
     this.log(user, "casino_cancel", transaction.bet, `${transaction.game} / ${transaction.sessionId} / ${transactionId}`);
@@ -811,6 +829,42 @@ class EconomyEngine {
     }
     const user = this.state.users[existing.userId];
     return { ok: true, status: 200, changed: false, transaction: this.publicCasinoTransaction(existing), wallet: user?.wallet ?? null };
+  }
+
+  scopedCasinoTransaction(transaction, guildId) {
+    if (!isDiscordSnowflake(guildId) || !isDiscordSnowflake(transaction.discordUserId)) {
+      return { ok: false, code: "TRANSACTION_NOT_FOUND", status: 404, message: "transaction not found" };
+    }
+    const expectedUserId = `${guildId}:${transaction.discordUserId}`;
+    if (transaction.userId !== expectedUserId) {
+      return { ok: false, code: "TRANSACTION_NOT_FOUND", status: 404, message: "transaction not found" };
+    }
+    return { ok: true };
+  }
+
+  nextCasinoWallet(user, delta) {
+    if (!Number.isSafeInteger(user.wallet) || user.wallet < 0) {
+      return { ok: false, code: "INVALID_WALLET_STATE", status: 409, message: "wallet must be a non-negative safe integer" };
+    }
+    const next = user.wallet + delta;
+    if (!Number.isSafeInteger(next) || next < 0) {
+      return { ok: false, code: "WALLET_OVERFLOW", status: 409, message: "wallet result is outside the safe integer range" };
+    }
+    return { ok: true, wallet: next };
+  }
+
+  nextCasinoLifetimeTotals(user, net) {
+    const earned = Number.isSafeInteger(user.lifetimeEarned) && user.lifetimeEarned >= 0 ? user.lifetimeEarned : null;
+    const lost = Number.isSafeInteger(user.lifetimeLost) && user.lifetimeLost >= 0 ? user.lifetimeLost : null;
+    if (earned === null || lost === null) {
+      return { ok: false, code: "LIFETIME_TOTAL_OVERFLOW", status: 409, message: "lifetime totals must be non-negative safe integers" };
+    }
+    const nextEarned = net > 0 ? earned + net : earned;
+    const nextLost = net < 0 ? lost + Math.abs(net) : lost;
+    if (!Number.isSafeInteger(nextEarned) || !Number.isSafeInteger(nextLost)) {
+      return { ok: false, code: "LIFETIME_TOTAL_OVERFLOW", status: 409, message: "lifetime total result is outside the safe integer range" };
+    }
+    return { ok: true, lifetimeEarned: nextEarned, lifetimeLost: nextLost };
   }
 
   casinoPayoutCap(bet, limits = {}) {

@@ -59,6 +59,9 @@ function startInternalApi({
     }
   });
 
+  server.on("error", (error) => {
+    logger.warn?.(`Internal Economy API listen error (${error.code || "UNKNOWN"}): ${error.message}`);
+  });
   server.listen(listenPort, host, () => {
     const address = server.address();
     const boundPort = typeof address === "object" && address ? address.port : listenPort;
@@ -122,7 +125,7 @@ async function handleInternalRequest(req, res, context) {
       sendJson(res, body.status, { ok: false, error: { code: body.code, message: body.message } });
       return;
     }
-    const result = persistCasinoMutation(context, () => context.engine.settleCasinoReservation(decoded.value, body.value, context.payoutLimits));
+    const result = persistCasinoMutation(context, () => context.engine.settleCasinoReservation(decoded.value, body.value, context.guildId, context.payoutLimits));
     sendDomainResult(res, result);
     return;
   }
@@ -143,7 +146,7 @@ async function handleInternalRequest(req, res, context) {
       sendJson(res, body.status, { ok: false, error: { code: body.code, message: body.message } });
       return;
     }
-    const result = persistCasinoMutation(context, () => context.engine.cancelCasinoReservation(decoded.value));
+    const result = persistCasinoMutation(context, () => context.engine.cancelCasinoReservation(decoded.value, context.guildId));
     sendDomainResult(res, result);
     return;
   }
@@ -244,7 +247,9 @@ function sendDomainResult(res, result) {
     },
     wallet: result.wallet,
     bet: result.bet,
-    maxPayout: result.maxPayout
+    maxPayout: result.maxPayout,
+    minBet: result.minBet,
+    maxBet: result.maxBet
   });
 }
 
