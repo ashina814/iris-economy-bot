@@ -146,6 +146,64 @@ vc       - VC在室分を精算
 
 Botが自動付与できない商品は、購入後に「取引中」として残ります。販売者または購入者が完了報告できます。
 
+## 内部Economy API（Discord Activity連携用）
+
+将来のDiscord Activityカジノなど、Botと同じホストで動く信頼済みバックエンドからRis残高を扱うための内部APIです。`data/discord-state.json` を別プロセスから直接読み書きせず、Discord Botと同じNode.jsプロセス内で起動します。
+
+APIは `IRIS_INTERNAL_API_KEY` が設定されている場合だけ起動します。ブラウザから直接呼ばせず、Activityバックエンドから `Authorization: Bearer <IRIS_INTERNAL_API_KEY>` を付けて呼び出してください。APIキーはログに出しません。
+
+```text
+GET  /internal/v1/wallets/:discordUserId
+POST /internal/v1/casino/reservations
+POST /internal/v1/casino/reservations/:transactionId/settle
+POST /internal/v1/casino/reservations/:transactionId/cancel
+```
+
+予約 `POST /internal/v1/casino/reservations`:
+
+```json
+{
+  "transactionId": "casino-tx-001",
+  "discordUserId": "123456789012345678",
+  "sessionId": "activity-session-001",
+  "game": "blackjack",
+  "bet": 1000
+}
+```
+
+- 予約時に残高不足なら拒否します
+- 予約成功時に `wallet` から `bet` を控除し、`casino_reserve` を台帳へ記録します
+- 同じ `transactionId` と同じ内容の再送は冪等で、二重控除しません
+
+精算 `POST /settle`:
+
+```json
+{ "payout": 2000 }
+```
+
+- `payout` は賭け金込みの返却総額です
+- `reserved -> settled` のみ許可します
+- 同じ `payout` の再送は冪等で、二重加算しません
+- `IRIS_CASINO_MAX_PAYOUT_MULTIPLIER` と `IRIS_CASINO_MAX_PAYOUT_RIS` で高額配当の上限を設定できます
+- 精算時に `casino_settle` を台帳へ記録します
+
+取消 `POST /cancel`:
+
+- `reserved -> cancelled` のみ許可します
+- 予約済みの賭け金をwalletへ返し、`casino_cancel` を台帳へ記録します
+- 同じ取消の再送は冪等で、二重返金しません
+
+環境変数:
+
+```text
+IRIS_INTERNAL_API_KEY=replace_with_long_random_secret
+IRIS_INTERNAL_API_HOST=127.0.0.1
+IRIS_INTERNAL_API_PORT=8787
+IRIS_INTERNAL_API_MAX_BODY_BYTES=16384
+IRIS_CASINO_MAX_PAYOUT_MULTIPLIER=100
+IRIS_CASINO_MAX_PAYOUT_RIS=100000000
+```
+
 ## 公式オークション
 
 公式オークションは運営が作成します。

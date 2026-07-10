@@ -1,5 +1,6 @@
 const path = require("path");
 const { EconomyEngine, createInitialState, formatResult, fmt } = require("./economy");
+const { startInternalApi } = require("./internal-api");
 const { JsonStore } = require("./storage");
 
 let discord;
@@ -58,6 +59,11 @@ const yadoPublicExtendCost = parseNonNegativeIntEnv("YADO_PUBLIC_EXTEND_COST", 1
 const yadoSecretExtendCost = parseNonNegativeIntEnv("YADO_SECRET_EXTEND_COST", 3000);
 const yadoMaxLifetimeMs = parsePositiveIntEnv("YADO_MAX_LIFETIME_HOURS", 24) * 60 * 60 * 1000;
 const yadoControlRefreshMs = Math.max(15, parsePositiveIntEnv("YADO_COUNTDOWN_REFRESH_SECONDS", 30)) * 1000;
+const internalApiHost = process.env.IRIS_INTERNAL_API_HOST || "127.0.0.1";
+const internalApiPort = parseNonNegativeIntEnv("IRIS_INTERNAL_API_PORT", 8787);
+const internalApiMaxBodyBytes = parsePositiveIntEnv("IRIS_INTERNAL_API_MAX_BODY_BYTES", 16 * 1024);
+const casinoMaxPayoutMultiplier = parseNonNegativeIntEnv("IRIS_CASINO_MAX_PAYOUT_MULTIPLIER", 100);
+const casinoMaxPayoutRis = parseNonNegativeIntEnv("IRIS_CASINO_MAX_PAYOUT_RIS", 100000000);
 const adminUserIds = new Set(
   String(process.env.ECONOMY_ADMIN_IDS || "")
     .split(",")
@@ -80,6 +86,16 @@ if (!token) {
 const store = new JsonStore(path.join(__dirname, "..", "data", "discord-state.json"), createInitialState);
 const state = store.load();
 const engine = new EconomyEngine(state);
+startInternalApi({
+  engine,
+  store,
+  apiKey: process.env.IRIS_INTERNAL_API_KEY,
+  host: internalApiHost,
+  port: internalApiPort,
+  maxBodyBytes: internalApiMaxBodyBytes,
+  maxPayoutMultiplier: casinoMaxPayoutMultiplier,
+  maxPayoutRis: casinoMaxPayoutRis
+});
 const yadoStore = new JsonStore(path.join(__dirname, "..", "data", "yado-state.json"), () => ({ rooms: {} }));
 const yadoState = yadoStore.load();
 const panelStore = new JsonStore(path.join(__dirname, "..", "data", "panel-state.json"), () => ({ rankPanel: null, rankNotifyChannelId: null }));
