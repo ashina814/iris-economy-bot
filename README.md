@@ -159,6 +159,10 @@ POST /internal/v1/casino/reservations/:transactionId/settle
 POST /internal/v1/casino/reservations/:transactionId/cancel
 ```
 
+The API is scoped to `DISCORD_GUILD_ID`. `guildId` and every `discordUserId` must be numeric Discord Snowflakes; users are resolved only as `${DISCORD_GUILD_ID}:${discordUserId}`. Internal user IDs and cross-guild suffix matching are not accepted. Users must have completed `join` before wallet or casino access is allowed. `bet` and `payout` must be safe integers, and reservations enforce `IRIS_CASINO_MIN_BET` and `IRIS_CASINO_MAX_BET`.
+
+Failed casino state saves restore the complete in-memory state, including wallets, transactions, ledger entries, and lifetime totals. A retry is then a new reservation.
+
 予約 `POST /internal/v1/casino/reservations`:
 
 ```json
@@ -204,6 +208,8 @@ IRIS_INTERNAL_API_PORT=8787
 IRIS_INTERNAL_API_MAX_BODY_BYTES=16384
 IRIS_CASINO_MAX_PAYOUT_MULTIPLIER=100
 IRIS_CASINO_MAX_PAYOUT_RIS=100000000
+IRIS_CASINO_MIN_BET=1
+IRIS_CASINO_MAX_BET=100000000
 ```
 
 ## 公式オークション

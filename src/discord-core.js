@@ -64,6 +64,8 @@ const internalApiPort = parseNonNegativeIntEnv("IRIS_INTERNAL_API_PORT", 8787);
 const internalApiMaxBodyBytes = parsePositiveIntEnv("IRIS_INTERNAL_API_MAX_BODY_BYTES", 16 * 1024);
 const casinoMaxPayoutMultiplier = parseNonNegativeIntEnv("IRIS_CASINO_MAX_PAYOUT_MULTIPLIER", 100);
 const casinoMaxPayoutRis = parseNonNegativeIntEnv("IRIS_CASINO_MAX_PAYOUT_RIS", 100000000);
+const casinoMinBet = parsePositiveIntEnv("IRIS_CASINO_MIN_BET", 1);
+const casinoMaxBet = parsePositiveIntEnv("IRIS_CASINO_MAX_BET", 100000000);
 const adminUserIds = new Set(
   String(process.env.ECONOMY_ADMIN_IDS || "")
     .split(",")
@@ -94,7 +96,10 @@ startInternalApi({
   port: internalApiPort,
   maxBodyBytes: internalApiMaxBodyBytes,
   maxPayoutMultiplier: casinoMaxPayoutMultiplier,
-  maxPayoutRis: casinoMaxPayoutRis
+  maxPayoutRis: casinoMaxPayoutRis,
+  minBet: casinoMinBet,
+  maxBet: casinoMaxBet,
+  guildId
 });
 const yadoStore = new JsonStore(path.join(__dirname, "..", "data", "yado-state.json"), () => ({ rooms: {} }));
 const yadoState = yadoStore.load();

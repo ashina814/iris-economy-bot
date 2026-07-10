@@ -651,27 +651,25 @@ class EconomyEngine {
     };
   }
 
-  resolveCasinoUser(discordUserId) {
-    return this.resolveCasinoUserRecord(discordUserId).user || null;
+  resolveCasinoUser(guildId, discordUserId) {
+    return this.resolveCasinoUserRecord(guildId, discordUserId).user || null;
   }
 
-  resolveCasinoUserRecord(discordUserId) {
-    const raw = String(discordUserId || "").trim();
-    if (!raw) return { user: null, error: { ok: false, code: "INVALID_DISCORD_USER_ID", status: 400, message: "discordUserId is required" } };
-    if (this.state.users[raw]) return { user: this.state.users[raw] };
-    const suffix = `:${raw}`;
-    const matches = Object.values(this.state.users || {})
-      .filter((user) => user?.id === raw || String(user?.id || "").endsWith(suffix))
-      .sort((a, b) => Number(Boolean(b.joined)) - Number(Boolean(a.joined)) || String(a.id).localeCompare(String(b.id)));
-    if (matches.length === 1) return { user: matches[0] };
-    if (matches.length > 1) {
-      return { user: null, error: { ok: false, code: "AMBIGUOUS_USER", status: 409, message: "discordUserId matches multiple guild users; use the internal userId instead" } };
+  resolveCasinoUserRecord(guildId, discordUserId) {
+    if (!isDiscordSnowflake(guildId)) {
+      return { user: null, error: { ok: false, code: "INVALID_GUILD_ID", status: 400, message: "guildId must be a Discord Snowflake" } };
     }
-    return { user: null, error: { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" } };
+    if (!isDiscordSnowflake(discordUserId)) {
+      return { user: null, error: { ok: false, code: "INVALID_DISCORD_USER_ID", status: 400, message: "discordUserId must be a Discord Snowflake" } };
+    }
+    const user = this.state.users[`${guildId}:${discordUserId}`];
+    if (!user) return { user: null, error: { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" } };
+    if (user.joined !== true) return { user: null, error: { ok: false, code: "ECONOMY_NOT_JOINED", status: 403, message: "economy join is required" } };
+    return { user };
   }
 
-  casinoWallet(discordUserId) {
-    const resolved = this.resolveCasinoUserRecord(discordUserId);
+  casinoWallet(guildId, discordUserId) {
+    const resolved = this.resolveCasinoUserRecord(guildId, discordUserId);
     const user = resolved.user;
     if (!user) {
       return resolved.error;
@@ -686,14 +684,14 @@ class EconomyEngine {
     };
   }
 
-  reserveCasinoBet(data = {}) {
-    const normalized = this.normalizeCasinoReservation(data);
+  reserveCasinoBet(data = {}, guildId, limits = {}) {
+    const normalized = this.normalizeCasinoReservation(data, guildId, limits);
     if (!normalized.ok) return normalized;
     const { transactionId, discordUserId, sessionId, game, bet } = normalized;
     const existing = this.state.casino.transactions[transactionId];
     if (existing) return this.idempotentCasinoReservation(existing, normalized);
 
-    const resolved = this.resolveCasinoUserRecord(discordUserId);
+    const resolved = this.resolveCasinoUserRecord(guildId, discordUserId);
     const user = resolved.user;
     if (!user) {
       return resolved.error;
@@ -730,7 +728,7 @@ class EconomyEngine {
     const transaction = this.state.casino.transactions[transactionId];
     if (!transaction) return { ok: false, code: "TRANSACTION_NOT_FOUND", status: 404, message: "transaction not found" };
     const payout = parseIntegerField(data.payout);
-    if (!Number.isFinite(payout) || payout < 0) {
+    if (!Number.isSafeInteger(payout) || payout < 0) {
       return { ok: false, code: "INVALID_PAYOUT", status: 400, message: "payout must be a non-negative integer" };
     }
     const cap = this.casinoPayoutCap(transaction.bet, limits);
@@ -783,17 +781,22 @@ class EconomyEngine {
     return { ok: true, status: 200, changed: true, transaction: this.publicCasinoTransaction(transaction), wallet: user.wallet };
   }
 
-  normalizeCasinoReservation(data) {
+  normalizeCasinoReservation(data, guildId, limits = {}) {
     const transactionId = cleanToken(data.transactionId, 120);
     const discordUserId = cleanToken(data.discordUserId, 80);
     const sessionId = cleanToken(data.sessionId, 120);
     const game = cleanToken(data.game, 80);
     const bet = parseIntegerField(data.bet);
     if (!transactionId) return { ok: false, code: "INVALID_TRANSACTION_ID", status: 400, message: "transactionId is required" };
-    if (!discordUserId) return { ok: false, code: "INVALID_DISCORD_USER_ID", status: 400, message: "discordUserId is required" };
+    if (!isDiscordSnowflake(guildId)) return { ok: false, code: "INVALID_GUILD_ID", status: 400, message: "guildId must be a Discord Snowflake" };
+    if (!isDiscordSnowflake(discordUserId)) return { ok: false, code: "INVALID_DISCORD_USER_ID", status: 400, message: "discordUserId must be a Discord Snowflake" };
     if (!sessionId) return { ok: false, code: "INVALID_SESSION_ID", status: 400, message: "sessionId is required" };
     if (!game) return { ok: false, code: "INVALID_GAME", status: 400, message: "game is required" };
-    if (!Number.isFinite(bet) || bet <= 0) return { ok: false, code: "INVALID_BET", status: 400, message: "bet must be a positive integer" };
+    if (!Number.isSafeInteger(bet) || bet <= 0) return { ok: false, code: "INVALID_BET", status: 400, message: "bet must be a positive safe integer" };
+    const minBet = casinoBetLimit(limits.minBet, 1);
+    const maxBet = casinoBetLimit(limits.maxBet, Number.MAX_SAFE_INTEGER);
+    if (maxBet < minBet) return { ok: false, code: "INVALID_BET_LIMITS", status: 500, message: "casino bet limits are invalid" };
+    if (bet < minBet || bet > maxBet) return { ok: false, code: "BET_OUT_OF_RANGE", status: 400, message: `bet must be between ${minBet} and ${maxBet}`, minBet, maxBet };
     return { ok: true, transactionId, discordUserId, sessionId, game, bet };
   }
 
@@ -4859,6 +4862,14 @@ function parseIntegerField(value) {
   if (typeof value === "number" && Number.isInteger(value)) return value;
   if (typeof value === "string" && /^(0|[1-9]\d*)$/.test(value.trim())) return Number.parseInt(value.trim(), 10);
   return NaN;
+}
+
+function isDiscordSnowflake(value) {
+  return /^\d{17,20}$/.test(String(value || "").trim());
+}
+
+function casinoBetLimit(value, fallback) {
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
 function cleanToken(value, max) {

@@ -38,7 +38,9 @@ function request(port, { method = "GET", path = "/", body, token = "secret-secre
 
 async function main() {
   const engine = new EconomyEngine(createInitialState());
-  const actor = { id: "guild:casino-user", name: "Casino User" };
+  const guildId = "123456789012345678";
+  const discordUserId = "234567890123456789";
+  const actor = { id: `${guildId}:${discordUserId}`, name: "Casino User" };
   engine.run("join", actor);
   const user = engine.getUser(actor.id, actor.name);
   user.wallet = 10000;
@@ -63,6 +65,17 @@ async function main() {
   });
   assert.strictEqual(disabledServer, null, "弱い内部APIキーでは起動しない");
 
+  const invalidGuildServer = startInternalApi({
+    engine,
+    store,
+    apiKey: "secret-secret-secret",
+    guildId: "not-a-snowflake",
+    host: "127.0.0.1",
+    port: 0,
+    logger: { info() {}, warn() {} }
+  });
+  assert.strictEqual(invalidGuildServer, null, "invalid guildId disables the API");
+
   const server = startInternalApi({
     engine,
     store,
@@ -71,6 +84,9 @@ async function main() {
     port: 0,
     maxPayoutMultiplier: 10,
     maxPayoutRis: 50000,
+    minBet: 100,
+    maxBet: 5000,
+    guildId,
     logger: { info() {}, warn() {} }
   });
 
@@ -78,17 +94,29 @@ async function main() {
   const port = server.address().port;
 
   try {
-    const unauthorized = await request(port, { path: "/internal/v1/wallets/casino-user", token: "bad-bad-bad-bad-bad" });
+    const unauthorized = await request(port, { path: `/internal/v1/wallets/${discordUserId}`, token: "bad-bad-bad-bad-bad" });
     assert.strictEqual(unauthorized.status, 401, "Bearer認証に失敗したら401");
 
-    const wallet = await request(port, { path: "/internal/v1/wallets/casino-user", token: "secret-secret-secret" });
+    const wallet = await request(port, { path: `/internal/v1/wallets/${discordUserId}`, token: "secret-secret-secret" });
     assert.strictEqual(wallet.status, 200, "wallet取得が成功する");
     assert.strictEqual(wallet.body.wallet, 10000, "wallet残高が返る");
 
-    engine.run("join", { id: "guild-a:dupe-user", name: "Dupe A" });
-    engine.run("join", { id: "guild-b:dupe-user", name: "Dupe B" });
-    const ambiguous = await request(port, { path: "/internal/v1/wallets/dupe-user", token: "secret-secret-secret" });
-    assert.strictEqual(ambiguous.status, 409, "複数候補に一致するdiscordUserIdは拒否");
+    const otherGuildUser = "345678901234567890";
+    engine.run("join", { id: `345678901234567890:${otherGuildUser}`, name: "Other Guild" });
+    const otherGuild = await request(port, { path: `/internal/v1/wallets/${otherGuildUser}`, token: "secret-secret-secret" });
+    assert.strictEqual(otherGuild.status, 404, "別guildのユーザーは取得できない");
+
+    const invalidDiscordUserId = await request(port, { path: "/internal/v1/wallets/not-a-snowflake", token: "secret-secret-secret" });
+    assert.strictEqual(invalidDiscordUserId.status, 400, "discordUserIdはSnowflakeのみ許可する");
+
+    const internalUserId = await request(port, { path: `/internal/v1/wallets/${guildId}:${discordUserId}`, token: "secret-secret-secret" });
+    assert.strictEqual(internalUserId.status, 400, "internal userId cannot be used as discordUserId");
+
+    const unjoinedDiscordUserId = "456789012345678901";
+    engine.getUser(`${guildId}:${unjoinedDiscordUserId}`, "Unjoined User");
+    const unjoined = await request(port, { path: `/internal/v1/wallets/${unjoinedDiscordUserId}`, token: "secret-secret-secret" });
+    assert.strictEqual(unjoined.status, 403, "join未完了では取得できない");
+    assert.strictEqual(unjoined.body.error.code, "ECONOMY_NOT_JOINED", "join未完了はECONOMY_NOT_JOINEDを返す");
 
     const invalidJson = await request(port, { method: "POST", path: "/internal/v1/casino/reservations", body: "{", token: "secret-secret-secret" });
     assert.strictEqual(invalidJson.status, 400, "不正JSONは400");
@@ -105,14 +133,35 @@ async function main() {
     const invalidNumber = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
-      body: { transactionId: "bad-number", discordUserId: "casino-user", sessionId: "s1", game: "slots", bet: -1 }
+      body: { transactionId: "bad-number", discordUserId, sessionId: "s1", game: "slots", bet: -1 }
     });
     assert.strictEqual(invalidNumber.status, 400, "不正なbetは400");
+
+    const belowMinBet = await request(port, {
+      method: "POST",
+      path: "/internal/v1/casino/reservations",
+      body: { transactionId: "below-min", discordUserId, sessionId: "s-min", game: "slots", bet: 99 }
+    });
+    assert.strictEqual(belowMinBet.status, 400, "bet below configured minimum is rejected");
+
+    const aboveMaxBet = await request(port, {
+      method: "POST",
+      path: "/internal/v1/casino/reservations",
+      body: { transactionId: "above-max", discordUserId, sessionId: "s-max", game: "slots", bet: 5001 }
+    });
+    assert.strictEqual(aboveMaxBet.status, 400, "bet above configured maximum is rejected");
+
+    const unsafeBet = await request(port, {
+      method: "POST",
+      path: "/internal/v1/casino/reservations",
+      body: { transactionId: "unsafe-bet", discordUserId, sessionId: "s-safe", game: "slots", bet: 9007199254740992 }
+    });
+    assert.strictEqual(unsafeBet.status, 400, "unsafe bet is rejected");
 
     const reserve = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
-      body: { transactionId: "tx-win", discordUserId: "casino-user", sessionId: "s1", game: "slots", bet: 1000 }
+      body: { transactionId: "tx-win", discordUserId, sessionId: "s1", game: "slots", bet: 1000 }
     });
     assert.strictEqual(reserve.status, 201, "予約が成功する");
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, 9000, "予約時にbetを控除");
@@ -121,28 +170,41 @@ async function main() {
     const duplicateReserve = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
-      body: { transactionId: "tx-win", discordUserId: "casino-user", sessionId: "s1", game: "slots", bet: 1000 }
+      body: { transactionId: "tx-win", discordUserId, sessionId: "s1", game: "slots", bet: 1000 }
     });
     assert.strictEqual(duplicateReserve.status, 200, "同じtransactionIdの予約再送は冪等");
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, 9000, "予約再送で二重控除しない");
-    assert.strictEqual(saveCount, 2, "冪等予約も保存を再試行する");
+    assert.strictEqual(saveCount, 1, "idempotent reservation does not write state again");
 
     failNextSave = true;
+    const beforeSaveRetryState = JSON.parse(JSON.stringify(engine.state));
     const beforeSaveRetryWallet = engine.getUser(actor.id, actor.name).wallet;
     const saveFailedReserve = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
-      body: { transactionId: "tx-save-retry", discordUserId: "casino-user", sessionId: "s-save", game: "slots", bet: 100 }
+      body: { transactionId: "tx-save-retry", discordUserId, sessionId: "s-save", game: "slots", bet: 100 }
     });
     assert.strictEqual(saveFailedReserve.status, 500, "保存失敗時は500");
-    assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeSaveRetryWallet - 100, "保存失敗後もメモリ上の予約は一度だけ反映");
+    assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeSaveRetryWallet, "save failure rolls back wallet");
+    assert.strictEqual(engine.state.casino.transactions["tx-save-retry"], undefined, "save failure removes the reservation");
+    assert.deepStrictEqual(engine.state, beforeSaveRetryState, "save failure restores the full state");
+    assert.deepStrictEqual(engine.state.ledger, beforeSaveRetryState.ledger, "save failure rolls back ledger");
+    assert.strictEqual(engine.getUser(actor.id, actor.name).lifetimeEarned, beforeSaveRetryState.users[actor.id].lifetimeEarned, "save failure rolls back lifetimeEarned");
+    assert.strictEqual(engine.getUser(actor.id, actor.name).lifetimeLost, beforeSaveRetryState.users[actor.id].lifetimeLost, "save failure rolls back lifetimeLost");
     const saveRetry = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
-      body: { transactionId: "tx-save-retry", discordUserId: "casino-user", sessionId: "s-save", game: "slots", bet: 100 }
+      body: { transactionId: "tx-save-retry", discordUserId, sessionId: "s-save", game: "slots", bet: 100 }
     });
-    assert.strictEqual(saveRetry.status, 200, "保存失敗後の予約再送は冪等成功");
-    assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeSaveRetryWallet - 100, "保存失敗後の再送で二重控除しない");
+    assert.strictEqual(saveRetry.status, 201, "retry after save failure creates one new reservation");
+    assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeSaveRetryWallet - 100, "retry deducts the bet once");
+
+    const unsafePayout = await request(port, {
+      method: "POST",
+      path: "/internal/v1/casino/reservations/tx-win/settle",
+      body: { payout: 9007199254740992 }
+    });
+    assert.strictEqual(unsafePayout.status, 400, "unsafe payout is rejected");
 
     const beforeWinSettle = engine.getUser(actor.id, actor.name).wallet;
     const settle = await request(port, {
@@ -171,7 +233,7 @@ async function main() {
     await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
-      body: { transactionId: "tx-lose", discordUserId: "casino-user", sessionId: "s2", game: "blackjack", bet: 500 }
+      body: { transactionId: "tx-lose", discordUserId, sessionId: "s2", game: "blackjack", bet: 500 }
     });
     const lose = await request(port, {
       method: "POST",
@@ -183,7 +245,7 @@ async function main() {
     await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
-      body: { transactionId: "tx-draw", discordUserId: "casino-user", sessionId: "s3", game: "blackjack", bet: 700 }
+      body: { transactionId: "tx-draw", discordUserId, sessionId: "s3", game: "blackjack", bet: 700 }
     });
     const beforeDrawSettle = engine.getUser(actor.id, actor.name).wallet;
     const draw = await request(port, {
@@ -197,7 +259,7 @@ async function main() {
     await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
-      body: { transactionId: "tx-cancel", discordUserId: "casino-user", sessionId: "s4", game: "roulette", bet: 300 }
+      body: { transactionId: "tx-cancel", discordUserId, sessionId: "s4", game: "roulette", bet: 300 }
     });
     const beforeCancel = engine.getUser(actor.id, actor.name).wallet;
     const cancel = await request(port, {
@@ -221,17 +283,18 @@ async function main() {
     });
     assert.strictEqual(settleAfterCancel.status, 409, "取消後精算は拒否");
 
+    engine.getUser(actor.id, actor.name).wallet = 100;
     const insufficient = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
-      body: { transactionId: "tx-rich", discordUserId: "casino-user", sessionId: "s5", game: "slots", bet: 999999999 }
+      body: { transactionId: "tx-rich", discordUserId, sessionId: "s5", game: "slots", bet: 5000 }
     });
     assert.strictEqual(insufficient.status, 409, "残高不足は拒否");
 
     await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
-      body: { transactionId: "tx-cap", discordUserId: "casino-user", sessionId: "s6", game: "slots", bet: 100 }
+      body: { transactionId: "tx-cap", discordUserId, sessionId: "s6", game: "slots", bet: 100 }
     });
     const tooLarge = await request(port, {
       method: "POST",
