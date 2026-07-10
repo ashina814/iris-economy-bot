@@ -652,20 +652,29 @@ class EconomyEngine {
   }
 
   resolveCasinoUser(discordUserId) {
+    return this.resolveCasinoUserRecord(discordUserId).user || null;
+  }
+
+  resolveCasinoUserRecord(discordUserId) {
     const raw = String(discordUserId || "").trim();
-    if (!raw) return null;
-    if (this.state.users[raw]) return this.state.users[raw];
+    if (!raw) return { user: null, error: { ok: false, code: "INVALID_DISCORD_USER_ID", status: 400, message: "discordUserId is required" } };
+    if (this.state.users[raw]) return { user: this.state.users[raw] };
     const suffix = `:${raw}`;
-    return Object.values(this.state.users || {})
+    const matches = Object.values(this.state.users || {})
       .filter((user) => user?.id === raw || String(user?.id || "").endsWith(suffix))
-      .sort((a, b) => Number(Boolean(b.joined)) - Number(Boolean(a.joined)) || String(a.id).localeCompare(String(b.id)))
-      [0] || null;
+      .sort((a, b) => Number(Boolean(b.joined)) - Number(Boolean(a.joined)) || String(a.id).localeCompare(String(b.id)));
+    if (matches.length === 1) return { user: matches[0] };
+    if (matches.length > 1) {
+      return { user: null, error: { ok: false, code: "AMBIGUOUS_USER", status: 409, message: "discordUserId matches multiple guild users; use the internal userId instead" } };
+    }
+    return { user: null, error: { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" } };
   }
 
   casinoWallet(discordUserId) {
-    const user = this.resolveCasinoUser(discordUserId);
+    const resolved = this.resolveCasinoUserRecord(discordUserId);
+    const user = resolved.user;
     if (!user) {
-      return { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" };
+      return resolved.error;
     }
     return {
       ok: true,
@@ -684,9 +693,10 @@ class EconomyEngine {
     const existing = this.state.casino.transactions[transactionId];
     if (existing) return this.idempotentCasinoReservation(existing, normalized);
 
-    const user = this.resolveCasinoUser(discordUserId);
+    const resolved = this.resolveCasinoUserRecord(discordUserId);
+    const user = resolved.user;
     if (!user) {
-      return { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" };
+      return resolved.error;
     }
     if (user.wallet < bet) {
       return { ok: false, code: "INSUFFICIENT_FUNDS", status: 409, message: "insufficient wallet balance", wallet: user.wallet, bet };
@@ -4854,7 +4864,7 @@ function parseIntegerField(value) {
 function cleanToken(value, max) {
   const text = String(value || "").trim();
   if (!text || text.length > max) return "";
-  return /^[A-Za-z0-9:_./-]+$/.test(text) ? text : "";
+  return /^[A-Za-z0-9:_.-]+$/.test(text) ? text : "";
 }
 
 function cooldownRemaining(lastIso, now, durationMs) {

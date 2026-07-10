@@ -3,7 +3,7 @@ const http = require("http");
 const { EconomyEngine, createInitialState } = require("./economy");
 const { startInternalApi } = require("./internal-api");
 
-function request(port, { method = "GET", path = "/", body, token = "secret" } = {}) {
+function request(port, { method = "GET", path = "/", body, token = "secret-secret-secret", contentType = "application/json" } = {}) {
   return new Promise((resolve, reject) => {
     const raw = body === undefined ? null : typeof body === "string" ? body : JSON.stringify(body);
     const req = http.request({
@@ -13,7 +13,8 @@ function request(port, { method = "GET", path = "/", body, token = "secret" } = 
       path,
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
-        ...(raw !== null ? { "content-type": "application/json", "content-length": Buffer.byteLength(raw) } : {})
+        ...(raw !== null && contentType ? { "content-type": contentType } : {}),
+        ...(raw !== null ? { "content-length": Buffer.byteLength(raw) } : {})
       }
     }, (res) => {
       let data = "";
@@ -42,11 +43,30 @@ async function main() {
   const user = engine.getUser(actor.id, actor.name);
   user.wallet = 10000;
   let saveCount = 0;
-  const store = { save: () => { saveCount += 1; } };
-  const server = startInternalApi({
+  let failNextSave = false;
+  const store = {
+    save: () => {
+      saveCount += 1;
+      if (failNextSave) {
+        failNextSave = false;
+        throw new Error("simulated save failure");
+      }
+    }
+  };
+  const disabledServer = startInternalApi({
     engine,
     store,
     apiKey: "secret",
+    host: "127.0.0.1",
+    port: 0,
+    logger: { info() {}, warn() {} }
+  });
+  assert.strictEqual(disabledServer, null, "弱い内部APIキーでは起動しない");
+
+  const server = startInternalApi({
+    engine,
+    store,
+    apiKey: "secret-secret-secret",
     host: "127.0.0.1",
     port: 0,
     maxPayoutMultiplier: 10,
@@ -58,15 +78,29 @@ async function main() {
   const port = server.address().port;
 
   try {
-    const unauthorized = await request(port, { path: "/internal/v1/wallets/casino-user", token: "bad" });
+    const unauthorized = await request(port, { path: "/internal/v1/wallets/casino-user", token: "bad-bad-bad-bad-bad" });
     assert.strictEqual(unauthorized.status, 401, "Bearer認証に失敗したら401");
 
-    const wallet = await request(port, { path: "/internal/v1/wallets/casino-user" });
+    const wallet = await request(port, { path: "/internal/v1/wallets/casino-user", token: "secret-secret-secret" });
     assert.strictEqual(wallet.status, 200, "wallet取得が成功する");
     assert.strictEqual(wallet.body.wallet, 10000, "wallet残高が返る");
 
-    const invalidJson = await request(port, { method: "POST", path: "/internal/v1/casino/reservations", body: "{", token: "secret" });
+    engine.run("join", { id: "guild-a:dupe-user", name: "Dupe A" });
+    engine.run("join", { id: "guild-b:dupe-user", name: "Dupe B" });
+    const ambiguous = await request(port, { path: "/internal/v1/wallets/dupe-user", token: "secret-secret-secret" });
+    assert.strictEqual(ambiguous.status, 409, "複数候補に一致するdiscordUserIdは拒否");
+
+    const invalidJson = await request(port, { method: "POST", path: "/internal/v1/casino/reservations", body: "{", token: "secret-secret-secret" });
     assert.strictEqual(invalidJson.status, 400, "不正JSONは400");
+
+    const missingContentType = await request(port, {
+      method: "POST",
+      path: "/internal/v1/casino/reservations",
+      body: "{\"transactionId\":\"no-content-type\"}",
+      token: "secret-secret-secret",
+      contentType: ""
+    });
+    assert.strictEqual(missingContentType.status, 415, "JSON以外のContent-Typeは拒否");
 
     const invalidNumber = await request(port, {
       method: "POST",
@@ -91,15 +125,33 @@ async function main() {
     });
     assert.strictEqual(duplicateReserve.status, 200, "同じtransactionIdの予約再送は冪等");
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, 9000, "予約再送で二重控除しない");
-    assert.strictEqual(saveCount, 1, "冪等予約は保存しない");
+    assert.strictEqual(saveCount, 2, "冪等予約も保存を再試行する");
 
+    failNextSave = true;
+    const beforeSaveRetryWallet = engine.getUser(actor.id, actor.name).wallet;
+    const saveFailedReserve = await request(port, {
+      method: "POST",
+      path: "/internal/v1/casino/reservations",
+      body: { transactionId: "tx-save-retry", discordUserId: "casino-user", sessionId: "s-save", game: "slots", bet: 100 }
+    });
+    assert.strictEqual(saveFailedReserve.status, 500, "保存失敗時は500");
+    assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeSaveRetryWallet - 100, "保存失敗後もメモリ上の予約は一度だけ反映");
+    const saveRetry = await request(port, {
+      method: "POST",
+      path: "/internal/v1/casino/reservations",
+      body: { transactionId: "tx-save-retry", discordUserId: "casino-user", sessionId: "s-save", game: "slots", bet: 100 }
+    });
+    assert.strictEqual(saveRetry.status, 200, "保存失敗後の予約再送は冪等成功");
+    assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeSaveRetryWallet - 100, "保存失敗後の再送で二重控除しない");
+
+    const beforeWinSettle = engine.getUser(actor.id, actor.name).wallet;
     const settle = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations/tx-win/settle",
       body: { payout: 2500 }
     });
     assert.strictEqual(settle.status, 200, "精算が成功する");
-    assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, 11500, "payoutは賭け金込みの返却総額");
+    assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeWinSettle + 2500, "payoutは賭け金込みの返却総額");
 
     const duplicateSettle = await request(port, {
       method: "POST",
@@ -107,7 +159,7 @@ async function main() {
       body: { payout: 2500 }
     });
     assert.strictEqual(duplicateSettle.status, 200, "同じ精算再送は冪等");
-    assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, 11500, "精算再送で二重加算しない");
+    assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeWinSettle + 2500, "精算再送で二重加算しない");
 
     const cancelAfterSettle = await request(port, {
       method: "POST",
