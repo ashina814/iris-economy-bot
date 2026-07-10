@@ -84,6 +84,11 @@ const MARKETPLACE_CONFIG = {
   auctionExtendMinutes: 5
 };
 
+const CASINO_CONFIG = {
+  maxPayoutMultiplier: 100,
+  maxPayoutRis: 100000000
+};
+
 const WORKS = [
   { text: "自販機の下を金融街として再開発した", min: 90, max: 260, xp: 8 },
   { text: "会議で『それはレバレッジですね』だけ言い続けた", min: 120, max: 310, xp: 10 },
@@ -251,6 +256,7 @@ function createInitialState() {
       recent: []
     },
     inviteCampaign: createInviteCampaignState(),
+    casino: createCasinoState(),
     inn: {
       nextId: 1,
       rooms: [],
@@ -642,6 +648,182 @@ class EconomyEngine {
         `純資産: ${fmt(Math.floor(this.netWorth(user)))}`,
         `経済ランク: ${rankFor(ECONOMY_RANKS, this.netWorth(user)).name}`
       ]
+    };
+  }
+
+  resolveCasinoUser(discordUserId) {
+    const raw = String(discordUserId || "").trim();
+    if (!raw) return null;
+    if (this.state.users[raw]) return this.state.users[raw];
+    const suffix = `:${raw}`;
+    return Object.values(this.state.users || {})
+      .filter((user) => user?.id === raw || String(user?.id || "").endsWith(suffix))
+      .sort((a, b) => Number(Boolean(b.joined)) - Number(Boolean(a.joined)) || String(a.id).localeCompare(String(b.id)))
+      [0] || null;
+  }
+
+  casinoWallet(discordUserId) {
+    const user = this.resolveCasinoUser(discordUserId);
+    if (!user) {
+      return { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" };
+    }
+    return {
+      ok: true,
+      discordUserId: String(discordUserId),
+      userId: user.id,
+      name: user.name,
+      wallet: user.wallet,
+      currency: CURRENCY.code
+    };
+  }
+
+  reserveCasinoBet(data = {}) {
+    const normalized = this.normalizeCasinoReservation(data);
+    if (!normalized.ok) return normalized;
+    const { transactionId, discordUserId, sessionId, game, bet } = normalized;
+    const existing = this.state.casino.transactions[transactionId];
+    if (existing) return this.idempotentCasinoReservation(existing, normalized);
+
+    const user = this.resolveCasinoUser(discordUserId);
+    if (!user) {
+      return { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" };
+    }
+    if (user.wallet < bet) {
+      return { ok: false, code: "INSUFFICIENT_FUNDS", status: 409, message: "insufficient wallet balance", wallet: user.wallet, bet };
+    }
+
+    user.wallet -= bet;
+    const now = this.now().toISOString();
+    const transaction = {
+      transactionId,
+      discordUserId,
+      userId: user.id,
+      userName: user.name,
+      sessionId,
+      game,
+      bet,
+      status: "reserved",
+      payout: null,
+      createdAt: now,
+      reservedAt: now,
+      settledAt: null,
+      cancelledAt: null
+    };
+    this.state.casino.transactions[transactionId] = transaction;
+    this.log(user, "casino_reserve", -bet, `${game} / ${sessionId} / ${transactionId}`);
+    return { ok: true, status: 201, changed: true, transaction: this.publicCasinoTransaction(transaction), wallet: user.wallet };
+  }
+
+  settleCasinoReservation(transactionIdRaw, data = {}, limits = {}) {
+    const transactionId = cleanToken(transactionIdRaw, 120);
+    if (!transactionId) return { ok: false, code: "INVALID_TRANSACTION_ID", status: 400, message: "transactionId is required" };
+    const transaction = this.state.casino.transactions[transactionId];
+    if (!transaction) return { ok: false, code: "TRANSACTION_NOT_FOUND", status: 404, message: "transaction not found" };
+    const payout = parseIntegerField(data.payout);
+    if (!Number.isFinite(payout) || payout < 0) {
+      return { ok: false, code: "INVALID_PAYOUT", status: 400, message: "payout must be a non-negative integer" };
+    }
+    const cap = this.casinoPayoutCap(transaction.bet, limits);
+    if (payout > cap) {
+      return { ok: false, code: "PAYOUT_TOO_LARGE", status: 400, message: "payout exceeds configured cap", maxPayout: cap };
+    }
+    if (transaction.status === "settled") {
+      if (transaction.payout === payout) {
+        const user = this.state.users[transaction.userId];
+        return { ok: true, status: 200, changed: false, transaction: this.publicCasinoTransaction(transaction), wallet: user?.wallet ?? null };
+      }
+      return { ok: false, code: "TRANSACTION_ALREADY_SETTLED", status: 409, message: "transaction already settled with a different payout" };
+    }
+    if (transaction.status !== "reserved") {
+      return { ok: false, code: "INVALID_TRANSACTION_STATE", status: 409, message: `cannot settle ${transaction.status} transaction` };
+    }
+
+    const user = this.state.users[transaction.userId];
+    if (!user) return { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" };
+    user.wallet += payout;
+    const net = payout - transaction.bet;
+    if (net > 0) user.lifetimeEarned += net;
+    else if (net < 0) user.lifetimeLost += -net;
+    transaction.status = "settled";
+    transaction.payout = payout;
+    transaction.settledAt = this.now().toISOString();
+    this.log(user, "casino_settle", payout, `${transaction.game} / net ${net >= 0 ? "+" : ""}${net} / ${transactionId}`);
+    return { ok: true, status: 200, changed: true, transaction: this.publicCasinoTransaction(transaction), wallet: user.wallet };
+  }
+
+  cancelCasinoReservation(transactionIdRaw) {
+    const transactionId = cleanToken(transactionIdRaw, 120);
+    if (!transactionId) return { ok: false, code: "INVALID_TRANSACTION_ID", status: 400, message: "transactionId is required" };
+    const transaction = this.state.casino.transactions[transactionId];
+    if (!transaction) return { ok: false, code: "TRANSACTION_NOT_FOUND", status: 404, message: "transaction not found" };
+    if (transaction.status === "cancelled") {
+      const user = this.state.users[transaction.userId];
+      return { ok: true, status: 200, changed: false, transaction: this.publicCasinoTransaction(transaction), wallet: user?.wallet ?? null };
+    }
+    if (transaction.status !== "reserved") {
+      return { ok: false, code: "INVALID_TRANSACTION_STATE", status: 409, message: `cannot cancel ${transaction.status} transaction` };
+    }
+
+    const user = this.state.users[transaction.userId];
+    if (!user) return { ok: false, code: "USER_NOT_FOUND", status: 404, message: "wallet user not found" };
+    user.wallet += transaction.bet;
+    transaction.status = "cancelled";
+    transaction.cancelledAt = this.now().toISOString();
+    this.log(user, "casino_cancel", transaction.bet, `${transaction.game} / ${transaction.sessionId} / ${transactionId}`);
+    return { ok: true, status: 200, changed: true, transaction: this.publicCasinoTransaction(transaction), wallet: user.wallet };
+  }
+
+  normalizeCasinoReservation(data) {
+    const transactionId = cleanToken(data.transactionId, 120);
+    const discordUserId = cleanToken(data.discordUserId, 80);
+    const sessionId = cleanToken(data.sessionId, 120);
+    const game = cleanToken(data.game, 80);
+    const bet = parseIntegerField(data.bet);
+    if (!transactionId) return { ok: false, code: "INVALID_TRANSACTION_ID", status: 400, message: "transactionId is required" };
+    if (!discordUserId) return { ok: false, code: "INVALID_DISCORD_USER_ID", status: 400, message: "discordUserId is required" };
+    if (!sessionId) return { ok: false, code: "INVALID_SESSION_ID", status: 400, message: "sessionId is required" };
+    if (!game) return { ok: false, code: "INVALID_GAME", status: 400, message: "game is required" };
+    if (!Number.isFinite(bet) || bet <= 0) return { ok: false, code: "INVALID_BET", status: 400, message: "bet must be a positive integer" };
+    return { ok: true, transactionId, discordUserId, sessionId, game, bet };
+  }
+
+  idempotentCasinoReservation(existing, normalized) {
+    const same =
+      existing.discordUserId === normalized.discordUserId &&
+      existing.sessionId === normalized.sessionId &&
+      existing.game === normalized.game &&
+      existing.bet === normalized.bet;
+    if (!same) {
+      return { ok: false, code: "TRANSACTION_CONFLICT", status: 409, message: "transactionId already exists with different reservation data" };
+    }
+    const user = this.state.users[existing.userId];
+    return { ok: true, status: 200, changed: false, transaction: this.publicCasinoTransaction(existing), wallet: user?.wallet ?? null };
+  }
+
+  casinoPayoutCap(bet, limits = {}) {
+    const multiplier = Number.isFinite(Number(limits.maxPayoutMultiplier))
+      ? Math.max(0, Math.floor(Number(limits.maxPayoutMultiplier)))
+      : this.state.casino.settings.maxPayoutMultiplier;
+    const maxRis = Number.isFinite(Number(limits.maxPayoutRis))
+      ? Math.max(0, Math.floor(Number(limits.maxPayoutRis)))
+      : this.state.casino.settings.maxPayoutRis;
+    return Math.min(Math.floor(Number(bet || 0) * multiplier), maxRis);
+  }
+
+  publicCasinoTransaction(transaction) {
+    return {
+      transactionId: transaction.transactionId,
+      discordUserId: transaction.discordUserId,
+      userId: transaction.userId,
+      sessionId: transaction.sessionId,
+      game: transaction.game,
+      bet: transaction.bet,
+      status: transaction.status,
+      payout: transaction.payout,
+      createdAt: transaction.createdAt,
+      reservedAt: transaction.reservedAt,
+      settledAt: transaction.settledAt,
+      cancelledAt: transaction.cancelledAt
     };
   }
 
@@ -4510,6 +4692,17 @@ function createInviteCampaignState(overrides = {}) {
   };
 }
 
+function createCasinoState(overrides = {}) {
+  return {
+    transactions: { ...((overrides && overrides.transactions) || {}) },
+    settings: {
+      maxPayoutMultiplier: CASINO_CONFIG.maxPayoutMultiplier,
+      maxPayoutRis: CASINO_CONFIG.maxPayoutRis,
+      ...((overrides && overrides.settings) || {})
+    }
+  };
+}
+
 function migrateState(state) {
   const base = createInitialState();
   const next = { ...base, ...state };
@@ -4533,6 +4726,12 @@ function migrateState(state) {
   next.inviteCampaign.userStats = Object.fromEntries(
     Object.entries(next.inviteCampaign.userStats || {}).map(([id, stats]) => [id, migrateCampaignUserStats(stats)])
   );
+  next.casino = createCasinoState(next.casino || {});
+  next.casino.transactions = Object.fromEntries(
+    Object.entries(next.casino.transactions || {}).map(([id, tx]) => [id, migrateCasinoTransaction(tx, id)])
+  );
+  next.casino.settings.maxPayoutMultiplier = Math.max(0, Number(next.casino.settings.maxPayoutMultiplier) || CASINO_CONFIG.maxPayoutMultiplier);
+  next.casino.settings.maxPayoutRis = Math.max(0, Number(next.casino.settings.maxPayoutRis) || CASINO_CONFIG.maxPayoutRis);
   next.inn = { ...base.inn, ...(next.inn || {}) };
   next.inn.rooms = Array.isArray(next.inn.rooms) ? next.inn.rooms : [];
   next.inn.history = Array.isArray(next.inn.history) ? next.inn.history : [];
@@ -4610,6 +4809,25 @@ function migrateCampaignUserStats(stats = {}) {
   };
 }
 
+function migrateCasinoTransaction(tx = {}, id = "") {
+  const status = ["reserved", "settled", "cancelled"].includes(tx.status) ? tx.status : "reserved";
+  return {
+    transactionId: cleanToken(tx.transactionId || id, 120),
+    discordUserId: cleanToken(tx.discordUserId, 80),
+    userId: tx.userId || null,
+    userName: tx.userName || "",
+    sessionId: cleanToken(tx.sessionId, 120),
+    game: cleanToken(tx.game, 80),
+    bet: Math.max(0, Number(tx.bet) || 0),
+    status,
+    payout: tx.payout === null || tx.payout === undefined ? null : Math.max(0, Number(tx.payout) || 0),
+    createdAt: tx.createdAt || null,
+    reservedAt: tx.reservedAt || tx.createdAt || null,
+    settledAt: tx.settledAt || null,
+    cancelledAt: tx.cancelledAt || null
+  };
+}
+
 function parseInput(input) {
   const trimmed = String(input || "").trim();
   if (!trimmed) return { command: "help", args: [] };
@@ -4625,6 +4843,18 @@ function parsePositiveInt(value) {
 function parseNonNegativeInt(value) {
   const parsed = Math.floor(Number(String(value || "").replace(/,/g, "")));
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : NaN;
+}
+
+function parseIntegerField(value) {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^(0|[1-9]\d*)$/.test(value.trim())) return Number.parseInt(value.trim(), 10);
+  return NaN;
+}
+
+function cleanToken(value, max) {
+  const text = String(value || "").trim();
+  if (!text || text.length > max) return "";
+  return /^[A-Za-z0-9:_./-]+$/.test(text) ? text : "";
 }
 
 function cooldownRemaining(lastIso, now, durationMs) {
