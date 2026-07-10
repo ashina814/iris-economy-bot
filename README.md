@@ -159,9 +159,9 @@ POST /internal/v1/casino/reservations/:transactionId/settle
 POST /internal/v1/casino/reservations/:transactionId/cancel
 ```
 
-The API is scoped to `DISCORD_GUILD_ID`. `guildId` and every `discordUserId` must be numeric Discord Snowflakes; users are resolved only as `${DISCORD_GUILD_ID}:${discordUserId}`. Internal user IDs and cross-guild suffix matching are not accepted. Users must have completed `join` before wallet or casino access is allowed. `bet` and `payout` must be safe integers, and reservations enforce `IRIS_CASINO_MIN_BET` and `IRIS_CASINO_MAX_BET`.
+The API is scoped to `DISCORD_GUILD_ID`. `guildId` and every `discordUserId` must be numeric Discord Snowflakes; users are resolved only as `${DISCORD_GUILD_ID}:${discordUserId}`. Internal user IDs and suffix matching are not accepted. Reserve, settle, and cancel all enforce the same guild boundary; cross-guild or inconsistent transactions return `TRANSACTION_NOT_FOUND`. Users must have completed `join` before wallet or casino access is allowed. `bet`, `payout`, wallet results, and casino lifetime totals must remain safe integers, and reservations enforce `IRIS_CASINO_MIN_BET` and `IRIS_CASINO_MAX_BET`.
 
-Failed casino state saves restore the complete in-memory state, including wallets, transactions, ledger entries, and lifetime totals. A retry is then a new reservation.
+Failed casino state saves restore the complete in-memory state, including wallets, transactions, ledger entries, and lifetime totals. A retry can then complete the same reserve, settle, or cancel operation once. If the internal API cannot bind its configured host/port, the error is logged without secrets and the Discord Bot process continues so the main production bot is not stopped by an optional internal API listener failure.
 
 予約 `POST /internal/v1/casino/reservations`:
 
@@ -179,7 +179,7 @@ Failed casino state saves restore the complete in-memory state, including wallet
 - 予約成功時に `wallet` から `bet` を控除し、`casino_reserve` を台帳へ記録します
 - 同じ `transactionId` と同じ内容の再送は冪等で、二重控除しません
 - `transactionId`、`sessionId`、`game` はURLセグメント安全な英数字・`:`・`_`・`.`・`-` のみ使えます
-- `discordUserId` が複数ギルドのユーザーに曖昧一致する場合は拒否します
+- `discordUserId` is resolved only as `${DISCORD_GUILD_ID}:${discordUserId}`; internal user IDs and suffix matching are rejected
 
 精算 `POST /settle`:
 
