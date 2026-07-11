@@ -279,6 +279,10 @@ async function handleInteraction(interaction) {
       await handleOrderAdminButton(interaction);
       return;
     }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:auction-bid:")) {
+      await showMarketAuctionBidModal(interaction, interaction.customId.split(":")[3]);
+      return;
+    }
     if (interaction.isButton() && interaction.customId === "eco:market:official-item-create") {
       await showOfficialItemCreateModal(interaction);
       return;

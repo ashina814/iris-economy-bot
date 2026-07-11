@@ -265,6 +265,7 @@ const auctionCreate = engine.createOfficialAuction(engine.getUser(admin.id, admi
 assert(auctionCreate.ok, "公式オークションを作成できる必要があります");
 const auction = engine.state.marketplace.auctions[0];
 assert(auction.status === "open", "公式オークションは開催中になる必要があります");
+assert(JSON.stringify(engine.run(`marketplace auction ${auction.id}`, actor).panel.components).includes(`eco:market:auction-bid:${auction.id}`), "開催中の公式オークションに入札ボタンが必要です");
 const auctionAdminPanel = engine.run("panel official-auction-admin", admin).panel;
 assert(JSON.stringify(auctionAdminPanel.components).includes("eco:market:auction-create"), "公式オークション管理から作成へ進める必要があります");
 assert(JSON.stringify(auctionAdminPanel.components).includes(`marketplace auction-end ${auction.id}`), "公式オークション管理から緊急終了を選べる必要があります");
