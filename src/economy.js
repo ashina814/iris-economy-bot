@@ -1929,6 +1929,7 @@ class EconomyEngine {
     if (["recommended", "recommend", "today"].includes(action)) return this.panelResult(this.recommendedShelfPanel(user));
     if (["affordable", "can-buy", "available"].includes(action)) return this.panelResult(this.affordableItemsPanel(user));
     if (["campaign-shop", "campaign"].includes(action)) return this.panelResult(this.campaignShopPanel(user));
+    if (action === "auction" && args[1]) return this.panelResult(this.auctionDetailPanel(user, args[1]));
     if (["auction", "auctions"].includes(action)) return this.panelResult(this.officialAuctionsPanel(user));
     if (["inventory", "history"].includes(action)) return this.panelResult(this.marketInventoryPanel(user));
     if (action === "official-manage") return this.panelResult(this.officialItemManagementPanel(user, args[1]));
@@ -1941,7 +1942,6 @@ class EconomyEngine {
     if (["listing-shelf", "listing-category", "category"].includes(action)) return this.panelResult(this.userListingShelfPanel(user, args[1]));
     if (action === "listing-confirm") return this.panelResult(this.userListingConfirmPanel(user, args[1]));
     if (action === "listing-buy") return this.buyUserListing(user, args[1]);
-    if (action === "auction") return this.panelResult(this.auctionDetailPanel(user, args[1]));
     if (action === "auction-history") return this.panelResult(this.auctionHistoryPanel(user, args[1]));
     if (action === "auction-end") return this.forceEndAuction(user, args[1]);
     if (action === "review") return this.panelResult(this.reviewListingPanel(user, args[1]));
