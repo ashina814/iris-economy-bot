@@ -122,7 +122,7 @@ const client = new Client({
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`${readyClient.user.tag} としてログインしました。`);
-  console.log(`スラッシュ: /マーケット /自分の店 /管理 /アイリス /カード /宿  プレフィックス: ${prefix} <command>`);
+  console.log(`スラッシュ: /ショップ /自分の店 /管理 /アイリス /カード /宿  プレフィックス: ${prefix} <command>`);
   try {
     await registerSlashCommand();
   } catch (error) {
@@ -279,6 +279,10 @@ async function handleInteraction(interaction) {
       await handleOrderAdminButton(interaction);
       return;
     }
+    if (interaction.isButton() && interaction.customId === "eco:market:official-item-create") {
+      await showOfficialItemCreateModal(interaction);
+      return;
+    }
     if (interaction.isButton() && interaction.customId.startsWith("eco:market:official-")) {
       await handleOfficialMarketControl(interaction);
       return;
@@ -311,10 +315,6 @@ async function handleInteraction(interaction) {
     }
     if (command === "market-auction-create") {
       await showMarketAuctionCreateModal(interaction);
-      return;
-    }
-    if (command === "market-official-item-create") {
-      await showOfficialItemCreateModal(interaction);
       return;
     }
     if (command.startsWith("market-auction-bid ")) {
@@ -593,7 +593,7 @@ function buildSlashCommands() {
           )
       ),
     new SlashCommandBuilder()
-      .setName("マーケット")
+      .setName("ショップ")
       .setDescription("商品購入、民営ショップ、公式オークションの入口を開きます"),
     new SlashCommandBuilder()
       .setName("自分の店")
@@ -624,7 +624,7 @@ function commandFromSlash(interaction) {
       const panel = interaction.options.getString("パネル") || "inn";
       return { command: `panel ${panel}`, ephemeral: false, adminOnly: true };
     }
-    case "マーケット":
+    case "ショップ":
       return { command: "panel marketplace", ephemeral: true, adminOnly: false };
     case "自分の店":
       return { command: "panel my-shop", ephemeral: true, adminOnly: false };
@@ -688,6 +688,7 @@ function canRunCommand(context, command) {
     normalized.startsWith("marketplace official-manage") ||
     normalized.startsWith("marketplace official-fulfillment") ||
     normalized === "panel market-admin" ||
+    normalized === "panel official-product-admin" ||
     normalized === "panel market-review" ||
     normalized === "panel market-trades" ||
     normalized === "panel market-logs" ||

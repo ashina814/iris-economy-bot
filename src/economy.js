@@ -503,6 +503,7 @@ class EconomyEngine {
       "my-listings": () => this.myListingsPanel(user),
       "my-sales": () => this.mySalesPanel(user),
       "market-admin": () => this.marketAdminPanel(user),
+      "official-product-admin": () => this.officialProductAdminPanel(user),
       "official-fulfillment": () => this.officialFulfillmentPanel(user),
       "market-review": () => this.marketReviewPanel(),
       "market-trades": () => this.marketTradesPanel(),
@@ -1908,7 +1909,7 @@ class EconomyEngine {
   marketplace(user) {
     return {
       ok: true,
-      title: "マーケット",
+      title: "ショップ",
       lines: [
         "買う、見る、入札する場所です。",
         this.moneyLine(user)
@@ -2077,7 +2078,7 @@ class EconomyEngine {
       ]));
     }
     return {
-      title: "マーケット",
+      title: "ショップ",
       description: "商品を探して、詳細を見て、確認してから購入できます。売る側の管理も下の控えめな導線から行えます。",
       color: 0x7c3aed,
       fields,
@@ -2831,8 +2832,8 @@ class EconomyEngine {
     const officialItems = Object.values(this.officialCustomItems());
     const pendingOfficialFulfillment = this.officialFulfillmentTasks().filter((task) => task.status === "pending").length;
     return {
-      title: "マーケット管理",
-      description: "公式商品、公式オークション、民営出品、取引トラブル、マーケット設定を管理します。",
+      title: "ショップ管理",
+      description: "公式商品、民営出品、取引対応を入口ごとに整理しています。詳細な設定は各画面から開けます。",
       color: 0x334155,
       fields: [
         { name: "民営出品", value: `公開 ${this.activeListings().length}件 / 審査待ち ${pending}件`, inline: true },
@@ -2845,33 +2846,47 @@ class EconomyEngine {
       ],
       components: [
         buttons([
-          panelButton("公式商品管理", "official-shop", "primary"),
-          panelButton("公式オークション管理", "official-auctions"),
-          panelButton("民営ショップ管理", "user-shops"),
+          panelButton("公式商品", "official-product-admin", "primary"),
+          panelButton("民営出品", "user-shops"),
+          panelButton("取引対応", "market-trades")
+        ]),
+        buttons([
           panelButton("出品審査", "market-review"),
-          panelButton("取引対応", "market-trades")
+          panelButton("公式オークション", "official-auctions"),
+          customButton("ショップ設定", "eco:market:settings-edit", "secondary")
         ]),
         buttons([
-          customButton("競売を作る", "eco:market:auction-create", "success"),
-          customButton("マーケット設定を編集", "eco:market:settings-edit", "primary"),
           panelButton("ログ確認", "market-logs"),
-          panelButton("運営パネル", "admin"),
-          panelButton("マーケット", "marketplace")
-        ]),
+          panelButton("ショップを確認", "marketplace"),
+          panelButton("運営パネル", "admin")
+        ])
+      ]
+    };
+  }
+
+  officialProductAdminPanel(user) {
+    const items = Object.values(this.officialCustomItems());
+    const selling = items.filter((item) => this.isOfficialItemOnSale(item)).length;
+    const pending = this.officialFulfillmentTasks().filter((task) => task.status === "pending").length;
+    return {
+      title: "公式商品管理",
+      description: "公式商品の追加・編集・販売停止と、購入後対応をここで行います。",
+      color: 0x334155,
+      fields: [
+        { name: "販売状況", value: `販売中 ${selling}件 / 停止・期間外 ${items.length - selling}件`, inline: true },
+        { name: "対応キュー", value: `未完了 ${pending}件`, inline: true },
+        { name: "次の操作", value: "商品を追加した後は、一覧から在庫・販売期間・ロール・DM案内を編集できます。", inline: false }
+      ],
+      components: [
         buttons([
-          customButton("公式商品を追加", "eco:market:official-item-create", "primary"),
-          panelButton("公式対応キュー", "official-fulfillment"),
-          panelButton("公式ショップ確認", "official-shop"),
-          panelButton("取引対応", "market-trades")
+          customButton("商品を追加", "eco:market:official-item-create", "primary"),
+          panelButton("対応キュー", "official-fulfillment"),
+          panelButton("ショップを確認", "official-shop"),
+          panelButton("戻る", "market-admin")
         ]),
-        ...(officialItems.length
-          ? [select("編集する公式商品", officialItems.slice(0, 25).map((item) =>
+        ...(items.length
+          ? [select("編集する公式商品", items.slice(0, 25).map((item) =>
               option(`${item.name} [${officialItemStatusLabel(item.status)}]`.slice(0, 90), `run:marketplace official-manage ${item.id}`, `${fmt(item.price)} / ${item.stock === null ? "在庫無制限" : `在庫${item.stock}`}`.slice(0, 100))
-            ))]
-          : []),
-        ...(openAuctions.length
-          ? [select("強制終了する競売", openAuctions.slice(0, 25).map((auction) =>
-              option(`#${auction.id} ${auction.name}`.slice(0, 90), `run:marketplace auction-end ${auction.id}`, `現在 ${fmt(auction.currentBid || auction.startPrice)}`)
             ))]
           : [])
       ]

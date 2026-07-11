@@ -96,6 +96,14 @@ const createOfficialItem = engine.adminCreateOfficialItem(officialAdmin, {
 });
 assert(createOfficialItem.ok, "運営が公式ショップ商品を追加できる必要があります");
 assert(engine.state.marketplace.officialItems["official:vip-pass"], "追加公式商品がstateに保存される必要があります");
+const marketAdminPanel = engine.run("panel market-admin", officialAdminActor).panel;
+assert(marketAdminPanel.components.length <= 3, "ショップ管理トップは3行以内に収める必要があります");
+const marketAdminIds = marketAdminPanel.components
+  .filter((component) => component.type === "buttons")
+  .flatMap((component) => component.items.map((item) => item.kind === "custom" ? item.customId : `${item.kind}:${item.panel || item.command}`));
+assert.strictEqual(new Set(marketAdminIds).size, marketAdminIds.length, "ショップ管理トップに重複ボタンを置いてはいけません");
+const officialProductAdminPanel = engine.run("panel official-product-admin", officialAdminActor).panel;
+assert(JSON.stringify(officialProductAdminPanel.components).includes("eco:market:official-item-create"), "公式商品管理から商品追加へ進める必要があります");
 const updateOfficialItem = engine.adminUpdateOfficialItem(officialAdmin, "official:vip-pass", {
   name: "VIPパス30日", price: "10000", max: "2", stock: "2", type: "ロール30日",
   saleStartsAt: "-", saleEndsAt: "-", roleDurationDays: "30",
