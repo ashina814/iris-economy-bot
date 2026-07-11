@@ -8,8 +8,8 @@
     "start": "node src/discord-entry-operations.js",
     "play": "node src/cli.js",
     "discord": "node src/discord-entry-operations.js",
-    "smoke": "node src/smoke-test.js && node src/internal-api-test.js && node src/operations-extension-test.js && node src/daily-reset-4am-test.js && node src/campaign-v2-test.js",
-    "check": "node --check src/economy.js && node --check src/internal-api.js && node --check src/internal-api-test.js && node --check src/operations-extension.js && node --check src/operations-extension-test.js && node --check src/daily-reset-4am.js && node --check src/daily-reset-4am-test.js && node --check src/campaign-v2.js && node --check src/campaign-v2-test.js && node --check src/discord-entry-operations.js && node --check src/discord.js && node --check src/discord-entry.js && node --check src/discord-entry-tc-compact.js && node --check src/discord-entry-manual-join.js && node --check src/discord-core.js",
+    "smoke": "node src/smoke-test.js && node src/internal-api-test.js && node src/operations-extension-test.js && node src/daily-reset-4am-test.js && node src/campaign-v2-test.js && node src/storage-test.js && node src/entrypoint-test.js",
+    "check": "node --check src/economy.js && node --check src/internal-api.js && node --check src/internal-api-test.js && node --check src/operations-extension.js && node --check src/operations-extension-test.js && node --check src/daily-reset-4am.js && node --check src/daily-reset-4am-test.js && node --check src/campaign-v2.js && node --check src/campaign-v2-test.js && node --check src/storage.js && node --check src/storage-test.js && node --check src/entrypoint-test.js && node --check src/discord-entry-operations.js && node --check src/discord.js && node --check src/discord-entry.js && node --check src/discord-entry-tc-compact.js && node --check src/discord-entry-manual-join.js && node --check src/discord-core.js",
     "patch:yado": "node scripts/apply-yado-extension.js",
     "deploy": "git fetch origin && git reset --hard origin/main && npm install --omit=dev && npm run patch:yado && npm run check && npm run smoke",
     "deploy:safe": "bash scripts/deploy-safe.sh"

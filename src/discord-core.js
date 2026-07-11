@@ -2,6 +2,7 @@ const path = require("path");
 const { EconomyEngine, createInitialState, formatResult, fmt } = require("./economy");
 const { startInternalApi } = require("./internal-api");
 const { JsonStore } = require("./storage");
+const { handleNicknameInteraction } = require("./operations-extension");
 
 let discord;
 try {
@@ -66,6 +67,7 @@ const casinoMaxPayoutMultiplier = parseNonNegativeIntEnv("IRIS_CASINO_MAX_PAYOUT
 const casinoMaxPayoutRis = parseNonNegativeIntEnv("IRIS_CASINO_MAX_PAYOUT_RIS", 100000000);
 const casinoMinBet = parsePositiveIntEnv("IRIS_CASINO_MIN_BET", 1);
 const casinoMaxBet = parsePositiveIntEnv("IRIS_CASINO_MAX_BET", 100000000);
+const shopMaintenance = process.env.IRIS_SHOP_MAINTENANCE === "1";
 const adminUserIds = new Set(
   String(process.env.ECONOMY_ADMIN_IDS || "")
     .split(",")
@@ -75,6 +77,7 @@ const adminUserIds = new Set(
 const inviteCache = new Map();
 const pendingInviteUses = new Map();
 const creditedDeletedInviteCodes = new Map();
+const memberDirectoryByGuild = new Map();
 const PENDING_INVITE_USE_TTL_MS = 5 * 60 * 1000;
 const tempInnVoiceChannels = new Set();
 const yadoTimers = new Map();
@@ -83,13 +86,28 @@ const salarySessions = new Map();
 const SALARY_SESSION_TTL_MS = 10 * 60 * 1000;
 const DISBOARD_BOT_ID = "302050872383242240";
 
+global.__IRIS_GUILD_MEMBER_DIRECTORY__ = {
+  get(id) {
+    return memberDirectoryByGuild.get(String(id || "")) || null;
+  }
+};
+
+function loadRequiredState(jsonStore, label) {
+  try {
+    return jsonStore.load();
+  } catch (error) {
+    console.error(`${label}の読込に失敗したため起動を中止します: ${error.message}`);
+    throw error;
+  }
+}
+
 if (!token) {
   console.error("DISCORD_TOKEN が未設定です。");
   process.exit(1);
 }
 
 const store = new JsonStore(path.join(__dirname, "..", "data", "discord-state.json"), createInitialState);
-const state = store.load();
+const state = loadRequiredState(store, "経済台帳");
 const engine = new EconomyEngine(state);
 startInternalApi({
   engine,
@@ -105,9 +123,9 @@ startInternalApi({
   guildId
 });
 const yadoStore = new JsonStore(path.join(__dirname, "..", "data", "yado-state.json"), () => ({ rooms: {} }));
-const yadoState = yadoStore.load();
+const yadoState = loadRequiredState(yadoStore, "二人宿台帳");
 const panelStore = new JsonStore(path.join(__dirname, "..", "data", "panel-state.json"), () => ({ rankPanel: null, rankNotifyChannelId: null }));
-const panelState = panelStore.load();
+const panelState = loadRequiredState(panelStore, "パネル台帳");
 
 const client = new Client({
   intents: [
@@ -130,6 +148,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.warn("既存の /eco かプレフィックスコマンドで起動を継続します。");
   }
   await refreshInviteCaches();
+  for (const guild of readyClient.guilds.cache.values()) syncGuildMemberDirectory(guild);
   await resumeYadoRooms();
   await ensureRankPanel();
   startVoiceRewardSweeper();
@@ -159,6 +178,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 async function handleInteraction(interaction) {
+  if (shopMaintenance && isShopMaintenanceInteraction(interaction)) {
+    await replyShopMaintenance(interaction);
+    return;
+  }
   if (interaction.isModalSubmit()) {
     if (interaction.customId.startsWith("eco:modal:yado-rename:")) {
       await renameYadoRoomFromModal(interaction);
@@ -263,6 +286,10 @@ async function handleInteraction(interaction) {
   }
 
   if (interaction.isButton() || interaction.isStringSelectMenu()) {
+    if (interaction.isButton() && interaction.customId.startsWith("eco:admin:nickname-clear-")) {
+      await handleNicknameInteraction(interaction, discord);
+      return;
+    }
     if (interaction.isButton() && interaction.customId.startsWith("eco:rank:")) {
       await handleRankPanelButton(interaction);
       return;
@@ -467,6 +494,10 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (!message.content.startsWith(prefix)) return;
   const command = message.content.slice(prefix.length).trim() || "help";
+  if (shopMaintenance && isShopCommand(command)) {
+    await message.reply("ショップ機能は現在メンテナンス中です。出品・購入・審査・オークションは一時停止しています。");
+    return;
+  }
   if (!canRunCommand(message, command)) {
     await message.reply("そこは運営用です。");
     return;
@@ -515,6 +546,7 @@ client.on(Events.InviteDelete, async (invite) => {
 
 client.on(Events.GuildMemberAdd, async (member) => {
   if (member.user.bot) return;
+  syncGuildMember(member);
   const used = await detectUsedInvite(member.guild);
   const result = used?.inviter
     ? engine.recordInviteJoin(
@@ -523,38 +555,40 @@ client.on(Events.GuildMemberAdd, async (member) => {
         { code: used.code }
       )
     : null;
-  const joinResult = engine.run("join", actorFromMember(member));
+  // 初期Risは本人が参加操作をした時だけ付与する。入室イベントでは住民記録と招待だけを更新する。
+  const joinedUser = engine.getUser(actorFromMember(member).id, actorFromMember(member).name);
   store.save(engine.state);
   if (result) {
     await sendLog({
       ok: true,
       title: "招待成立",
-      lines: [`${result.inviter.name} -> ${result.invitee.name}`, ...joinResult.lines.slice(0, 2)]
+      lines: [`${result.inviter.name} -> ${result.invitee.name}`, "初期Risは本人が参加操作をした時に付与されます。"]
     });
-    if (joinResult.inviteRankUp && joinResult.inviterId) {
-      const inviterDiscordId = extractDiscordUserId(joinResult.inviterId);
-      await sendRankAnnouncement(
-        { title: "招待階級昇格", lines: [], meta: joinResult.inviteRankUp },
-        inviterDiscordId,
-        member
-      );
-    }
   } else {
     await sendLog({
       ok: true,
-      title: "自動加入",
-      lines: [`${member.displayName || member.user.username} に初期Risを付与。`, ...joinResult.lines.slice(0, 1)]
+      title: "入室記録",
+      lines: [`${joinedUser.name} が入室しました。初期Risは参加操作時に付与されます。`]
     });
   }
 });
 
 client.on(Events.GuildMemberRemove, async (member) => {
   if (member.user.bot) return;
+  removeGuildMember(member);
   engine.recordInviteLeave(actorFromMember(member));
   store.save(engine.state);
 });
 
-client.login(token);
+client.on(Events.GuildMemberUpdate, (_oldMember, member) => {
+  if (!member.user.bot) syncGuildMember(member);
+});
+
+if (process.env.IRIS_ENTRYPOINT_TEST === "1") {
+  module.exports = { assertUniquePanelComponentIds, buildComponents, client, engine };
+} else {
+  client.login(token);
+}
 
 async function registerSlashCommand() {
   if (!clientId) {
@@ -663,6 +697,35 @@ function actorFromMember(member) {
     id: `${member.guild.id}:${member.user.id}`,
     name: member.displayName || member.user.globalName || member.user.username
   };
+}
+
+function syncGuildMemberDirectory(guild) {
+  if (!guild?.id || !guild.members?.cache) return;
+  const directory = new Map();
+  for (const member of guild.members.cache.values()) {
+    if (!member?.user?.bot) {
+      directory.set(member.user.id, {
+        id: member.user.id,
+        displayName: member.displayName || member.user.globalName || member.user.username || "名無し"
+      });
+    }
+  }
+  memberDirectoryByGuild.set(guild.id, directory);
+}
+
+function syncGuildMember(member) {
+  if (!member?.guild?.id || !member.user || member.user.bot) return;
+  const directory = memberDirectoryByGuild.get(member.guild.id) || new Map();
+  directory.set(member.user.id, {
+    id: member.user.id,
+    displayName: member.displayName || member.user.globalName || member.user.username || "名無し"
+  });
+  memberDirectoryByGuild.set(member.guild.id, directory);
+}
+
+function removeGuildMember(member) {
+  const directory = member?.guild?.id ? memberDirectoryByGuild.get(member.guild.id) : null;
+  if (directory && member?.user?.id) directory.delete(member.user.id);
 }
 
 function voiceRewardOptionsForChannel(channel) {
@@ -1296,6 +1359,30 @@ async function createMarketAuctionFromModal(interaction) {
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
   await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+function isShopCommand(command) {
+  const normalized = String(command || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return normalized === "shop" || normalized === "ショップ" || normalized === "店" ||
+    normalized.startsWith("marketplace") || normalized.startsWith("market-") || normalized.startsWith("shop-") ||
+    normalized === "panel marketplace" || normalized === "panel official-shop" || normalized === "panel user-shops" ||
+    normalized === "panel market-inventory" || normalized === "panel my-shop" || normalized === "panel market-admin" ||
+    normalized === "panel official-product-admin" || normalized === "panel official-auction-admin" ||
+    normalized === "panel market-review" || normalized === "panel market-trades" || normalized === "panel market-logs";
+}
+
+function isShopMaintenanceInteraction(interaction) {
+  const customId = String(interaction?.customId || "");
+  if (customId.startsWith("eco:market:") || customId.startsWith("eco:shop:") || customId.startsWith("eco:review:") || customId.startsWith("eco:order:") || customId.startsWith("eco:modal:market") || customId.startsWith("eco:modal:shop")) return true;
+  if (customId === "eco:panel:marketplace" || customId === "eco:panel:official-shop" || customId === "eco:panel:user-shops" || customId === "eco:panel:market-inventory" || customId === "eco:panel:my-shop" || customId.startsWith("eco:panel:market-") || customId.startsWith("eco:panel:official-")) return true;
+  const selected = interaction?.values?.[0] || "";
+  return selected.startsWith("run:marketplace") || selected.startsWith("panel:market") || selected.startsWith("panel:official-") || selected.startsWith("panel:user-shops") || selected.startsWith("panel:my-shop");
+}
+
+async function replyShopMaintenance(interaction) {
+  const payload = { content: "ショップ機能は現在メンテナンス中です。出品・購入・審査・オークションは一時停止しています。", ephemeral: true };
+  if (interaction.deferred || interaction.replied) await interaction.followUp(payload);
+  else await interaction.reply(payload);
 }
 
 async function showOfficialItemCreateModal(interaction) {
@@ -2660,7 +2747,9 @@ function cleanupSalarySessions() {
 }
 
 async function collectSalaryTargets(guild, roleIds) {
-  await guild.members.fetch().catch(() => null);
+  // Salary runs from the member cache. Fetching every guild member here can
+  // rate-limit unrelated interaction handling on larger servers.
+  syncGuildMemberDirectory(guild);
   const seen = new Map();
   for (const roleId of roleIds) {
     const role = await guild.roles.fetch(roleId).catch(() => null);
@@ -4018,6 +4107,8 @@ function buildComponents(result, options = {}) {
   const panel = result.panel;
   if (!panel?.components) return options.fallback ? fallbackComponents() : [];
 
+  assertUniquePanelComponentIds(panel);
+
   return panel.components.slice(0, 5).map((component, rowIndex) => {
     const row = new ActionRowBuilder();
     if (component.type === "buttons") {
@@ -4076,6 +4167,22 @@ function buildComponents(result, options = {}) {
 
     return row;
   });
+}
+
+function assertUniquePanelComponentIds(panel) {
+  const seen = new Set();
+  for (const row of panel.components || []) {
+    if (row?.type !== "buttons") continue;
+    for (const item of row.items || []) {
+      const id = item.kind === "panel"
+        ? `eco:panel:${item.panel}`
+        : item.kind === "custom"
+          ? item.customId
+          : `eco:run:${item.command}`;
+      if (seen.has(id)) throw new Error(`重複したコンポーネントID: ${id}`);
+      seen.add(id);
+    }
+  }
 }
 
 function fallbackComponents() {

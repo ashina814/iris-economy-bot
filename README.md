@@ -146,6 +146,12 @@ vc       - VC在室分を精算
 
 Botが自動付与できない商品は、購入後に「取引中」として残ります。販売者または購入者が完了報告できます。
 
+## 運用上の安全設定
+
+- `IRIS_SHOP_MAINTENANCE=1` を明示した場合だけ、ショップの出品・購入・審査・オークションを一時停止します。未設定または `0` は通常営業です。
+- `data/discord-state.json`、`data/yado-state.json`、`data/panel-state.json` の読込に失敗した場合、Botは空の経済データで起動せず停止します。ファイルを自動で改名・初期化しないため、バックアップを確認してから復旧してください。
+- `npm run patch:yado` は二人宿の実装を直接書き換えません。本体へ必要な実装が統合済みであることを検証し、不足時はデプロイを止めます。
+
 ## 内部Economy API（Discord Activity連携用）
 
 将来のDiscord Activityカジノなど、Botと同じホストで動く信頼済みバックエンドからRis残高を扱うための内部APIです。`data/discord-state.json` を別プロセスから直接読み書きせず、Discord Botと同じNode.jsプロセス内で起動します。
