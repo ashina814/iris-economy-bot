@@ -254,6 +254,10 @@ function createInitialState() {
       listings: [],
       orders: [],
       auctions: [],
+      officialItems: {},
+      officialFulfillment: [],
+      officialRoleGrants: [],
+      nextOfficialFulfillmentId: 1,
       logs: [],
       settings: {
         feeBps: MARKETPLACE_CONFIG.feeBps,
@@ -499,6 +503,7 @@ class EconomyEngine {
       "my-listings": () => this.myListingsPanel(user),
       "my-sales": () => this.mySalesPanel(user),
       "market-admin": () => this.marketAdminPanel(user),
+      "official-fulfillment": () => this.officialFulfillmentPanel(user),
       "market-review": () => this.marketReviewPanel(),
       "market-trades": () => this.marketTradesPanel(),
       "market-logs": () => this.marketLogsPanel(),
@@ -1591,8 +1596,196 @@ class EconomyEngine {
   }
 
   itemPrice(id) {
-    const item = SHOP_ITEMS[id];
+    const item = this.officialItem(id);
     return item ? item.price : 0;
+  }
+
+  officialCustomItems() {
+    return this.state.marketplace.officialItems || {};
+  }
+
+  isOfficialItemOnSale(item) {
+    if (!item || item.status !== "active") return false;
+    const now = this.now().getTime();
+    const startsAt = item.saleStartsAt ? new Date(item.saleStartsAt).getTime() : null;
+    const endsAt = item.saleEndsAt ? new Date(item.saleEndsAt).getTime() : null;
+    if (Number.isFinite(startsAt) && now < startsAt) return false;
+    if (Number.isFinite(endsAt) && now >= endsAt) return false;
+    return item.stock === null || item.stock > 0;
+  }
+
+  officialItem(id) {
+    const key = String(id || "");
+    if (isOfficialItemOnSale(key)) return SHOP_ITEMS[key];
+    const custom = this.officialCustomItems()[key];
+    if (!this.isOfficialItemOnSale(custom)) return null;
+    return custom;
+  }
+
+  officialItemDefinition(id) {
+    const key = String(id || "");
+    return SHOP_ITEMS[key] || this.officialCustomItems()[key] || null;
+  }
+
+  officialSaleEntries() {
+    const custom = Object.entries(this.officialCustomItems())
+      .filter(([, item]) => this.isOfficialItemOnSale(item))
+      .sort((a, b) => String(a[1].createdAt || "").localeCompare(String(b[1].createdAt || "")));
+    return [...officialSaleEntries(), ...custom];
+  }
+
+  normalizeOfficialItemId(raw) {
+    const token = cleanToken(raw, 40).toLowerCase();
+    if (!token) return "";
+    return token.startsWith("official:") ? token : `official:${token}`;
+  }
+
+  adminCreateOfficialItem(adminUser, data = {}) {
+    const id = this.normalizeOfficialItemId(data.id);
+    const name = cleanMarketText(data.name, 48);
+    const description = cleanMarketText(data.description, 400);
+    const effect = cleanMarketText(data.effect, 160);
+    const type = cleanMarketText(data.type, 32) || "アイテム";
+    const price = parsePositiveInt(data.price);
+    const max = parsePositiveInt(data.max);
+    if (!id) return { ok: false, title: "公式商品IDが空です", lines: ["英数字・_・-・.・: だけでIDを指定してください。"] };
+    if (SHOP_ITEMS[id] || this.state.marketplace.officialItems[id]) {
+      return { ok: false, title: "公式商品IDが重複しています", lines: [`${id} はすでに使われています。`] };
+    }
+    if (!name) return { ok: false, title: "商品名が空です", lines: ["商品名を入力してください。"] };
+    if (!Number.isFinite(price)) return { ok: false, title: "価格が不正です", lines: ["価格は1以上の整数で入力してください。"] };
+    if (!Number.isFinite(max) || max > 999) return { ok: false, title: "所持上限が不正です", lines: ["所持上限は1〜999の整数で入力してください。"] };
+    const now = this.now().toISOString();
+    const item = {
+      id,
+      name,
+      price,
+      max,
+      kind: "passive",
+      type,
+      description: description || "運営追加の公式商品です。",
+      effect: effect || "説明文として表示される所持型アイテム",
+      usage: "購入後は持ち物に残ります。Bot処理が絡む効果はまだ自動発動しません。",
+      status: "active",
+      stock: null,
+      saleStartsAt: null,
+      saleEndsAt: null,
+      roleId: null,
+      roleDurationDays: 0,
+      dmGuide: "購入内容は持ち物と運営対応キューに記録されます。",
+      source: "admin",
+      createdAt: now,
+      createdBy: adminUser.id,
+      createdByName: adminUser.name
+    };
+    this.state.marketplace.officialItems[id] = item;
+    this.marketLog(`${adminUser.name} が公式商品 ${id} ${name} を追加しました。`);
+    return {
+      ok: true,
+      title: "公式商品を追加しました",
+      lines: [
+        `${name} / ${fmt(price)}`,
+        `所持上限: ${max}`,
+        `効果: ${item.effect}`,
+        "当面は説明表示だけの所持型アイテムとして扱います。"
+      ],
+      panel: this.officialProductPanel(adminUser, id)
+    };
+  }
+
+  officialItemManagementPanel(adminUser, id) {
+    const item = this.officialCustomItems()[id];
+    if (!item) return this.marketAdminPanel(adminUser);
+    const queueCount = this.officialFulfillmentTasks().filter((task) => task.itemId === id && task.status === "pending").length;
+    return {
+      title: `公式商品管理: ${item.name}`,
+      description: "販売中の内容を編集できます。停止した商品は新規購入できず、既存の持ち物と対応キューは保持されます。",
+      color: item.status === "active" ? 0x334155 : 0x6b7280,
+      fields: [
+        { name: "販売", value: `${officialItemStatusLabel(item.status)} / ${this.officialSaleWindowLine(item)}`, inline: true },
+        { name: "在庫", value: item.stock === null ? "無制限" : `${item.stock} 個`, inline: true },
+        { name: "所持上限", value: `${item.max} 個`, inline: true },
+        { name: "ロール", value: item.roleId ? `<@&${item.roleId}> / ${item.roleDurationDays > 0 ? `${item.roleDurationDays}日` : "無期限"}` : "なし", inline: false },
+        { name: "運営対応", value: `未完了 ${queueCount} 件`, inline: true },
+        { name: "DM案内", value: item.dmGuide || "なし", inline: false }
+      ],
+      components: [
+        buttons([
+          customButton("商品を編集", `eco:market:official-item-edit:${id}`, "primary"),
+          customButton(item.status === "active" ? "販売を停止" : "販売を再開", `eco:market:official-item-toggle:${id}`, item.status === "active" ? "danger" : "success"),
+          customButton("ロールを選択", `eco:market:official-item-role:${id}`, "secondary")
+        ]),
+        buttons([
+          panelButton("対応キュー", "official-fulfillment"),
+          panelButton("公式ショップ確認", "official-shop"),
+          panelButton("マーケット管理", "market-admin")
+        ])
+      ]
+    };
+  }
+
+  officialSaleWindowLine(item) {
+    const start = item.saleStartsAt ? shortDate(item.saleStartsAt) : "すぐに開始";
+    const end = item.saleEndsAt ? shortDate(item.saleEndsAt) : "終了なし";
+    return `${start} - ${end}`;
+  }
+
+  adminUpdateOfficialItem(adminUser, id, patch = {}) {
+    const item = this.officialCustomItems()[id];
+    if (!item) return { ok: false, title: "公式商品が見つかりません", lines: ["対象の商品は削除済みです。"] };
+    const name = cleanMarketText(patch.name, 48);
+    const description = cleanMarketText(patch.description, 400);
+    const effect = cleanMarketText(patch.effect, 160);
+    const type = cleanMarketText(patch.type, 32);
+    const price = parsePositiveInt(patch.price);
+    const max = parsePositiveInt(patch.max);
+    const stock = parseOfficialStock(patch.stock);
+    const saleStartsAt = parseOfficialSaleDate(patch.saleStartsAt);
+    const saleEndsAt = parseOfficialSaleDate(patch.saleEndsAt);
+    const roleDurationDays = parseNonNegativeInt(patch.roleDurationDays);
+    const dmGuide = cleanMarketText(patch.dmGuide, 400);
+    if (!name || !description || !effect || !type || !Number.isFinite(price) || !Number.isFinite(max) || !Number.isFinite(stock) && stock !== null) {
+      return { ok: false, title: "商品設定が不正です", lines: ["商品名、価格、所持上限、種別、効果、説明、在庫を確認してください。"] };
+    }
+    if (max > 999 || (stock !== null && stock > 999999)) return { ok: false, title: "上限値が大きすぎます", lines: ["所持上限は999、在庫は999,999までです。"] };
+    const hasSaleStart = hasOfficialSaleDateInput(patch.saleStartsAt);
+    const hasSaleEnd = hasOfficialSaleDateInput(patch.saleEndsAt);
+    if ((hasSaleStart && !saleStartsAt) || (hasSaleEnd && !saleEndsAt)) {
+      return { ok: false, title: "販売日時が不正です", lines: ["販売日時は YYYY-MM-DD HH:mm（日本時間）で指定してください。"] };
+    }
+    if (saleStartsAt && saleEndsAt && saleStartsAt >= saleEndsAt) return { ok: false, title: "販売期間が不正です", lines: ["販売終了は開始より後にしてください。"] };
+    if (!Number.isFinite(roleDurationDays) || roleDurationDays > 3650) return { ok: false, title: "ロール期限が不正です", lines: ["ロール期限は0〜3650日で指定してください。"] };
+    Object.assign(item, {
+      name, description, effect, type, price, max, stock,
+      saleStartsAt: saleStartsAt ? saleStartsAt.toISOString() : null,
+      saleEndsAt: saleEndsAt ? saleEndsAt.toISOString() : null,
+      roleDurationDays,
+      dmGuide: dmGuide || "購入内容は持ち物と運営対応キューに記録されます。",
+      updatedAt: this.now().toISOString(),
+      updatedBy: adminUser.id
+    });
+    this.marketLog(`${adminUser.name} が公式商品 ${id} を編集しました。`);
+    return { ok: true, title: "公式商品を更新しました", lines: [item.name, `在庫: ${item.stock === null ? "無制限" : `${item.stock} 個`}`, `販売: ${this.officialSaleWindowLine(item)}`], panel: this.officialItemManagementPanel(adminUser, id) };
+  }
+
+  adminToggleOfficialItem(adminUser, id) {
+    const item = this.officialCustomItems()[id];
+    if (!item) return { ok: false, title: "公式商品が見つかりません", lines: ["対象の商品は削除済みです。"] };
+    item.status = item.status === "active" ? "stopped" : "active";
+    item.updatedAt = this.now().toISOString();
+    item.updatedBy = adminUser.id;
+    this.marketLog(`${adminUser.name} が公式商品 ${id} を${item.status === "active" ? "再開" : "停止"}しました。`);
+    return { ok: true, title: item.status === "active" ? "販売を再開しました" : "販売を停止しました", lines: [`${item.name} は${item.status === "active" ? "再び購入可能" : "新規購入不可"}です。既存の持ち物は変わりません。`], panel: this.officialItemManagementPanel(adminUser, id) };
+  }
+
+  adminSetOfficialItemRole(adminUser, id, roleId) {
+    const item = this.officialCustomItems()[id];
+    if (!item) return { ok: false, title: "公式商品が見つかりません", lines: ["対象の商品は削除済みです。"] };
+    item.roleId = roleId || null;
+    item.updatedAt = this.now().toISOString();
+    item.updatedBy = adminUser.id;
+    this.marketLog(`${adminUser.name} が公式商品 ${id} のロール設定を更新しました。`);
+    return { ok: true, title: "ロール設定を更新しました", lines: [item.roleId ? "購入時にロール付与を試みます。失敗時は対応キューから再試行できます。" : "ロール自動付与を解除しました。"], panel: this.officialItemManagementPanel(adminUser, id) };
   }
 
   loopSuggestion(user) {
@@ -1734,6 +1927,8 @@ class EconomyEngine {
     if (["campaign-shop", "campaign"].includes(action)) return this.panelResult(this.campaignShopPanel(user));
     if (["auction", "auctions"].includes(action)) return this.panelResult(this.officialAuctionsPanel(user));
     if (["inventory", "history"].includes(action)) return this.panelResult(this.marketInventoryPanel(user));
+    if (action === "official-manage") return this.panelResult(this.officialItemManagementPanel(user, args[1]));
+    if (action === "official-fulfillment") return this.panelResult(args[1] ? this.officialFulfillmentTaskPanel(user, args[1]) : this.officialFulfillmentPanel(user));
     if (["my", "my-shop"].includes(action)) return this.myShop(user);
     if (action === "product") return this.panelResult(this.officialProductPanel(user, args[1]));
     if (action === "confirm") return this.panelResult(this.officialConfirmPanel(user, args[1]));
@@ -1780,9 +1975,9 @@ class EconomyEngine {
       ["frame", "見た目用"]
     ];
     const picked = preferred
-      .filter(([id]) => isOfficialItemOnSale(id))
-      .map(([id, reason]) => ({ id, item: SHOP_ITEMS[id], reason }));
-    for (const [id, item] of officialSaleEntries()) {
+      .filter(([id]) => this.officialItem(id))
+      .map(([id, reason]) => ({ id, item: this.officialItem(id), reason }));
+    for (const [id, item] of this.officialSaleEntries()) {
       if (id === "chair") continue;
       if (picked.some((entry) => entry.id === id)) continue;
       picked.push({ id, item, reason: item.price >= 10000 ? "高額者向け" : "初心者向け" });
@@ -1930,7 +2125,7 @@ class EconomyEngine {
   }
 
   affordableItemsPanel(user) {
-    const official = officialSaleEntries()
+    const official = this.officialSaleEntries()
       .map(([id, item]) => ({
         id,
         source: "公式",
@@ -1939,7 +2134,7 @@ class EconomyEngine {
         price: this.itemPrice(id),
         command: `marketplace product ${id}`
       }))
-      .filter((entry) => entry.price <= user.wallet && (user.inventory[entry.id] || 0) < SHOP_ITEMS[entry.id].max);
+      .filter((entry) => entry.price <= user.wallet && (user.inventory[entry.id] || 0) < this.officialItem(entry.id).max);
     const privateListings = this.activeListings()
       .filter((listing) => listing.price <= user.wallet && listing.sellerId !== user.id)
       .map((listing) => ({
@@ -1986,7 +2181,7 @@ class EconomyEngine {
   }
 
   officialShopPanel(user) {
-    const saleEntries = officialSaleEntries();
+    const saleEntries = this.officialSaleEntries();
     if (!saleEntries.length) {
       return {
         title: "公式ショップ",
@@ -2004,18 +2199,18 @@ class EconomyEngine {
         ]
       };
     }
-    const fields = saleEntries.map(([id, item]) => ({
+    const fields = saleEntries.slice(0, 25).map(([id, item]) => ({
       name: `${item.name}（${item.type}）`,
-      value: `${fmt(this.itemPrice(id))} / ${item.kind === "consumable" ? "使い切り" : "常時発動"}\n効果: ${item.effect}\n所持 ${this.officialStockLine(user, id)}`,
+      value: `${fmt(this.itemPrice(id))} / ${item.kind === "consumable" ? "使い切り" : "所持型"}\n効果: ${item.effect}\n所持 ${this.officialStockLine(user, id)}${item.stock === null || item.stock === undefined ? "" : ` / 在庫 ${item.stock}`}`,
       inline: true
     }));
     return {
       title: "公式ショップ",
-      description: "Botが自動で付与する公式商品です。**常時発動** は所持中ずっと効果が出る、**使い切り** は `使う` コマンドまたはパネルで消費します。購入前に必ず確認画面を挟みます。",
+      description: "運営が設定する公式商品です。所持型商品の効果は説明文で案内され、ロール付き商品は購入後に付与を試みます。購入前には必ず確認画面を挟みます。",
       color: 0x8b5cf6,
       fields,
       components: [
-        select("公式商品を選ぶ", saleEntries.map(([id, item]) =>
+        select("公式商品を選ぶ", saleEntries.slice(0, 25).map(([id, item]) =>
           option(item.name, `run:marketplace product ${id}`, `${fmt(this.itemPrice(id))} / ${item.type} / ${item.effect}`.slice(0, 100))
         )),
         buttons([
@@ -2028,7 +2223,7 @@ class EconomyEngine {
   }
 
   officialProductPanel(user, id) {
-    const item = isOfficialItemOnSale(id) ? SHOP_ITEMS[id] : null;
+    const item = this.officialItem(id);
     if (!item) return this.marketplacePanel(user);
     const owned = user.inventory[id] || 0;
     const soldOut = owned >= item.max;
@@ -2040,6 +2235,8 @@ class EconomyEngine {
         { name: "価格", value: fmt(this.itemPrice(id)), inline: true },
         { name: "種別", value: item.type, inline: true },
         { name: "所持", value: `${owned}/${item.max}`, inline: true },
+        { name: "在庫", value: item.stock === null || item.stock === undefined ? "無制限" : `${item.stock} 個`, inline: true },
+        { name: "販売期間", value: this.officialSaleWindowLine(item), inline: false },
         { name: "効果", value: item.effect, inline: false },
         { name: "使い方", value: item.usage, inline: false },
         { name: "販売方式", value: item.kind === "consumable" ? "使い切り（消費型）" : "常時発動（所持型）", inline: false }
@@ -2055,7 +2252,7 @@ class EconomyEngine {
   }
 
   officialConfirmPanel(user, id) {
-    const item = isOfficialItemOnSale(id) ? SHOP_ITEMS[id] : null;
+    const item = this.officialItem(id);
     if (!item) return this.marketplacePanel(user);
     const price = this.itemPrice(id);
     const shortage = Math.max(0, price - user.wallet);
@@ -2321,10 +2518,10 @@ class EconomyEngine {
   marketInventoryPanel(user) {
     this.ensureShopShape(user);
     const officialEntries = Object.entries(user.inventory || {}).filter(([, count]) => count > 0);
-    const consumables = officialEntries.filter(([id]) => SHOP_ITEMS[id]?.kind === "consumable");
+    const consumables = officialEntries.filter(([id]) => this.officialItemDefinition(id)?.kind === "consumable");
     const officialLines = officialEntries.map(([id, count]) => {
-      const item = SHOP_ITEMS[id];
-      const kindLabel = item?.kind === "consumable" ? "使い切り" : "常時発動";
+      const item = this.officialItemDefinition(id);
+      const kindLabel = item?.kind === "consumable" ? "使い切り" : item?.source === "admin" ? "所持型" : "常時発動";
       return `${item?.name || id} x${count} [${kindLabel}]`;
     });
     const marketItems = (user.marketplace.inventory || []).slice(-8).reverse().map((item) => {
@@ -2336,7 +2533,7 @@ class EconomyEngine {
     const components = [];
     if (consumables.length) {
       components.push(select("使う商品を選ぶ（使い切り）", consumables.map(([id, count]) =>
-        option(`${SHOP_ITEMS[id].name}（残り${count}）`.slice(0, 90), `run:use ${id}`, SHOP_ITEMS[id].effect || "効果を発動"))));
+        option(`${this.officialItemDefinition(id).name}（残り${count}）`.slice(0, 90), `run:use ${id}`, this.officialItemDefinition(id).effect || "効果を発動"))));
     }
     const awaitingOrders = this.userOrders(user.id).filter((order) => ["open", "reported"].includes(order.status)).slice(0, 25);
     const reportableOrders = awaitingOrders.filter((order) => order.status === "open");
@@ -2631,6 +2828,8 @@ class EconomyEngine {
     const pending = this.state.marketplace.listings.filter((listing) => listing.status === "pending").length;
     const openOrders = this.state.marketplace.orders.filter((order) => order.status === "open").length;
     const openAuctions = this.state.marketplace.auctions.filter((auction) => auction.status === "open");
+    const officialItems = Object.values(this.officialCustomItems());
+    const pendingOfficialFulfillment = this.officialFulfillmentTasks().filter((task) => task.status === "pending").length;
     return {
       title: "マーケット管理",
       description: "公式商品、公式オークション、民営出品、取引トラブル、マーケット設定を管理します。",
@@ -2638,6 +2837,8 @@ class EconomyEngine {
       fields: [
         { name: "民営出品", value: `公開 ${this.activeListings().length}件 / 審査待ち ${pending}件`, inline: true },
         { name: "取引対応", value: `対応待ち ${openOrders}件`, inline: true },
+        { name: "公式商品", value: `販売中 ${officialItems.filter((item) => this.isOfficialItemOnSale(item)).length}件 / 停止・期間外 ${officialItems.length - officialItems.filter((item) => this.isOfficialItemOnSale(item)).length}件`, inline: true },
+        { name: "公式対応キュー", value: `未完了 ${pendingOfficialFulfillment}件`, inline: true },
         { name: "公式オークション", value: `開催中 ${openAuctions.length}件`, inline: true },
         { name: "手数料", value: `${(settings.feeBps / 100).toFixed(1)}%`, inline: true },
         { name: "制限", value: `高額審査 ${fmt(settings.reviewPrice)} / 出品上限 ${settings.maxActiveListings}件`, inline: false }
@@ -2657,6 +2858,17 @@ class EconomyEngine {
           panelButton("運営パネル", "admin"),
           panelButton("マーケット", "marketplace")
         ]),
+        buttons([
+          customButton("公式商品を追加", "eco:market:official-item-create", "primary"),
+          panelButton("公式対応キュー", "official-fulfillment"),
+          panelButton("公式ショップ確認", "official-shop"),
+          panelButton("取引対応", "market-trades")
+        ]),
+        ...(officialItems.length
+          ? [select("編集する公式商品", officialItems.slice(0, 25).map((item) =>
+              option(`${item.name} [${officialItemStatusLabel(item.status)}]`.slice(0, 90), `run:marketplace official-manage ${item.id}`, `${fmt(item.price)} / ${item.stock === null ? "在庫無制限" : `在庫${item.stock}`}`.slice(0, 100))
+            ))]
+          : []),
         ...(openAuctions.length
           ? [select("強制終了する競売", openAuctions.slice(0, 25).map((auction) =>
               option(`#${auction.id} ${auction.name}`.slice(0, 90), `run:marketplace auction-end ${auction.id}`, `現在 ${fmt(auction.currentBid || auction.startPrice)}`)
@@ -2664,6 +2876,135 @@ class EconomyEngine {
           : [])
       ]
     };
+  }
+
+  officialFulfillmentTasks() {
+    return Array.isArray(this.state.marketplace.officialFulfillment) ? this.state.marketplace.officialFulfillment : [];
+  }
+
+  createOfficialFulfillment(user, item) {
+    const id = this.state.marketplace.nextOfficialFulfillmentId++;
+    const now = this.now().toISOString();
+    const task = {
+      id,
+      itemId: item.id,
+      itemName: item.name,
+      buyerId: user.id,
+      buyerName: user.name,
+      roleId: item.roleId || null,
+      roleDurationDays: Number(item.roleDurationDays) || 0,
+      status: "pending",
+      note: item.roleId ? "ロール付与待ち" : "運営対応待ち",
+      createdAt: now,
+      completedAt: null,
+      completedBy: null,
+      expiresAt: null
+    };
+    this.officialFulfillmentTasks().push(task);
+    return task;
+  }
+
+  officialFulfillmentPanel(adminUser) {
+    const tasks = this.officialFulfillmentTasks().filter((task) => task.status !== "completed").slice(-25).reverse();
+    return {
+      title: "公式商品対応キュー",
+      description: "購入後の運営対応とロール付与の再試行を管理します。ここで完了にしても返金・残高処理は行いません。",
+      color: 0x334155,
+      fields: tasks.length ? tasks.map((task) => ({
+        name: `#${task.id} ${task.itemName}`.slice(0, 256),
+        value: `${task.buyerName} / ${officialFulfillmentStatusLabel(task.status)}\n${task.roleId ? `ロール: <@&${task.roleId}>${task.expiresAt ? ` / 期限 ${shortDate(task.expiresAt)}` : ""}` : "手動対応"}\n${task.note || "対応待ち"}`.slice(0, 1024),
+        inline: false
+      })) : [{ name: "対応待ちなし", value: "現在、運営対応が必要な公式商品の購入はありません。", inline: false }],
+      components: [
+        ...(tasks.length ? [select("対応する購入を選ぶ", tasks.map((task) =>
+          option(`#${task.id} ${task.itemName}`.slice(0, 90), `run:marketplace official-fulfillment ${task.id}`, `${task.buyerName} / ${officialFulfillmentStatusLabel(task.status)}`.slice(0, 100))
+        ))] : []),
+        buttons([
+          panelButton("マーケット管理", "market-admin"),
+          panelButton("公式ショップ確認", "official-shop"),
+          panelButton("マーケット", "marketplace")
+        ])
+      ]
+    };
+  }
+
+  officialFulfillmentTaskPanel(adminUser, id) {
+    const task = this.officialFulfillmentTask(id);
+    if (!task) return this.officialFulfillmentPanel(adminUser);
+    return {
+      title: `公式商品対応 #${task.id}`,
+      description: "ロールが設定されている場合は再試行でBotが付与を試みます。手動対応だけなら完了にしてください。",
+      color: task.status === "completed" ? 0x16a34a : 0xf59e0b,
+      fields: [
+        { name: "購入者", value: task.buyerName, inline: true },
+        { name: "商品", value: task.itemName, inline: true },
+        { name: "状態", value: officialFulfillmentStatusLabel(task.status), inline: true },
+        { name: "ロール", value: task.roleId ? `<@&${task.roleId}>` : "なし", inline: true },
+        { name: "期限", value: task.roleDurationDays > 0 ? `${task.roleDurationDays}日` : "なし / 無期限", inline: true },
+        { name: "メモ", value: task.note || "-", inline: false }
+      ],
+      components: [
+        ...(task.status === "pending" ? [buttons([
+          customButton("対応を完了", `eco:market:official-fulfillment-complete:${task.id}`, "success"),
+          ...(task.roleId ? [customButton("ロールを再試行", `eco:market:official-fulfillment-retry:${task.id}`, "primary")] : []),
+          panelButton("対応キュー", "official-fulfillment")
+        ])] : []),
+        buttons([panelButton("対応キュー", "official-fulfillment"), panelButton("マーケット管理", "market-admin")])
+      ]
+    };
+  }
+
+  officialFulfillmentTask(id) {
+    return this.officialFulfillmentTasks().find((task) => String(task.id) === String(id)) || null;
+  }
+
+  completeOfficialFulfillment(adminUser, id, note = "運営対応を完了しました") {
+    const task = this.officialFulfillmentTask(id);
+    if (!task) return { ok: false, title: "対応キューが見つかりません", lines: ["対象の購入記録はありません。"] };
+    if (task.status === "completed") return { ok: false, title: "すでに完了しています", lines: [`#${task.id} は完了済みです。`] };
+    task.status = "completed";
+    task.note = cleanMarketText(note, 240) || "運営対応を完了しました";
+    task.completedAt = this.now().toISOString();
+    task.completedBy = adminUser.id;
+    this.marketLog(`${adminUser.name} が公式商品対応 #${task.id} を完了しました。`);
+    return { ok: true, title: "公式商品対応を完了しました", lines: [`#${task.id} ${task.itemName}`, task.note], panel: this.officialFulfillmentPanel(adminUser) };
+  }
+
+  recordOfficialRoleGrant(id, data = {}) {
+    const task = this.officialFulfillmentTask(id);
+    if (!task || task.status === "completed") return null;
+    const now = this.now();
+    const expiresAt = task.roleDurationDays > 0
+      ? new Date(now.getTime() + task.roleDurationDays * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+    task.status = "completed";
+    task.note = "ロールを付与しました";
+    task.completedAt = now.toISOString();
+    task.completedBy = data.completedBy || "bot";
+    task.expiresAt = expiresAt;
+    if (task.roleId) {
+      this.state.marketplace.officialRoleGrants.push({
+        fulfillmentId: task.id,
+        guildId: data.guildId || null,
+        userId: task.buyerId,
+        discordUserId: data.discordUserId || null,
+        roleId: task.roleId,
+        expiresAt,
+        status: "active",
+        createdAt: now.toISOString(),
+        revokedAt: null
+      });
+    }
+    this.marketLog(`公式商品対応 #${task.id} のロール付与を記録しました。`);
+    return task;
+  }
+
+  recordOfficialRoleGrantFailure(id, message) {
+    const task = this.officialFulfillmentTask(id);
+    if (!task || task.status === "completed") return null;
+    task.status = "pending";
+    task.note = cleanMarketText(message, 240) || "ロール付与に失敗しました。";
+    return task;
   }
 
   updateMarketSettings(adminUser, patch = {}) {
@@ -3878,7 +4219,7 @@ class EconomyEngine {
   }
 
   officialStockLine(user, id) {
-    const item = SHOP_ITEMS[id];
+    const item = this.officialItemDefinition(id);
     if (!item) return "-";
     return `${user.inventory[id] || 0}/${item.max}`;
   }
@@ -3889,7 +4230,7 @@ class EconomyEngine {
   }
 
   buyItem(user, id) {
-    const item = isOfficialItemOnSale(id) ? SHOP_ITEMS[id] : null;
+    const item = this.officialItem(id);
     if (!item) {
       return { ok: false, title: "棚にない商品", lines: ["この商品は現在販売していません。公式ショップの棚を確認してください。"] };
     }
@@ -3923,7 +4264,10 @@ class EconomyEngine {
     user.wallet -= price;
     user.inventory[id] = owned + 1;
     user.lifetimeLost += price;
+    if (this.officialCustomItems()[id] === item && item.stock !== null) item.stock -= 1;
+    const fulfillment = this.officialCustomItems()[id] === item ? this.createOfficialFulfillment(user, item) : null;
     this.log(user, "buy", -price, item.name);
+    if (fulfillment) this.marketLog(`${user.name} が公式商品 ${item.name} を購入 (#${fulfillment.id})。`);
 
     return {
       ok: true,
@@ -3935,12 +4279,13 @@ class EconomyEngine {
         description: item.description,
         anotherCommand: "marketplace recommended",
         useCommand: item.kind === "consumable" ? `use ${id}` : null
-      })
+      }),
+      officialFulfillment: fulfillment ? { id: fulfillment.id, itemName: item.name, roleId: fulfillment.roleId, dmGuide: item.dmGuide } : null
     };
   }
 
   useItem(user, id) {
-    const item = SHOP_ITEMS[id];
+    const item = this.officialItemDefinition(id);
     if (!item) {
       return { ok: false, title: "未確認アイテム", lines: ["マーケットの持ち物で使えるものを確認してください。"] };
     }
@@ -4366,7 +4711,7 @@ class EconomyEngine {
   inventoryLine(user) {
     const entries = Object.entries(user.inventory);
     if (entries.length === 0) return "なし";
-    return entries.map(([id, count]) => `${SHOP_ITEMS[id]?.name || id} x${count}`).join(", ");
+    return entries.map(([id, count]) => `${this.officialItemDefinition(id)?.name || id} x${count}`).join(", ");
   }
 
   level(user) {
@@ -4905,6 +5250,17 @@ function migrateState(state) {
   next.marketplace.listings = Array.isArray(next.marketplace.listings) ? next.marketplace.listings : [];
   next.marketplace.orders = Array.isArray(next.marketplace.orders) ? next.marketplace.orders : [];
   next.marketplace.auctions = Array.isArray(next.marketplace.auctions) ? next.marketplace.auctions : [];
+  next.marketplace.officialItems = Object.fromEntries(
+    Object.entries(next.marketplace.officialItems || {}).map(([id, item]) => [id, migrateOfficialItem(item, id)])
+  );
+  next.marketplace.officialFulfillment = Array.isArray(next.marketplace.officialFulfillment)
+    ? next.marketplace.officialFulfillment.map(migrateOfficialFulfillment)
+    : [];
+  next.marketplace.officialRoleGrants = Array.isArray(next.marketplace.officialRoleGrants)
+    ? next.marketplace.officialRoleGrants.map(migrateOfficialRoleGrant)
+    : [];
+  next.marketplace.nextOfficialFulfillmentId = Math.max(1, Number(next.marketplace.nextOfficialFulfillmentId) || 1,
+    ...next.marketplace.officialFulfillment.map((task) => Number(task.id) + 1 || 1));
   next.marketplace.logs = Array.isArray(next.marketplace.logs) ? next.marketplace.logs : [];
   next.marketplace.settings = { ...base.marketplace.settings, ...(next.marketplace.settings || {}) };
   next.marketplace.nextListingId = Math.max(1, Number(next.marketplace.nextListingId) || 1);
@@ -5021,6 +5377,64 @@ function migrateCasinoTransaction(tx = {}, id = "") {
   };
 }
 
+function migrateOfficialItem(item = {}, id = "") {
+  const cleanId = cleanToken(item.id || id, 40);
+  return {
+    id: cleanId,
+    name: cleanMarketText(item.name, 48) || cleanId || "公式商品",
+    price: Math.max(1, Math.floor(Number(item.price) || 1)),
+    max: clamp(Math.floor(Number(item.max) || 1), 1, 999),
+    kind: "passive",
+    type: cleanMarketText(item.type, 32) || "アイテム",
+    description: cleanMarketText(item.description, 400) || "運営追加の公式商品です。",
+    effect: cleanMarketText(item.effect, 160) || "説明文として表示される所持型アイテム",
+    usage: cleanMarketText(item.usage, 160) || "購入後は持ち物に残ります。Bot処理が絡む効果はまだ自動発動しません。",
+    status: item.status === "active" ? "active" : "stopped",
+    stock: item.stock === null || item.stock === undefined ? null : clamp(Math.floor(Number(item.stock) || 0), 0, 999999),
+    saleStartsAt: validDateIso(item.saleStartsAt),
+    saleEndsAt: validDateIso(item.saleEndsAt),
+    roleId: isDiscordSnowflake(item.roleId) ? String(item.roleId) : null,
+    roleDurationDays: clamp(Math.floor(Number(item.roleDurationDays) || 0), 0, 3650),
+    dmGuide: cleanMarketText(item.dmGuide, 400) || "購入内容は持ち物と運営対応キューに記録されます。",
+    source: item.source || "admin",
+    createdAt: item.createdAt || null,
+    createdBy: item.createdBy || null,
+    createdByName: item.createdByName || ""
+  };
+}
+
+function migrateOfficialFulfillment(task = {}) {
+  return {
+    id: Math.max(1, Math.floor(Number(task.id) || 1)),
+    itemId: cleanToken(task.itemId, 48),
+    itemName: cleanMarketText(task.itemName, 48) || "公式商品",
+    buyerId: String(task.buyerId || ""),
+    buyerName: cleanMarketText(task.buyerName, 80) || "購入者",
+    roleId: isDiscordSnowflake(task.roleId) ? String(task.roleId) : null,
+    roleDurationDays: clamp(Math.floor(Number(task.roleDurationDays) || 0), 0, 3650),
+    status: task.status === "completed" ? "completed" : "pending",
+    note: cleanMarketText(task.note, 240),
+    createdAt: validDateIso(task.createdAt) || new Date(0).toISOString(),
+    completedAt: validDateIso(task.completedAt),
+    completedBy: task.completedBy || null,
+    expiresAt: validDateIso(task.expiresAt)
+  };
+}
+
+function migrateOfficialRoleGrant(grant = {}) {
+  return {
+    fulfillmentId: Math.max(1, Math.floor(Number(grant.fulfillmentId) || 1)),
+    guildId: isDiscordSnowflake(grant.guildId) ? String(grant.guildId) : null,
+    userId: String(grant.userId || ""),
+    discordUserId: isDiscordSnowflake(grant.discordUserId) ? String(grant.discordUserId) : null,
+    roleId: isDiscordSnowflake(grant.roleId) ? String(grant.roleId) : null,
+    expiresAt: validDateIso(grant.expiresAt),
+    status: grant.status === "revoked" ? "revoked" : "active",
+    createdAt: validDateIso(grant.createdAt) || new Date(0).toISOString(),
+    revokedAt: validDateIso(grant.revokedAt)
+  };
+}
+
 function parseInput(input) {
   const trimmed = String(input || "").trim();
   if (!trimmed) return { command: "help", args: [] };
@@ -5036,6 +5450,31 @@ function parsePositiveInt(value) {
 function parseNonNegativeInt(value) {
   const parsed = Math.floor(Number(String(value || "").replace(/,/g, "")));
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : NaN;
+}
+
+function parseOfficialStock(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (["", "-", "none", "unlimited", "無制限"].includes(text)) return null;
+  return parseNonNegativeInt(text);
+}
+
+function parseOfficialSaleDate(value) {
+  const text = String(value || "").trim();
+  if (!text || ["-", "none", "なし"].includes(text.toLowerCase())) return null;
+  if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}$/.test(text)) return null;
+  const date = new Date(`${text.replace(" ", "T")}:00+09:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function hasOfficialSaleDateInput(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return !["", "-", "none", "なし"].includes(text);
+}
+
+function validDateIso(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function parseIntegerField(value) {
@@ -5186,6 +5625,14 @@ function orderStatusLabel(status) {
   if (status === "refunded") return "返金済み";
   if (status === "expired") return "期限切れ";
   return status || "不明";
+}
+
+function officialItemStatusLabel(status) {
+  return status === "active" ? "販売中" : "停止中";
+}
+
+function officialFulfillmentStatusLabel(status) {
+  return status === "completed" ? "完了" : "対応待ち";
 }
 
 function marketItemTypeLabel(id) {

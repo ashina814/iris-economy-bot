@@ -134,6 +134,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   await ensureRankPanel();
   startVoiceRewardSweeper();
   startMarketSweeper();
+  startOfficialRoleExpirySweeper();
   startYadoSweeper();
   startYadoControlRefreshSweeper();
 });
@@ -173,6 +174,14 @@ async function handleInteraction(interaction) {
     }
     if (interaction.customId === "eco:modal:market-auction-create") {
       await createMarketAuctionFromModal(interaction);
+      return;
+    }
+    if (interaction.customId === "eco:modal:market-official-item-create") {
+      await createOfficialItemFromModal(interaction);
+      return;
+    }
+    if (interaction.customId.startsWith("eco:modal:market-official-item-edit:")) {
+      await updateOfficialItemFromModal(interaction);
       return;
     }
     if (interaction.customId.startsWith("eco:modal:market-auction-bid:")) {
@@ -238,6 +247,10 @@ async function handleInteraction(interaction) {
       await handleBalanceRoleSelect(interaction);
       return;
     }
+    if (interaction.customId.startsWith("eco:role:official-item:")) {
+      await handleOfficialItemRoleSelect(interaction);
+      return;
+    }
     return;
   }
 
@@ -264,6 +277,10 @@ async function handleInteraction(interaction) {
     }
     if (interaction.isButton() && interaction.customId.startsWith("eco:order:")) {
       await handleOrderAdminButton(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:official-")) {
+      await handleOfficialMarketControl(interaction);
       return;
     }
     if (interaction.isButton() && interaction.customId === "eco:user:notify-toggle") {
@@ -294,6 +311,10 @@ async function handleInteraction(interaction) {
     }
     if (command === "market-auction-create") {
       await showMarketAuctionCreateModal(interaction);
+      return;
+    }
+    if (command === "market-official-item-create") {
+      await showOfficialItemCreateModal(interaction);
       return;
     }
     if (command.startsWith("market-auction-bid ")) {
@@ -382,6 +403,7 @@ async function handleInteraction(interaction) {
     decorateResultForDiscord(result, interaction);
     store.save(engine.state);
     await updateDiscord(interaction, result);
+    void processOfficialPurchaseEffects(interaction, result);
     return;
   }
 
@@ -408,6 +430,7 @@ async function handleInteraction(interaction) {
   store.save(engine.state);
 
   await replyDiscord(interaction, result, { ephemeral: slash.ephemeral });
+  void processOfficialPurchaseEffects(interaction, result);
 }
 
 async function replyInteractionError(interaction) {
@@ -662,10 +685,13 @@ function canRunCommand(context, command) {
     normalized.startsWith("marketplace auction-end") ||
     normalized.startsWith("marketplace review") ||
     normalized.startsWith("marketplace order") ||
+    normalized.startsWith("marketplace official-manage") ||
+    normalized.startsWith("marketplace official-fulfillment") ||
     normalized === "panel market-admin" ||
     normalized === "panel market-review" ||
     normalized === "panel market-trades" ||
     normalized === "panel market-logs" ||
+    normalized === "panel official-fulfillment" ||
     normalized === "panel inn" ||
     normalized === "panel yado" ||
     normalized === "panel 宿" ||
@@ -1263,6 +1289,255 @@ async function createMarketAuctionFromModal(interaction) {
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
   await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function showOfficialItemCreateModal(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const modal = new ModalBuilder()
+    .setCustomId("eco:modal:market-official-item-create")
+    .setTitle("公式商品を追加");
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("id")
+        .setLabel("商品ID（英数字。例: vip-pass）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(40)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("name")
+        .setLabel("商品名")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(48)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("priceMaxType")
+        .setLabel("価格 / 所持上限 / 種別")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(80)
+        .setPlaceholder("例: 10000 / 1 / ロール30日")
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("effect")
+        .setLabel("効果テキスト")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(160)
+        .setPlaceholder("例: VIPロール30日分（手動付与）")
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("description")
+        .setLabel("説明")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setMaxLength(400)
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function createOfficialItemFromModal(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const actor = actorFromInteraction(interaction);
+  const admin = engine.getUser(actor.id, actor.name);
+  const { price, max, type } = parseOfficialItemPriceMaxType(interaction.fields.getTextInputValue("priceMaxType"));
+  const result = engine.adminCreateOfficialItem(admin, {
+    id: interaction.fields.getTextInputValue("id"),
+    name: interaction.fields.getTextInputValue("name"),
+    price,
+    max,
+    type,
+    effect: interaction.fields.getTextInputValue("effect"),
+    description: interaction.fields.getTextInputValue("description")
+  });
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleOfficialMarketControl(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (interaction.customId.startsWith("eco:market:official-fulfillment-")) {
+    await handleOfficialFulfillmentControl(interaction);
+    return;
+  }
+  const parts = interaction.customId.split(":");
+  const action = parts[2].replace("official-item-", "");
+  const id = parts.slice(3).join(":");
+  const actor = actorFromInteraction(interaction);
+  const admin = engine.getUser(actor.id, actor.name);
+  if (action === "edit") {
+    await showOfficialItemEditModal(interaction, id);
+    return;
+  }
+  if (action === "toggle") {
+    const result = engine.adminToggleOfficialItem(admin, id);
+    decorateResultForDiscord(result, interaction);
+    store.save(engine.state);
+    await updateDiscord(interaction, result);
+    return;
+  }
+  if (action === "role") {
+    if (!interaction.guild) {
+      await interaction.reply({ content: "サーバー内で操作してください。", ephemeral: true });
+      return;
+    }
+    const menu = new RoleSelectMenuBuilder()
+      .setCustomId(`eco:role:official-item:${id}`)
+      .setPlaceholder("購入時に付与するロールを選ぶ")
+      .setMinValues(1)
+      .setMaxValues(1);
+    await interaction.reply({ content: "ロールを選ぶと、この商品の購入時にBotが付与を試みます。期限は商品編集の「ロール期限日数」で設定します。", components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
+  }
+}
+
+async function handleOfficialFulfillmentControl(interaction) {
+  const parts = interaction.customId.split(":");
+  const action = parts[3];
+  const taskId = parts[4];
+  const actor = actorFromInteraction(interaction);
+  const admin = engine.getUser(actor.id, actor.name);
+  if (action === "complete") {
+    const result = engine.completeOfficialFulfillment(admin, taskId);
+    decorateResultForDiscord(result, interaction);
+    store.save(engine.state);
+    await updateDiscord(interaction, result);
+    return;
+  }
+  if (action === "retry") {
+    const task = engine.officialFulfillmentTask(taskId);
+    if (!task?.roleId) {
+      await interaction.reply({ content: "この購入には再試行するロールがありません。", ephemeral: true });
+      return;
+    }
+    const result = await grantOfficialRoleForTask(interaction.guild, task, interaction.user.id);
+    decorateResultForDiscord(result, interaction);
+    await updateDiscord(interaction, result);
+  }
+}
+
+async function showOfficialItemEditModal(interaction, id) {
+  const item = engine.officialCustomItems()[id];
+  if (!item) {
+    await interaction.reply({ content: "公式商品が見つかりません。", ephemeral: true });
+    return;
+  }
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:market-official-item-edit:${id}`)
+    .setTitle("公式商品を編集");
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId("name").setLabel("商品名").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(48).setValue(item.name)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId("priceMaxStockType").setLabel("価格 / 所持上限 / 在庫 / 種別").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100).setValue(`${item.price} / ${item.max} / ${item.stock === null ? "無制限" : item.stock} / ${item.type}`)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId("saleRoleDays").setLabel("販売開始 / 販売終了 / ロール期限日数").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100).setValue(`${formatOfficialSaleDate(item.saleStartsAt)} / ${formatOfficialSaleDate(item.saleEndsAt)} / ${item.roleDurationDays || 0}`).setPlaceholder("例: - / 2026-08-01 00:00 / 30")
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId("effect").setLabel("効果テキスト").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(160).setValue(item.effect)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder().setCustomId("descriptionGuide").setLabel("説明 / DM案内").setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(400).setValue(`${item.description}\n---\n${item.dmGuide || ""}`)
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function updateOfficialItemFromModal(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const id = interaction.customId.split(":").slice(3).join(":");
+  const { price, max, stock, type } = parseOfficialItemEditNumbers(interaction.fields.getTextInputValue("priceMaxStockType"));
+  const { saleStartsAt, saleEndsAt, roleDurationDays } = parseOfficialItemSaleRoleDays(interaction.fields.getTextInputValue("saleRoleDays"));
+  const { description, dmGuide } = parseOfficialItemDescriptionGuide(interaction.fields.getTextInputValue("descriptionGuide"));
+  const actor = actorFromInteraction(interaction);
+  const result = engine.adminUpdateOfficialItem(engine.getUser(actor.id, actor.name), id, {
+    name: interaction.fields.getTextInputValue("name"), price, max, stock, type, saleStartsAt, saleEndsAt, roleDurationDays,
+    effect: interaction.fields.getTextInputValue("effect"), description, dmGuide
+  });
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleOfficialItemRoleSelect(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const id = interaction.customId.split(":").slice(3).join(":");
+  const roleId = interaction.values?.[0];
+  const role = roleId && interaction.guild ? await interaction.guild.roles.fetch(roleId).catch(() => null) : null;
+  if (!role || role.managed || role.id === interaction.guild.roles.everyone.id) {
+    await interaction.reply({ content: "付与できる通常ロールを選択してください。", ephemeral: true });
+    return;
+  }
+  const botMember = interaction.guild.members.me;
+  if (!botMember?.permissions.has(PermissionFlagsBits.ManageRoles) || role.position >= botMember.roles.highest.position) {
+    await interaction.reply({ content: "Botにロール管理権限がないか、対象ロールがBotの最高ロール以上です。", ephemeral: true });
+    return;
+  }
+  const actor = actorFromInteraction(interaction);
+  const result = engine.adminSetOfficialItemRole(engine.getUser(actor.id, actor.name), id, role.id);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await updateDiscord(interaction, result);
+}
+
+function parseOfficialItemEditNumbers(raw) {
+  const parts = String(raw || "").split(/[\/／,，]/).map((part) => part.trim());
+  return { price: parts[0] || "", max: parts[1] || "", stock: parts[2] || "", type: parts.slice(3).join(" / ") || "アイテム" };
+}
+
+function parseOfficialItemSaleRoleDays(raw) {
+  const parts = String(raw || "").split(/[\/／,，]/).map((part) => part.trim());
+  return { saleStartsAt: parts[0] || "", saleEndsAt: parts[1] || "", roleDurationDays: parts[2] || "0" };
+}
+
+function parseOfficialItemDescriptionGuide(raw) {
+  const [description, ...guide] = String(raw || "").split(/\n---\n/);
+  return { description: description.trim(), dmGuide: guide.join("\n---\n").trim() };
+}
+
+function formatOfficialSaleDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const parts = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
+  const piece = (type) => parts.find((part) => part.type === type)?.value || "00";
+  return `${piece("year")}-${piece("month")}-${piece("day")} ${piece("hour")}:${piece("minute")}`;
+}
+
+function parseOfficialItemPriceMaxType(raw) {
+  const parts = String(raw || "")
+    .split(/[\/／,，]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return {
+    price: parts[0] || "",
+    max: parts[1] || "1",
+    type: parts[2] || "アイテム"
+  };
 }
 
 function parseAuctionPrices(raw) {
@@ -3605,6 +3880,65 @@ function startMarketSweeper() {
   }, intervalMs).unref?.();
 }
 
+async function processOfficialPurchaseEffects(interaction, result) {
+  const fulfillment = result?.officialFulfillment;
+  if (!fulfillment || !interaction?.guild) return;
+  const task = engine.officialFulfillmentTask(fulfillment.id);
+  if (!task) return;
+  if (task.roleId) await grantOfficialRoleForTask(interaction.guild, task, "bot");
+  const guide = String(fulfillment.dmGuide || "").trim();
+  if (guide) {
+    await interaction.user.send({
+      embeds: [new EmbedBuilder().setTitle(`購入ありがとうございます: ${fulfillment.itemName}`).setDescription(guide.slice(0, 4000)).setColor(0x8b5cf6)]
+    }).catch(() => null);
+  }
+}
+
+async function grantOfficialRoleForTask(guild, task, completedBy) {
+  if (!guild || !task?.roleId) return { ok: false, title: "ロール付与に失敗しました", lines: ["サーバーまたはロール設定を確認してください。"] };
+  const discordUserId = extractDiscordUserId(task.buyerId);
+  const role = await guild.roles.fetch(task.roleId).catch(() => null);
+  const member = discordUserId ? await guild.members.fetch(discordUserId).catch(() => null) : null;
+  const botMember = guild.members.me;
+  if (!role || !member || role.managed || !botMember?.permissions.has(PermissionFlagsBits.ManageRoles) || role.position >= botMember.roles.highest.position) {
+    engine.recordOfficialRoleGrantFailure(task.id, "ロールが見つからない、またはBotに付与権限がありません。");
+    store.save(engine.state);
+    return { ok: false, title: "ロール付与に失敗しました", lines: ["対応キューに残しました。ロールの位置とBot権限を確認して再試行してください。"], panel: engine.officialFulfillmentTaskPanel(engine.getUser(task.buyerId, task.buyerName), task.id) };
+  }
+  try {
+    await member.roles.add(role, `公式商品 #${task.id}`);
+    engine.recordOfficialRoleGrant(task.id, { completedBy, guildId: guild.id, discordUserId });
+    store.save(engine.state);
+    return { ok: true, title: "ロールを付与しました", lines: [`${task.itemName} を ${member.displayName} に付与しました。`, task.roleDurationDays > 0 ? `${task.roleDurationDays}日後に自動回収します。` : "期限なしで付与しました。"], panel: engine.officialFulfillmentTaskPanel(engine.getUser(task.buyerId, task.buyerName), task.id) };
+  } catch (error) {
+    engine.recordOfficialRoleGrantFailure(task.id, `ロール付与失敗: ${String(error.message || error).slice(0, 160)}`);
+    store.save(engine.state);
+    return { ok: false, title: "ロール付与に失敗しました", lines: ["対応キューに残しました。権限と対象メンバーを確認して再試行してください。"], panel: engine.officialFulfillmentTaskPanel(engine.getUser(task.buyerId, task.buyerName), task.id) };
+  }
+}
+
+function startOfficialRoleExpirySweeper() {
+  setInterval(async () => {
+    let changed = false;
+    for (const grant of engine.state.marketplace?.officialRoleGrants || []) {
+      if (grant.status !== "active" || !grant.expiresAt || Date.now() < new Date(grant.expiresAt).getTime()) continue;
+      const guild = grant.guildId ? client.guilds.cache.get(grant.guildId) || await client.guilds.fetch(grant.guildId).catch(() => null) : null;
+      const member = guild && grant.discordUserId ? await guild.members.fetch(grant.discordUserId).catch(() => null) : null;
+      const role = guild && grant.roleId ? await guild.roles.fetch(grant.roleId).catch(() => null) : null;
+      if (!guild || !member || !role) continue;
+      try {
+        await member.roles.remove(role, `公式商品ロール期限 #${grant.fulfillmentId}`);
+        grant.status = "revoked";
+        grant.revokedAt = new Date().toISOString();
+        changed = true;
+      } catch (error) {
+        console.warn(`公式商品ロール期限回収に失敗しました: ${error.message}`);
+      }
+    }
+    if (changed) store.save(engine.state);
+  }, 60_000).unref?.();
+}
+
 function formatDiscord(result) {
   return formatResult(result).replace(/^◆ /, "**◆ ").replace(/^◇ /, "**◇ ").replace(/\n/, "**\n");
 }
@@ -3757,6 +4091,7 @@ function commandFromComponent(interaction) {
     if (parts[1] === "market" && parts[2] === "listing-create") return "market-listing-create";
     if (parts[1] === "market" && parts[2] === "post-panel") return "post-market-panel";
     if (parts[1] === "market" && parts[2] === "auction-create") return "market-auction-create";
+    if (parts[1] === "market" && parts[2] === "official-item-create") return "market-official-item-create";
     if (parts[1] === "market" && parts[2] === "auction-bid") return `market-auction-bid ${parts[3]}`;
     if (parts[1] === "admin" && parts[2] === "salary-start") return "salary-start";
     if (parts[1] === "admin" && parts[2] === "salary-execute") return `salary-execute ${parts[3]}`;
