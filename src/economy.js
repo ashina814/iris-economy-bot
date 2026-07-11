@@ -364,6 +364,7 @@ class EconomyEngine {
         break;
       case "shop":
       case "店":
+      case "ショップ":
       case "マーケット":
         result = this.marketplace(user);
         break;
@@ -447,6 +448,7 @@ class EconomyEngine {
       "自分の店": "my-shop",
       "出品": "my-listings",
       "売上": "my-sales",
+      "ショップ管理": "market-admin",
       "マーケット管理": "market-admin",
       "招待": "invite",
       "貢献": "invite",
@@ -463,7 +465,7 @@ class EconomyEngine {
     const panels = {
       home: () => ({
         title: "アイリス",
-        description: "財布、ランク、マーケット、通話。よく使うものだけ置いています。",
+        description: "財布、ランク、ショップ、通話。よく使うものだけ置いています。",
         color: 0x0f766e,
         fields: [
           { name: "今日の回し方", value: this.loopSuggestion(user), inline: false },
@@ -475,7 +477,7 @@ class EconomyEngine {
             runButton("参加", "join", "success"),
             runButton("カード", "card", "primary"),
             runButton("ログボ", "daily", "success"),
-            panelButton("マーケット", "marketplace", "primary"),
+            panelButton("ショップ", "marketplace", "primary"),
             panelButton("通話", "lounge")
           ]),
           buttons([
@@ -485,7 +487,7 @@ class EconomyEngine {
           ]),
           select("行き先を選ぶ", [
             option("通話ラウンジ", "panel:lounge", "発言と通話ランク"),
-            option("マーケット", "panel:marketplace", "買う、見る、入札する"),
+            option("ショップ", "panel:marketplace", "買う、見る、入札する"),
             option("自分の店", "panel:my-shop", "出品、売上、取引管理"),
             option("貢献", "panel:invite", "招待とBumpの階級・報酬・ランキング"),
             option("通知設定", "panel:notify", "DM通知のON/OFF")
@@ -504,6 +506,7 @@ class EconomyEngine {
       "my-sales": () => this.mySalesPanel(user),
       "market-admin": () => this.marketAdminPanel(user),
       "official-product-admin": () => this.officialProductAdminPanel(user),
+      "official-auction-admin": () => this.officialAuctionAdminPanel(user),
       "official-fulfillment": () => this.officialFulfillmentPanel(user),
       "market-review": () => this.marketReviewPanel(),
       "market-trades": () => this.marketTradesPanel(),
@@ -564,7 +567,7 @@ class EconomyEngine {
         description: "運営機能を目的別のサブパネルに分けています。",
         color: 0x334155,
         fields: [
-          { name: "マーケット管理", value: "公式商品、審査、取引対応、公式オークション", inline: true },
+          { name: "ショップ管理", value: "公式商品、審査、取引対応、公式オークション", inline: true },
           { name: "残高操作", value: "個人セット/加算/減算、ロール一括セット、給与配布（一括加算）", inline: true },
           { name: "ランク設定", value: "昇格通知先の指定、ランク確認パネルの設置", inline: true },
           { name: "Invite Campaign", value: "定期開催型の招待キャンペーン管理", inline: true },
@@ -572,18 +575,18 @@ class EconomyEngine {
         ],
         components: [
           buttons([
-            panelButton("マーケット管理", "market-admin", "primary"),
+            panelButton("ショップ管理", "market-admin", "primary"),
             panelButton("残高操作", "admin-balance", "success"),
             panelButton("ランク設定", "admin-rank"),
             panelButton("Campaign管理", "admin-campaign"),
-            customButton("常設マーケット送信", "eco:market:post-panel"),
+            customButton("常設ショップ送信", "eco:market:post-panel"),
             panelButton("ホーム", "home")
           ]),
           select("公開したいパネル", [
             option("ホーム", "panel:home", "入口"),
-            option("マーケット", "panel:marketplace", "買う側の入口"),
+            option("ショップ", "panel:marketplace", "買う側の入口"),
             option("自分の店", "panel:my-shop", "売る側の入口"),
-            option("マーケット管理", "panel:market-admin", "公式商品、審査、取引対応"),
+            option("ショップ管理", "panel:market-admin", "公式商品、審査、取引対応"),
             option("Campaign管理", "panel:admin-campaign", "IRIS Invite Campaign"),
             option("二人宿", "panel:inn", "2人用VC作成パネル"),
             option("招待", "panel:invite", "招待台帳")
@@ -615,11 +618,11 @@ class EconomyEngine {
       ok: true,
       title: `${CURRENCY.name} 経済圏ヘルプ`,
       lines: [
-        "Discordでは `/マーケット`, `/自分の店`, `/管理` からマーケットを操作します。",
+        "Discordでは `/ショップ`, `/自分の店`, `/管理` からショップを操作します。",
         "`panel` - ホームパネル",
         "`panel lounge` - 発言/通話パネル",
         "`panel inn` - 二人宿パネル（運営用）",
-        "`panel marketplace` - マーケット",
+        "`panel marketplace` - ショップ",
         "`panel my-shop` - 自分の店",
         "`panel invite` - 招待台帳",
         "`daily` / `work` / `subsidy` - 収入コマンド",
@@ -1144,7 +1147,7 @@ class EconomyEngine {
         { name: "開催状況", value: campaign.active ? `${campaign.name} 開催中` : "現在は停止中", inline: false }
       ],
       components: [buttons([
-        panelButton("マーケット", "marketplace", "primary"),
+        panelButton("ショップ", "marketplace", "primary"),
         panelButton("貢献台帳", "invite", "success"),
         runButton("Campaign状況", "campaign status"),
         panelButton("持ち物", "market-inventory")
@@ -1719,7 +1722,7 @@ class EconomyEngine {
         buttons([
           panelButton("対応キュー", "official-fulfillment"),
           panelButton("公式ショップ確認", "official-shop"),
-          panelButton("マーケット管理", "market-admin")
+          panelButton("ショップ管理", "market-admin")
         ])
       ]
     };
@@ -1793,7 +1796,7 @@ class EconomyEngine {
     const suggestions = [];
     if (!user.joined) suggestions.push("まず `参加` で初期資本を受け取る");
     if (!user.lastDaily || cooldownRemaining(user.lastDaily, this.now(), 20 * 60 * 60 * 1000) === 0) suggestions.push("ログボを取る");
-    if (suggestions.length === 0) suggestions.push("カードを見る、VCに入る、マーケットを眺める");
+    if (suggestions.length === 0) suggestions.push("カードを見る、VCに入る、ショップを眺める");
     return suggestions.slice(0, 3).join("\n");
   }
 
@@ -1994,7 +1997,7 @@ class EconomyEngine {
         runButton("VC精算", "vc", "success"),
         runButton("招待・Bump確認", "invite"),
         runButton("今買えるもの", "marketplace affordable", "primary"),
-        panelButton("マーケットへ戻る", "marketplace")
+        panelButton("ショップへ戻る", "marketplace")
       ])
     ];
   }
@@ -2024,7 +2027,7 @@ class EconomyEngine {
     if (useCommand) actionButtons.push(runButton("使う", useCommand, "success"));
     actionButtons.push(
       runButton("もう一つ見る", anotherCommand),
-      panelButton("マーケットへ戻る", "marketplace")
+      panelButton("ショップへ戻る", "marketplace")
     );
     return {
       title,
@@ -2099,7 +2102,7 @@ class EconomyEngine {
         components: [
           buttons([
             panelButton("民営ショップ", "user-shops", "primary"),
-            panelButton("マーケットへ戻る", "marketplace")
+            panelButton("ショップへ戻る", "marketplace")
           ])
         ]
       };
@@ -2119,7 +2122,7 @@ class EconomyEngine {
         )),
         buttons([
           panelButton("公式ショップへ", "official-shop"),
-          panelButton("マーケットへ戻る", "marketplace")
+          panelButton("ショップへ戻る", "marketplace")
         ])
       ]
     };
@@ -2175,7 +2178,7 @@ class EconomyEngine {
         )),
         buttons([
           panelButton("持ち物を見る", "market-inventory"),
-          panelButton("マーケットへ戻る", "marketplace")
+          panelButton("ショップへ戻る", "marketplace")
         ])
       ]
     };
@@ -2193,7 +2196,7 @@ class EconomyEngine {
         ],
         components: [
           buttons([
-            panelButton("マーケット", "marketplace"),
+            panelButton("ショップ", "marketplace"),
             panelButton("持ち物", "market-inventory", "primary"),
             panelButton("自分の店", "my-shop", "success")
           ])
@@ -2215,7 +2218,7 @@ class EconomyEngine {
           option(item.name, `run:marketplace product ${id}`, `${fmt(this.itemPrice(id))} / ${item.type} / ${item.effect}`.slice(0, 100))
         )),
         buttons([
-          panelButton("マーケット", "marketplace"),
+          panelButton("ショップ", "marketplace"),
           panelButton("持ち物", "market-inventory"),
           panelButton("自分の店", "my-shop", "success")
         ])
@@ -2246,7 +2249,7 @@ class EconomyEngine {
         buttons([
           runButton("購入確認", `marketplace confirm ${id}`, "primary", soldOut),
           panelButton("公式ショップ", "official-shop"),
-          panelButton("マーケット", "marketplace")
+          panelButton("ショップ", "marketplace")
         ])
       ]
     };
@@ -2261,7 +2264,7 @@ class EconomyEngine {
       buttons([
         runButton("購入する", `marketplace buy ${id}`, "success", shortage > 0),
         panelButton("やめる", "official-shop"),
-        panelButton("マーケット", "marketplace")
+        panelButton("ショップ", "marketplace")
       ])
     ];
     if (shortage > 0) components.push(...this.insufficientBalanceComponents());
@@ -2300,7 +2303,7 @@ class EconomyEngine {
       ]),
       buttons([
         customButton("絞り込みで探す", "eco:shop:search-open", "primary"),
-        panelButton("マーケット", "marketplace"),
+        panelButton("ショップ", "marketplace"),
         panelButton("自分の店", "my-shop", "success"),
         panelButton("持ち物", "market-inventory")
       ])
@@ -2367,7 +2370,7 @@ class EconomyEngine {
     components.push(buttons([
       panelButton("民営ショップ", "user-shops", "primary"),
       customButton("絞り込みで探す", "eco:shop:search-open"),
-      panelButton("マーケット", "marketplace")
+      panelButton("ショップ", "marketplace")
     ]));
     return {
       title,
@@ -2391,7 +2394,7 @@ class EconomyEngine {
         description: "指定された店は存在しないか、まだ開店していません。",
         color: 0x64748b,
         fields: [],
-        components: [buttons([panelButton("民営ショップ", "user-shops"), panelButton("マーケット", "marketplace")])]
+        components: [buttons([panelButton("民営ショップ", "user-shops"), panelButton("ショップ", "marketplace")])]
       };
     }
     const shop = owner.marketplace;
@@ -2419,7 +2422,7 @@ class EconomyEngine {
           : buttons([panelButton("民営ショップ", "user-shops")]),
         buttons([
           panelButton("民営ショップ", "user-shops"),
-          panelButton("マーケット", "marketplace"),
+          panelButton("ショップ", "marketplace"),
           panelButton("持ち物", "market-inventory")
         ])
       ]
@@ -2446,7 +2449,7 @@ class EconomyEngine {
     components.push(buttons([
       customButton("再検索", "eco:shop:search-open", "primary"),
       panelButton("民営ショップ", "user-shops"),
-      panelButton("マーケット", "marketplace")
+      panelButton("ショップ", "marketplace")
     ]));
     return {
       title: `絞り込み結果（${results.length}件）`,
@@ -2481,7 +2484,7 @@ class EconomyEngine {
           runButton("購入確認", `marketplace listing-confirm ${listing.id}`, "primary", listing.sellerId === user.id),
           runButton("この店の他の商品を見る", `marketplace shop-view ${listing.sellerId}`),
           panelButton("民営ショップ", "user-shops"),
-          panelButton("マーケット", "marketplace")
+          panelButton("ショップ", "marketplace")
         ])
       ]
     };
@@ -2495,7 +2498,7 @@ class EconomyEngine {
       buttons([
         runButton("購入する", `marketplace listing-buy ${listing.id}`, "success", shortage > 0 || listing.sellerId === user.id),
         panelButton("やめる", "user-shops"),
-        panelButton("マーケット", "marketplace")
+        panelButton("ショップ", "marketplace")
       ])
     ];
     if (shortage > 0) components.push(...this.insufficientBalanceComponents());
@@ -2547,7 +2550,7 @@ class EconomyEngine {
         option(`#${order.id} ${order.itemName}`.slice(0, 90), `run:marketplace report-order ${order.id}`, "対応がない場合は運営に残す"))));
     }
     components.push(buttons([
-      panelButton("マーケット", "marketplace"),
+      panelButton("ショップ", "marketplace"),
       panelButton("公式ショップ", "official-shop", "primary"),
       panelButton("民営ショップ", "user-shops", "primary")
     ]));
@@ -2596,7 +2599,7 @@ class EconomyEngine {
         buttons([
           panelButton("売上を見る", "my-sales"),
           panelButton("民営ショップ", "user-shops"),
-          panelButton("マーケット", "marketplace")
+          panelButton("ショップ", "marketplace")
         ])
       ]
     };
@@ -2624,7 +2627,7 @@ class EconomyEngine {
         buttons([
           customButton("内容入力", "eco:market:listing-create", "primary", !shop.shopOpened),
           panelButton("自分の店", "my-shop"),
-          panelButton("マーケット", "marketplace")
+          panelButton("ショップ", "marketplace")
         ])
       ]
     };
@@ -2724,7 +2727,7 @@ class EconomyEngine {
     components.push(buttons([
       panelButton("自分の店", "my-shop"),
       panelButton("商品管理", "my-listings"),
-      panelButton("マーケット", "marketplace")
+      panelButton("ショップ", "marketplace")
     ]));
     return {
       title: "売上・取引",
@@ -2747,7 +2750,7 @@ class EconomyEngine {
         option(`#${auction.id} ${auction.name}`.slice(0, 90), `run:marketplace auction ${auction.id}`, `${fmt(auction.currentBid || auction.startPrice)} / 最低 ${fmt(this.minimumAuctionBid(auction))}`))));
     }
     components.push(buttons([
-      panelButton("マーケット", "marketplace"),
+      panelButton("ショップ", "marketplace"),
       panelButton("公式ショップ", "official-shop", "primary"),
       panelButton("民営ショップ", "user-shops")
     ]));
@@ -2791,7 +2794,7 @@ class EconomyEngine {
           customButton("入札する", `eco:market:auction-bid:${auction.id}`, "primary", !isOpen),
           runButton("入札履歴", `marketplace auction-history ${auction.id}`),
           panelButton("公式オークション", "official-auctions"),
-          panelButton("マーケット", "marketplace")
+          panelButton("ショップ", "marketplace")
         ])
       ]
     };
@@ -2818,7 +2821,7 @@ class EconomyEngine {
         buttons([
           runButton("詳細へ戻る", `marketplace auction ${auction.id}`, "primary"),
           panelButton("公式オークション", "official-auctions"),
-          panelButton("マーケット", "marketplace")
+          panelButton("ショップ", "marketplace")
         ])
       ]
     };
@@ -2852,7 +2855,7 @@ class EconomyEngine {
         ]),
         buttons([
           panelButton("出品審査", "market-review"),
-          panelButton("公式オークション", "official-auctions"),
+          panelButton("公式オークション管理", "official-auction-admin"),
           customButton("ショップ設定", "eco:market:settings-edit", "secondary")
         ]),
         buttons([
@@ -2887,6 +2890,34 @@ class EconomyEngine {
         ...(items.length
           ? [select("編集する公式商品", items.slice(0, 25).map((item) =>
               option(`${item.name} [${officialItemStatusLabel(item.status)}]`.slice(0, 90), `run:marketplace official-manage ${item.id}`, `${fmt(item.price)} / ${item.stock === null ? "在庫無制限" : `在庫${item.stock}`}`.slice(0, 100))
+            ))]
+          : [])
+      ]
+    };
+  }
+
+  officialAuctionAdminPanel(user) {
+    this.closeEndedAuctions();
+    const openAuctions = this.state.marketplace.auctions.filter((auction) => auction.status === "open");
+    const scheduledAuctions = this.state.marketplace.auctions.filter((auction) => auction.status === "scheduled");
+    return {
+      title: "公式オークション管理",
+      description: "公式オークションの作成、開催状況の確認、緊急終了を行います。",
+      color: 0x334155,
+      fields: [
+        { name: "開催中", value: `${openAuctions.length}件`, inline: true },
+        { name: "開始待ち", value: `${scheduledAuctions.length}件`, inline: true },
+        { name: "作成", value: "商品名、開始価格、即決価格、入札単位、開催時間を指定できます。", inline: false }
+      ],
+      components: [
+        buttons([
+          customButton("オークションを作成", "eco:market:auction-create", "success"),
+          panelButton("開催中を確認", "official-auctions", "primary"),
+          panelButton("戻る", "market-admin")
+        ]),
+        ...(openAuctions.length
+          ? [select("緊急終了するオークション", openAuctions.slice(0, 25).map((auction) =>
+              option(`#${auction.id} ${auction.name}`.slice(0, 90), `run:marketplace auction-end ${auction.id}`, `現在 ${fmt(auction.currentBid || auction.startPrice)}`)
             ))]
           : [])
       ]
@@ -2935,9 +2966,9 @@ class EconomyEngine {
           option(`#${task.id} ${task.itemName}`.slice(0, 90), `run:marketplace official-fulfillment ${task.id}`, `${task.buyerName} / ${officialFulfillmentStatusLabel(task.status)}`.slice(0, 100))
         ))] : []),
         buttons([
-          panelButton("マーケット管理", "market-admin"),
+          panelButton("ショップ管理", "market-admin"),
           panelButton("公式ショップ確認", "official-shop"),
-          panelButton("マーケット", "marketplace")
+          panelButton("ショップ", "marketplace")
         ])
       ]
     };
@@ -2964,7 +2995,7 @@ class EconomyEngine {
           ...(task.roleId ? [customButton("ロールを再試行", `eco:market:official-fulfillment-retry:${task.id}`, "primary")] : []),
           panelButton("対応キュー", "official-fulfillment")
         ])] : []),
-        buttons([panelButton("対応キュー", "official-fulfillment"), panelButton("マーケット管理", "market-admin")])
+        buttons([panelButton("対応キュー", "official-fulfillment"), panelButton("ショップ管理", "market-admin")])
       ]
     };
   }
@@ -3049,8 +3080,8 @@ class EconomyEngine {
       if (value !== settings.auctionExtendMinutes) { changes.push(`オークション延長: ${settings.auctionExtendMinutes}分 → ${value}分`); settings.auctionExtendMinutes = value; }
     }
     if (changes.length === 0) return { ok: false, title: "変更なし", lines: ["少なくとも1つの値を変更してください。"] };
-    this.marketLog(`${adminUser.name} がマーケット設定を更新: ${changes.slice(0, 3).join(" / ")}`);
-    return { ok: true, title: "マーケット設定を更新しました", lines: changes, panel: this.marketAdminPanel(adminUser) };
+    this.marketLog(`${adminUser.name} がショップ設定を更新: ${changes.slice(0, 3).join(" / ")}`);
+    return { ok: true, title: "ショップ設定を更新しました", lines: changes, panel: this.marketAdminPanel(adminUser) };
   }
 
   resubmitListing(user, id, patch = {}) {
@@ -3108,7 +3139,7 @@ class EconomyEngine {
       components.push(select("審査する商品を選ぶ", pending.map((listing) =>
         option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace review ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`))));
     }
-    components.push(buttons([panelButton("マーケット管理", "market-admin"), panelButton("運営パネル", "admin")]));
+    components.push(buttons([panelButton("ショップ管理", "market-admin"), panelButton("運営パネル", "admin")]));
     return {
       title: "出品審査",
       description: pending.length ? "審査待ちの商品です。1件を選んで承認/却下してください。" : "審査待ちの商品はありません。",
@@ -3152,7 +3183,7 @@ class EconomyEngine {
           customButton("承認する", `eco:review:approve:${listing.id}`, "success"),
           customButton("却下する（理由入力）", `eco:review:reject:${listing.id}`, "danger"),
           panelButton("審査一覧に戻る", "market-review"),
-          panelButton("マーケット管理", "market-admin")
+          panelButton("ショップ管理", "market-admin")
         ])
       ]
     };
@@ -3167,7 +3198,7 @@ class EconomyEngine {
       components.push(select("この取引を管理", openOrders.map((order) =>
         option(`#${order.id} ${order.itemName}`.slice(0, 90), `run:marketplace order ${order.id}`, `${order.buyerName} <- ${order.sellerName}`))));
     }
-    components.push(buttons([panelButton("マーケット管理", "market-admin"), panelButton("運営パネル", "admin")]));
+    components.push(buttons([panelButton("ショップ管理", "market-admin"), panelButton("運営パネル", "admin")]));
     return {
       title: "取引対応",
       description: openOrders.length ? "手動対応中または報告中の取引です。1件を選んで対応してください。" : "対応待ちの取引はありません。",
@@ -3205,7 +3236,7 @@ class EconomyEngine {
           customButton("完了扱いにする", `eco:order:complete:${order.id}`, "success", ["complete", "refunded"].includes(order.status)),
           customButton("返金する", `eco:order:refund:${order.id}`, "danger", order.status === "refunded"),
           panelButton("取引対応に戻る", "market-trades"),
-          panelButton("マーケット管理", "market-admin")
+          panelButton("ショップ管理", "market-admin")
         ])
       ]
     };
@@ -3266,12 +3297,12 @@ class EconomyEngine {
   marketLogsPanel() {
     return {
       title: "ログ確認",
-      description: "直近のマーケットログです。",
+      description: "直近のショップログです。",
       color: 0x334155,
       fields: [
         { name: "ログ", value: this.state.marketplace.logs.slice(-10).reverse().join("\n") || "まだログはありません。", inline: false }
       ],
-      components: [buttons([panelButton("マーケット管理", "market-admin"), panelButton("運営パネル", "admin")])]
+      components: [buttons([panelButton("ショップ管理", "market-admin"), panelButton("運営パネル", "admin")])]
     };
   }
 
@@ -4302,7 +4333,7 @@ class EconomyEngine {
   useItem(user, id) {
     const item = this.officialItemDefinition(id);
     if (!item) {
-      return { ok: false, title: "未確認アイテム", lines: ["マーケットの持ち物で使えるものを確認してください。"] };
+      return { ok: false, title: "未確認アイテム", lines: ["ショップの持ち物で使えるものを確認してください。"] };
     }
 
     if (!user.inventory[id]) {

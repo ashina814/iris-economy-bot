@@ -689,6 +689,7 @@ function canRunCommand(context, command) {
     normalized.startsWith("marketplace official-fulfillment") ||
     normalized === "panel market-admin" ||
     normalized === "panel official-product-admin" ||
+    normalized === "panel official-auction-admin" ||
     normalized === "panel market-review" ||
     normalized === "panel market-trades" ||
     normalized === "panel market-logs" ||
@@ -700,6 +701,7 @@ function canRunCommand(context, command) {
     normalized === "panel admin" ||
     normalized === "panel 管理" ||
     normalized === "panel 運営" ||
+    normalized === "panel ショップ管理" ||
     normalized === "panel マーケット管理" ||
     normalized === "panel admin-campaign" ||
     normalized === "panel campaign管理" ||
@@ -1211,7 +1213,7 @@ async function postMarketPanel(interaction) {
   const embed = buildEmbed(result);
   const components = buildComponents(result);
   await interaction.channel.send({ embeds: embed ? [embed] : [], components });
-  await interaction.reply({ content: "このチャンネルに常設マーケットを送信しました。", ephemeral: true });
+  await interaction.reply({ content: "このチャンネルに常設ショップを送信しました。", ephemeral: true });
 }
 
 async function showMarketAuctionCreateModal(interaction) {
@@ -2304,7 +2306,7 @@ async function showMarketSettingsModal(interaction) {
   const settings = engine.state.marketplace.settings;
   const modal = new ModalBuilder()
     .setCustomId("eco:modal:market-settings")
-    .setTitle("マーケット設定を編集");
+    .setTitle("ショップ設定を編集");
   modal.addComponents(
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
@@ -4075,7 +4077,7 @@ function buildComponents(result, options = {}) {
 function fallbackComponents() {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("eco:panel:home").setLabel("ホーム").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("eco:panel:marketplace").setLabel("マーケット").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("eco:panel:marketplace").setLabel("ショップ").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("eco:panel:my-shop").setLabel("自分の店").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("eco:panel:lounge").setLabel("通話").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("eco:run:card").setLabel("カード").setStyle(ButtonStyle.Secondary)

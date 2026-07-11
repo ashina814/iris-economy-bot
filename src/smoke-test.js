@@ -57,9 +57,9 @@ assert(card.card, "カードコマンドにDiscordカード情報が必要です
 assert(card.lines.some((line) => line.includes("カード")), "カードコマンドにCLIカード表示が必要です");
 
 const marketPanel = engine.run("panel marketplace", actor);
-assert(marketPanel.panel, "マーケットパネルが必要です");
-assert(marketPanel.panel.components.length > 0, "マーケットパネルに操作部品が必要です");
-assert(marketPanel.panel.fields.some((field) => field.name === "今日のおすすめ"), "マーケットホームにおすすめ枠が必要です");
+assert(marketPanel.panel, "ショップパネルが必要です");
+assert(marketPanel.panel.components.length > 0, "ショップパネルに操作部品が必要です");
+assert(marketPanel.panel.fields.some((field) => field.name === "今日のおすすめ"), "ショップホームにおすすめ枠が必要です");
 
 // 公式ショップは全商品撤去中（ラインナップは OFFICIAL_SALE_ITEM_IDS で管理）
 const recommendedPanel = engine.run("marketplace recommended", actor);
@@ -76,7 +76,7 @@ const officialShopEmpty = engine.run("panel official-shop", actor);
 assert(JSON.stringify(officialShopEmpty.panel).includes("撤去中"), "公式ショップは撤去中表示になる必要があります");
 
 const productPanel = engine.run("marketplace product frame", actor);
-assert(productPanel.panel, "公式商品詳細はマーケットへフォールバックする必要があります");
+assert(productPanel.panel, "公式商品詳細はショップへフォールバックする必要があります");
 assert(!JSON.stringify(productPanel.panel.components).includes("marketplace confirm frame"), "撤去中の商品に購入確認導線を出してはいけません");
 const blockedBuy = engine.run("marketplace buy frame", actor);
 assert(!blockedBuy.ok, "撤去中の公式商品は購入できてはいけません");
@@ -265,6 +265,9 @@ const auctionCreate = engine.createOfficialAuction(engine.getUser(admin.id, admi
 assert(auctionCreate.ok, "公式オークションを作成できる必要があります");
 const auction = engine.state.marketplace.auctions[0];
 assert(auction.status === "open", "公式オークションは開催中になる必要があります");
+const auctionAdminPanel = engine.run("panel official-auction-admin", admin).panel;
+assert(JSON.stringify(auctionAdminPanel.components).includes("eco:market:auction-create"), "公式オークション管理から作成へ進める必要があります");
+assert(JSON.stringify(auctionAdminPanel.components).includes(`marketplace auction-end ${auction.id}`), "公式オークション管理から緊急終了を選べる必要があります");
 const firstBidder = engine.getUser(actor.id, actor.name);
 const secondBidder = engine.getUser(buyer.id, buyer.name);
 const firstWallet = firstBidder.wallet;
@@ -518,13 +521,13 @@ for (let i = 1; i < sortedDesc.length; i++) {
   assert(sortedDesc[i].price <= sortedDesc[i - 1].price, "price_desc で降順になる");
 }
 
-// マーケット設定変更
+// ショップ設定変更
 const settingsBefore = { ...engine.state.marketplace.settings };
 const settingsUpdate = engine.updateMarketSettings(engine.getUser(admin.id, admin.name), {
   feeBps: "300",
   reviewPrice: "80000"
 });
-assert(settingsUpdate.ok, "マーケット設定を変更できる");
+assert(settingsUpdate.ok, "ショップ設定を変更できる");
 assert.strictEqual(engine.state.marketplace.settings.feeBps, 300, "手数料が更新される");
 assert.strictEqual(engine.state.marketplace.settings.reviewPrice, 80000, "審査境界が更新される");
 const settingsInvalid = engine.updateMarketSettings(engine.getUser(admin.id, admin.name), { feeBps: "9999" });

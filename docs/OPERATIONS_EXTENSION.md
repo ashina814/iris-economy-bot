@@ -1,6 +1,6 @@
 # 運営拡張: ニックネーム整理とログインボーナス
 
-この拡張は `src/discord-entry-operations.js` から読み込まれ、既存の `discord-entry-manual-join.js` より前に安全な追加処理を登録します。マーケット、宿、カジノなど既存の本体処理は置き換えません。
+この拡張は `src/discord-entry-operations.js` から読み込まれ、既存の `discord-entry-manual-join.js` より前に安全な追加処理を登録します。ショップ、宿、カジノなど既存の本体処理は置き換えません。
 
 ## ニックネーム一括削除
 

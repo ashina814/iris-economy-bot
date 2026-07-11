@@ -178,7 +178,7 @@ function installEconomyExtensions(economyModule) {
         if (line && !line.includes("ログボ")) suggestions.push(line);
       }
     }
-    if (suggestions.length === 0) suggestions.push("カードを見る、VCに入る、マーケットを眺める");
+    if (suggestions.length === 0) suggestions.push("カードを見る、VCに入る、ショップを眺める");
     return suggestions.slice(0, 3).join("\n");
   };
 
