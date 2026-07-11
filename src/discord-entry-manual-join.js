@@ -70,7 +70,7 @@ function isShopRelatedCustomId(customId) {
 
 function isShopSlashCommand(interaction) {
   const name = String(interaction?.commandName || "");
-  return name === "マーケット" || name === "自分の店";
+  return name === "ショップ" || name === "自分の店";
 }
 
 function isShopRelatedInteraction(interaction) {
@@ -94,7 +94,7 @@ function shopMaintenanceResult() {
     ok: false,
     title: "ショップ一時停止中",
     lines: [
-      "ショップ/マーケット機能は一時メンテナンス中です。",
+      "ショップ/ショップ機能は一時メンテナンス中です。",
       "所持金、カード、送金、ランク、宿などはそのまま使えます。",
       "出品・購入・審査・オークション・自分の店は復旧まで止めています。"
     ]
@@ -104,7 +104,7 @@ function shopMaintenanceResult() {
 async function replyShopMaintenance(interaction) {
   if (!interaction?.isRepliable?.()) return false;
   const payload = {
-    content: "ショップ/マーケット機能は一時メンテナンス中です。出品・購入・審査・オークション・自分の店は復旧まで停止しています。",
+    content: "ショップ/ショップ機能は一時メンテナンス中です。出品・購入・審査・オークション・自分の店は復旧まで停止しています。",
     ephemeral: true
   };
 
