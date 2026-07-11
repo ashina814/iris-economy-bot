@@ -185,7 +185,7 @@ const insufficientAffordable = engine.run("marketplace affordable", poorActor);
 assert(insufficientAffordable.panel, "残高不足向けの今買えるものパネルが必要です");
 assert(!JSON.stringify(insufficientAffordable.panel.components).includes("work"), "今買えるもの不足導線にworkを出してはいけません");
 
-// ロール出品は自動判定ではなく手動対応になるはず
+// ロールは民営で出品できない（Discordロールの付与は運営にしかできないため公式のみ）
 const roleListingResult = engine.createUserListing(sellerUser, {
   name: "限定ロール",
   type: "role",
@@ -194,9 +194,8 @@ const roleListingResult = engine.createUserListing(sellerUser, {
   stock: "1",
   description: "運営が付与するロール"
 });
-assert(roleListingResult.ok, "ロール出品ができる必要があります");
-const roleListing = engine.state.marketplace.listings.find((entry) => entry.name === "限定ロール");
-assert(roleListing.manual === true, "ロール出品は manual=true になる必要があります");
+assert(!roleListingResult.ok, "ロールの民営出品は拒否される必要があります");
+assert(!engine.state.marketplace.listings.some((entry) => entry.name === "限定ロール"), "ロール出品が台帳に登録されてはいけません");
 
 const admin = { id: "test:admin", name: "運営" };
 engine.run("join", admin);
@@ -224,6 +223,60 @@ const closeResult = engine.forceEndAuction(engine.getUser(admin.id, admin.name),
 assert(closeResult.ok, "公式オークションを終了できる必要があります");
 assert(auction.status === "ended", "公式オークションは終了状態になる必要があります");
 assert(engine.getUser(buyer.id, buyer.name).marketplace.inventory.some((item) => item.name === "限定称号"), "落札者へ商品が付与される必要があります");
+
+// 手動対応商品の完了報告は購入者のみ
+const serviceListingResult = engine.createUserListing(engine.getUser(seller.id, seller.name), {
+  name: "似顔絵サービス",
+  type: "service",
+  mode: "permanent",
+  price: "800",
+  stock: "1",
+  description: "手動対応のテスト商品"
+});
+assert(serviceListingResult.ok, "サービス出品ができる必要があります");
+const serviceListing = engine.state.marketplace.listings.find((entry) => entry.name === "似顔絵サービス");
+assert(serviceListing.status === "pending", "サービス出品は審査待ちになる必要があります");
+assert(engine.approveListing(engine.getUser(admin.id, admin.name), serviceListing.id).ok, "サービス出品を承認できる必要があります");
+assert(engine.buyUserListing(engine.getUser(buyer.id, buyer.name), serviceListing.id).ok, "サービス商品を購入できる必要があります");
+const serviceOrder = engine.state.marketplace.orders.find((entry) => entry.listingId === serviceListing.id);
+assert(serviceOrder.status === "open", "手動対応商品は対応待ちで始まる必要があります");
+const sellerComplete = engine.completeOrder(engine.getUser(seller.id, seller.name), serviceOrder.id);
+assert(!sellerComplete.ok, "売り手は自分で取引を完了にできてはいけません");
+assert(serviceOrder.status === "open", "売り手の完了操作で状態が変わってはいけません");
+const buyerComplete = engine.completeOrder(engine.getUser(buyer.id, buyer.name), serviceOrder.id);
+assert(buyerComplete.ok && serviceOrder.status === "complete", "購入者の受け取り確認で完了になる必要があります");
+
+// 公開後の編集で審査を迂回できない
+const editTargetResult = engine.createUserListing(engine.getUser(seller.id, seller.name), {
+  name: "編集テスト",
+  type: "item",
+  mode: "permanent",
+  price: "500",
+  stock: "1",
+  description: "編集再審査のテスト"
+});
+assert(editTargetResult.ok, "編集テスト用の出品ができる必要があります");
+const editTarget = engine.state.marketplace.listings.find((entry) => entry.name === "編集テスト");
+assert(editTarget.status === "active", "安価なアイテムは即公開される必要があります");
+const stockOnlyEdit = engine.editListing(engine.getUser(seller.id, seller.name), editTarget.id, { stock: "5" });
+assert(stockOnlyEdit.ok && editTarget.status === "active", "在庫だけの編集は再審査に回ってはいけません");
+const priceEdit = engine.editListing(engine.getUser(seller.id, seller.name), editTarget.id, { price: "60000" });
+assert(priceEdit.ok && editTarget.status === "pending", "審査基準を超える編集は再審査に回る必要があります");
+
+// 却下商品は停止→再開の迂回ができない
+const rejectTargetResult = engine.createUserListing(engine.getUser(seller.id, seller.name), {
+  name: "却下対象サービス",
+  type: "service",
+  mode: "permanent",
+  price: "900",
+  stock: "1",
+  description: "却下テスト"
+});
+assert(rejectTargetResult.ok, "却下テスト用の出品ができる必要があります");
+const rejectTarget = engine.state.marketplace.listings.find((entry) => entry.name === "却下対象サービス");
+assert(engine.rejectListing(engine.getUser(admin.id, admin.name), rejectTarget.id, "テスト却下").ok, "出品を却下できる必要があります");
+const stopRejected = engine.stopListing(engine.getUser(seller.id, seller.name), rejectTarget.id);
+assert(!stopRejected.ok, "却下済み商品を停止状態に変えられてはいけません");
 
 const innPanel = engine.run("panel inn", actor);
 assert(innPanel.panel, "二人宿パネルが必要です");
