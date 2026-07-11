@@ -73,6 +73,9 @@ const adminUserIds = new Set(
     .filter(Boolean)
 );
 const inviteCache = new Map();
+const pendingInviteUses = new Map();
+const creditedDeletedInviteCodes = new Map();
+const PENDING_INVITE_USE_TTL_MS = 5 * 60 * 1000;
 const tempInnVoiceChannels = new Set();
 const yadoTimers = new Map();
 const rankPanelRefreshTimers = new Map();
@@ -476,6 +479,10 @@ client.on(Events.InviteCreate, async (invite) => {
 });
 
 client.on(Events.InviteDelete, async (invite) => {
+  if (invite.guild) {
+    const cached = inviteCache.get(invite.guild.id)?.get(invite.code);
+    creditExhaustedDeletedInvite(invite.guild.id, cached);
+  }
   await refreshInviteCache(invite.guild);
 });
 
@@ -648,7 +655,9 @@ function actorFromUser(guildId, user) {
 }
 
 function canRunCommand(context, command) {
-  const normalized = String(command || "").trim().toLowerCase();
+  // economy側の parseInput は \s+ split なので、全角スペースや連続スペースも同じ1コマンドに解釈される。
+  // ゲート判定も同じ正規化をしないと "panel  admin" などがすり抜ける。
+  const normalized = String(command || "").trim().toLowerCase().replace(/\s+/g, " ");
   const restricted =
     normalized.startsWith("marketplace auction-end") ||
     normalized === "panel market-admin" ||
@@ -660,7 +669,11 @@ function canRunCommand(context, command) {
     normalized === "panel 宿" ||
     normalized === "panel 二人宿" ||
     normalized === "panel admin" ||
+    normalized === "panel 管理" ||
+    normalized === "panel 運営" ||
+    normalized === "panel マーケット管理" ||
     normalized === "panel admin-campaign" ||
+    normalized === "panel campaign管理" ||
     normalized === "panel campaign-pending" ||
     normalized === "panel admin-balance" ||
     normalized === "panel admin-rank" ||
@@ -670,7 +683,9 @@ function canRunCommand(context, command) {
     normalized.startsWith("campaign start") ||
     normalized.startsWith("campaign stop") ||
     normalized.startsWith("campaign admin") ||
+    normalized.startsWith("campaign manage") ||
     normalized.startsWith("campaign pending") ||
+    normalized.startsWith("campaign cancel-reset") ||
     normalized.startsWith("campaign reset") ||
     normalized.startsWith("rankxp") ||
     normalized.startsWith("xp-settings");
@@ -704,6 +719,7 @@ async function refreshInviteCache(guild) {
       cache.set(invite.code, {
         code: invite.code,
         uses: invite.uses || 0,
+        maxUses: invite.maxUses || 0,
         inviter: invite.inviter || null
       });
     }
@@ -715,18 +731,73 @@ async function refreshInviteCache(guild) {
   }
 }
 
-async function detectUsedInvite(guild) {
+function pendingInviteUsesFor(guildId) {
+  if (!pendingInviteUses.has(guildId)) pendingInviteUses.set(guildId, []);
+  return pendingInviteUses.get(guildId);
+}
+
+function addPendingInviteUses(guildId, invite, count) {
+  const queue = pendingInviteUsesFor(guildId);
+  const expiresAt = Date.now() + PENDING_INVITE_USE_TTL_MS;
+  for (let i = 0; i < count; i += 1) {
+    queue.push({ code: invite.code, inviter: invite.inviter || null, expiresAt });
+  }
+}
+
+function consumePendingInviteUse(guildId) {
+  const queue = pendingInviteUsesFor(guildId);
+  while (queue.length > 0) {
+    const entry = queue.shift();
+    if (entry.expiresAt >= Date.now()) return entry;
+  }
+  return null;
+}
+
+// 使い切り招待はDiscordが使用と同時に削除するため、消えた招待も1回分の使用として計上する。
+// InviteDelete イベント経由と before/after 差分の両方から呼ばれるので、code 単位で重複計上を防ぐ。
+function creditExhaustedDeletedInvite(guildId, cached) {
+  if (!cached || !(cached.maxUses > 0) || cached.uses < cached.maxUses - 1) return;
+  const key = `${guildId}:${cached.code}`;
+  if (creditedDeletedInviteCodes.has(key)) return;
+  creditedDeletedInviteCodes.set(key, Date.now());
+  addPendingInviteUses(guildId, cached, 1);
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const [k, at] of creditedDeletedInviteCodes) {
+    if (at < cutoff) creditedDeletedInviteCodes.delete(k);
+  }
+}
+
+// 同時参加で差分検知が交錯しないよう、検知は直列に実行する
+let inviteDetectionChain = Promise.resolve();
+function detectUsedInvite(guild) {
+  const task = inviteDetectionChain.then(() => detectUsedInviteNow(guild));
+  inviteDetectionChain = task.then(
+    () => null,
+    (error) => {
+      console.warn(`招待検知に失敗しました: ${error.message}`);
+      return null;
+    }
+  );
+  return task.catch(() => null);
+}
+
+async function detectUsedInviteNow(guild) {
+  const hasBaseline = inviteCache.has(guild.id);
   const before = inviteCache.get(guild.id) || new Map();
   const after = await refreshInviteCache(guild);
-  if (!after) return null;
 
-  for (const invite of after.values()) {
-    const previous = before.get(invite.code);
-    if (previous && invite.uses > previous.uses) return invite;
-    if (!previous && invite.uses > 0) return invite;
+  if (after && hasBaseline) {
+    for (const invite of after.values()) {
+      const previous = before.get(invite.code);
+      const delta = invite.uses - (previous ? previous.uses : 0);
+      if (delta > 0) addPendingInviteUses(guild.id, invite, delta);
+    }
+    for (const [code, previous] of before) {
+      if (!after.has(code)) creditExhaustedDeletedInvite(guild.id, previous);
+    }
   }
 
-  return null;
+  return consumePendingInviteUse(guild.id);
 }
 
 async function replyDiscord(interaction, result, options = {}) {
