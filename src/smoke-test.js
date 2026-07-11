@@ -82,6 +82,52 @@ const blockedBuy = engine.run("marketplace buy frame", actor);
 assert(!blockedBuy.ok, "撤去中の公式商品は購入できてはいけません");
 
 // 初期資本が CPI 補正なしで素の 100,000 Ris になっていることを確認
+const officialAdminActor = { id: "test:official-admin", name: "公式商品管理者" };
+engine.run("join", officialAdminActor);
+const officialAdmin = engine.getUser(officialAdminActor.id, officialAdminActor.name);
+const createOfficialItem = engine.adminCreateOfficialItem(officialAdmin, {
+  id: "vip-pass",
+  name: "VIPパス30日",
+  price: "10000",
+  max: "1",
+  type: "ロール30日",
+  effect: "VIPロール30日分（手動付与）",
+  description: "購入後、運営がロール付与を確認します。"
+});
+assert(createOfficialItem.ok, "運営が公式ショップ商品を追加できる必要があります");
+assert(engine.state.marketplace.officialItems["official:vip-pass"], "追加公式商品がstateに保存される必要があります");
+const updateOfficialItem = engine.adminUpdateOfficialItem(officialAdmin, "official:vip-pass", {
+  name: "VIPパス30日", price: "10000", max: "2", stock: "2", type: "ロール30日",
+  saleStartsAt: "-", saleEndsAt: "-", roleDurationDays: "30",
+  effect: "VIPロール30日分（手動付与）", description: "購入後、運営がロール付与を確認します。", dmGuide: "運営がロール付与を確認します。"
+});
+assert(updateOfficialItem.ok, "公式商品の在庫・販売期間・DM案内を編集できる必要があります");
+assert.strictEqual(engine.state.marketplace.officialItems["official:vip-pass"].stock, 2, "公式商品の在庫を保存する必要があります");
+const stopOfficialItem = engine.adminToggleOfficialItem(officialAdmin, "official:vip-pass");
+assert(stopOfficialItem.ok, "公式商品の販売を停止できる必要があります");
+assert(!engine.officialItem("official:vip-pass"), "停止中の公式商品は販売棚から除外される必要があります");
+const resumeOfficialItem = engine.adminToggleOfficialItem(officialAdmin, "official:vip-pass");
+assert(resumeOfficialItem.ok && engine.officialItem("official:vip-pass"), "停止した公式商品の販売を再開できる必要があります");
+const officialShopWithItem = engine.run("panel official-shop", actor);
+assert(JSON.stringify(officialShopWithItem.panel).includes("VIPパス30日"), "追加公式商品が公式ショップに表示される必要があります");
+const officialProduct = engine.run("marketplace product official:vip-pass", actor);
+assert(JSON.stringify(officialProduct.panel).includes("marketplace confirm official:vip-pass"), "追加公式商品の購入確認導線が必要です");
+const officialConfirm = engine.run("marketplace confirm official:vip-pass", actor);
+assert(JSON.stringify(officialConfirm.panel).includes("VIPパス30日"), "追加公式商品の確認画面が必要です");
+const beforeOfficialBuyWallet = engine.getUser(actor.id, actor.name).wallet;
+const officialBuy = engine.run("marketplace buy official:vip-pass", actor);
+assert(officialBuy.ok, "追加公式商品を購入できる必要があります");
+assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeOfficialBuyWallet - 10000, "追加公式商品の購入で価格分だけ減る必要があります");
+assert.strictEqual(engine.getUser(actor.id, actor.name).inventory["official:vip-pass"], 1, "追加公式商品が持ち物に入る必要があります");
+assert.strictEqual(engine.state.marketplace.officialItems["official:vip-pass"].stock, 1, "購入時に公式商品の在庫を1つ減らす必要があります");
+assert.strictEqual(engine.state.marketplace.officialFulfillment.length, 1, "公式商品の購入後は運営対応キューを作る必要があります");
+const officialTask = engine.state.marketplace.officialFulfillment[0];
+assert.strictEqual(officialTask.status, "pending", "ロール未設定の商品は運営対応待ちにする必要があります");
+const completeOfficialTask = engine.completeOfficialFulfillment(officialAdmin, officialTask.id);
+assert(completeOfficialTask.ok && officialTask.status === "completed", "運営が公式商品対応を完了できる必要があります");
+const officialInventory = engine.run("panel market-inventory", actor);
+assert(JSON.stringify(officialInventory.panel).includes("VIPパス30日"), "追加公式商品が持ち物に表示される必要があります");
+
 const freshEngine = new EconomyEngine(createInitialState(), { rng });
 const freshActor = { id: "test:fresh", name: "新規参加者" };
 const joinResult = freshEngine.run("join", freshActor);
