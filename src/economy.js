@@ -61,6 +61,19 @@ const SHOP_ITEMS = {
   }
 };
 
+// 公式ショップで現在販売しているアイテムID。全商品撤去中のため空。
+// SHOP_ITEMS の定義自体は、既存所持者のアイテム効果・表示・使用のために残している。
+// 販売を再開する時はここにIDを追加する（例: ["coupon", "stamp"]）。
+const OFFICIAL_SALE_ITEM_IDS = [];
+
+function isOfficialItemOnSale(id) {
+  return OFFICIAL_SALE_ITEM_IDS.includes(id) && Boolean(SHOP_ITEMS[id]);
+}
+
+function officialSaleEntries() {
+  return OFFICIAL_SALE_ITEM_IDS.filter((id) => SHOP_ITEMS[id]).map((id) => [id, SHOP_ITEMS[id]]);
+}
+
 const MARKET_PRODUCT_TYPES = {
   role: "ロール",
   title: "称号",
@@ -1767,9 +1780,9 @@ class EconomyEngine {
       ["frame", "見た目用"]
     ];
     const picked = preferred
-      .filter(([id]) => SHOP_ITEMS[id])
+      .filter(([id]) => isOfficialItemOnSale(id))
       .map(([id, reason]) => ({ id, item: SHOP_ITEMS[id], reason }));
-    for (const [id, item] of Object.entries(SHOP_ITEMS)) {
+    for (const [id, item] of officialSaleEntries()) {
       if (id === "chair") continue;
       if (picked.some((entry) => entry.id === id)) continue;
       picked.push({ id, item, reason: item.price >= 10000 ? "高額者向け" : "初心者向け" });
@@ -1879,6 +1892,22 @@ class EconomyEngine {
 
   recommendedShelfPanel(user) {
     const entries = this.recommendedOfficialItems();
+    if (!entries.length) {
+      return {
+        title: "今日のおすすめ",
+        description: "公式商品は現在準備中です。運営が追加するまでお待ちください。",
+        color: 0x8b5cf6,
+        fields: [
+          { name: "民営ショップ", value: "ユーザー出品の商品はこちらから見られます。", inline: false }
+        ],
+        components: [
+          buttons([
+            panelButton("民営ショップ", "user-shops", "primary"),
+            panelButton("マーケットへ戻る", "marketplace")
+          ])
+        ]
+      };
+    }
     return {
       title: "今日のおすすめ",
       description: "公式商品を中心に、目的別に見やすく並べています。購入前には必ず詳細と確認画面を挟みます。",
@@ -1901,7 +1930,7 @@ class EconomyEngine {
   }
 
   affordableItemsPanel(user) {
-    const official = Object.entries(SHOP_ITEMS)
+    const official = officialSaleEntries()
       .map(([id, item]) => ({
         id,
         source: "公式",
@@ -1957,7 +1986,25 @@ class EconomyEngine {
   }
 
   officialShopPanel(user) {
-    const fields = Object.entries(SHOP_ITEMS).map(([id, item]) => ({
+    const saleEntries = officialSaleEntries();
+    if (!saleEntries.length) {
+      return {
+        title: "公式ショップ",
+        description: "公式商品は現在すべて撤去中です。新しいラインナップは運営が順次追加します。\nすでに購入済みの商品は引き続き持ち物から使えます（効果もそのまま）。",
+        color: 0x8b5cf6,
+        fields: [
+          { name: "持ち物", value: "購入済みの商品は「持ち物」から確認・使用できます。", inline: false }
+        ],
+        components: [
+          buttons([
+            panelButton("マーケット", "marketplace"),
+            panelButton("持ち物", "market-inventory", "primary"),
+            panelButton("自分の店", "my-shop", "success")
+          ])
+        ]
+      };
+    }
+    const fields = saleEntries.map(([id, item]) => ({
       name: `${item.name}（${item.type}）`,
       value: `${fmt(this.itemPrice(id))} / ${item.kind === "consumable" ? "使い切り" : "常時発動"}\n効果: ${item.effect}\n所持 ${this.officialStockLine(user, id)}`,
       inline: true
@@ -1968,7 +2015,7 @@ class EconomyEngine {
       color: 0x8b5cf6,
       fields,
       components: [
-        select("公式商品を選ぶ", Object.entries(SHOP_ITEMS).map(([id, item]) =>
+        select("公式商品を選ぶ", saleEntries.map(([id, item]) =>
           option(item.name, `run:marketplace product ${id}`, `${fmt(this.itemPrice(id))} / ${item.type} / ${item.effect}`.slice(0, 100))
         )),
         buttons([
@@ -1981,7 +2028,7 @@ class EconomyEngine {
   }
 
   officialProductPanel(user, id) {
-    const item = SHOP_ITEMS[id];
+    const item = isOfficialItemOnSale(id) ? SHOP_ITEMS[id] : null;
     if (!item) return this.marketplacePanel(user);
     const owned = user.inventory[id] || 0;
     const soldOut = owned >= item.max;
@@ -2008,7 +2055,7 @@ class EconomyEngine {
   }
 
   officialConfirmPanel(user, id) {
-    const item = SHOP_ITEMS[id];
+    const item = isOfficialItemOnSale(id) ? SHOP_ITEMS[id] : null;
     if (!item) return this.marketplacePanel(user);
     const price = this.itemPrice(id);
     const shortage = Math.max(0, price - user.wallet);
@@ -3842,9 +3889,9 @@ class EconomyEngine {
   }
 
   buyItem(user, id) {
-    const item = SHOP_ITEMS[id];
+    const item = isOfficialItemOnSale(id) ? SHOP_ITEMS[id] : null;
     if (!item) {
-      return { ok: false, title: "棚にない商品", lines: ["マーケットの公式ショップで買えるものを確認してください。"] };
+      return { ok: false, title: "棚にない商品", lines: ["この商品は現在販売していません。公式ショップの棚を確認してください。"] };
     }
 
     const owned = user.inventory[id] || 0;

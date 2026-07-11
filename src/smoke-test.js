@@ -50,7 +50,7 @@ assert(user.joined, "参加状態になる必要があります");
 assert(user.lifetimeEarned >= 100000, "初期配布は100,000 Ris以上が必要です");
 assert(user.activity.textXp > 0, "TC経験値が増える必要があります");
 assert(user.activity.vcXp > 0, "VC経験値が増える必要があります");
-assert(user.inventory.frame >= 1, "公式ショップでカード枠を購入できる必要があります");
+assert(!user.inventory.frame, "公式ショップ撤去中は商品を購入できてはいけません");
 
 const card = engine.run("card", actor);
 assert(card.card, "カードコマンドにDiscordカード情報が必要です");
@@ -61,23 +61,25 @@ assert(marketPanel.panel, "マーケットパネルが必要です");
 assert(marketPanel.panel.components.length > 0, "マーケットパネルに操作部品が必要です");
 assert(marketPanel.panel.fields.some((field) => field.name === "今日のおすすめ"), "マーケットホームにおすすめ枠が必要です");
 
+// 公式ショップは全商品撤去中（ラインナップは OFFICIAL_SALE_ITEM_IDS で管理）
 const recommendedPanel = engine.run("marketplace recommended", actor);
 assert(recommendedPanel.panel, "おすすめ商品パネルが必要です");
-assert(recommendedPanel.panel.fields.length >= 3, "おすすめ商品は3件以上表示する必要があります");
-assert(
-  JSON.stringify(recommendedPanel.panel.components).includes("marketplace product"),
-  "おすすめ商品は詳細画面へ進める必要があります"
-);
+assert(JSON.stringify(recommendedPanel.panel).includes("準備中"), "撤去中のおすすめは準備中表示になる必要があります");
+assert(!JSON.stringify(recommendedPanel.panel.components).includes("marketplace product"), "撤去中に商品詳細への導線を出してはいけません");
 
 const affordablePanel = engine.run("marketplace affordable", actor);
 assert(affordablePanel.panel, "今買えるものパネルが必要です");
 assert(affordablePanel.panel.fields.length > 0, "今買えるものに表示内容が必要です");
+assert(!JSON.stringify(affordablePanel.panel).includes("公式ショップでカード枠"), "撤去中に公式商品が今買えるものに出てはいけません");
+
+const officialShopEmpty = engine.run("panel official-shop", actor);
+assert(JSON.stringify(officialShopEmpty.panel).includes("撤去中"), "公式ショップは撤去中表示になる必要があります");
 
 const productPanel = engine.run("marketplace product frame", actor);
-assert(productPanel.panel, "公式商品詳細パネルが必要です");
-const productComponents = JSON.stringify(productPanel.panel.components);
-assert(productComponents.includes("marketplace confirm frame"), "公式商品の購入確認導線が必要です");
-assert(!productComponents.includes("marketplace buy frame"), "商品詳細から直接購入できてはいけません");
+assert(productPanel.panel, "公式商品詳細はマーケットへフォールバックする必要があります");
+assert(!JSON.stringify(productPanel.panel.components).includes("marketplace confirm frame"), "撤去中の商品に購入確認導線を出してはいけません");
+const blockedBuy = engine.run("marketplace buy frame", actor);
+assert(!blockedBuy.ok, "撤去中の公式商品は購入できてはいけません");
 
 // 初期資本が CPI 補正なしで素の 100,000 Ris になっていることを確認
 const freshEngine = new EconomyEngine(createInitialState(), { rng });
@@ -175,7 +177,7 @@ engine.run("join", poorActor);
 const poorUser = engine.getUser(poorActor.id, poorActor.name);
 poorUser.wallet = 0;
 const beforePoorWallet = poorUser.wallet;
-const insufficientBuy = engine.run("marketplace buy frame", poorActor);
+const insufficientBuy = engine.run(`marketplace listing-buy ${listing.id}`, poorActor);
 assert(!insufficientBuy.ok, "残高不足の直接購入は失敗する必要があります");
 assert.strictEqual(engine.getUser(poorActor.id, poorActor.name).wallet, beforePoorWallet, "残高不足時に財布が減ってはいけません");
 assert(insufficientBuy.panel, "残高不足時の案内パネルが必要です");
