@@ -438,40 +438,12 @@ async function handleNicknameInteraction(interaction, discord) {
   return false;
 }
 
-function installDiscordOperations(discordModule) {
-  const discord = discordModule || require("discord.js");
-  const Client = discord.Client;
-  if (!Client?.prototype || Client.prototype.__irisOperationsInteractionInstalled) return;
-
-  const originalEmit = Client.prototype.emit;
-  Client.prototype.emit = function irisOperationsEmit(eventName, ...args) {
-    const isInteraction = eventName === discord.Events.InteractionCreate || eventName === "interactionCreate";
-    const interaction = args[0];
-    const customId = String(interaction?.customId || "");
-    if (isInteraction && customId.startsWith("eco:admin:nickname-clear-")) {
-      handleNicknameInteraction(interaction, discord).catch(async (error) => {
-        console.warn(`[nickname-cleanup] interaction failed: ${error.stack || error.message}`);
-        if (!interaction?.isRepliable?.()) return;
-        const payload = { content: "ニックネーム処理に失敗しました。権限とロール順位を確認してください。", ephemeral: true };
-        try {
-          if (interaction.deferred || interaction.replied) await interaction.editReply({ ...payload, components: [], embeds: [] });
-          else await interaction.reply(payload);
-        } catch (_) {}
-      });
-      return true;
-    }
-    return originalEmit.call(this, eventName, ...args);
-  };
-
-  Client.prototype.__irisOperationsInteractionInstalled = true;
-}
-
 module.exports = {
   DAILY_CONFIG,
   claimDaily,
   dailyStatusLine,
   getDailyStatus,
-  installDiscordOperations,
+  handleNicknameInteraction,
   installEconomyExtensions,
   jstDayKey,
   jstDayNumber,

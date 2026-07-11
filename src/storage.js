@@ -1,6 +1,15 @@
 const fs = require("fs");
 const path = require("path");
 
+class StateLoadError extends Error {
+  constructor(filePath, cause) {
+    super(`経済stateの読込に失敗しました: ${filePath}`);
+    this.name = "StateLoadError";
+    this.filePath = filePath;
+    this.cause = cause;
+  }
+}
+
 class JsonStore {
   constructor(filePath, initialStateFactory) {
     this.filePath = filePath;
@@ -18,9 +27,9 @@ class JsonStore {
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === "object" ? parsed : this.initialStateFactory();
     } catch (error) {
-      const brokenPath = `${this.filePath}.broken-${Date.now()}`;
-      fs.renameSync(this.filePath, brokenPath);
-      return this.initialStateFactory();
+      // 経済データを空の初期stateとして起動すると、既存利用者の残高が消えたように見える。
+      // 壊れたファイルの退避や復旧判断は、バックアップを確認できる運営作業として明示的に行う。
+      throw new StateLoadError(this.filePath, error);
     }
   }
 
@@ -31,4 +40,4 @@ class JsonStore {
   }
 }
 
-module.exports = { JsonStore };
+module.exports = { JsonStore, StateLoadError };

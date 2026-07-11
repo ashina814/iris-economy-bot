@@ -619,9 +619,26 @@ function extractDiscordUserId(internalUserId) {
   return text.slice(index + 1) || null;
 }
 
-function userMention(user) {
+function userMention(user, member = null) {
   const discordId = extractDiscordUserId(user?.id);
-  return discordId ? `<@${discordId}>` : (user?.name || "名無し");
+  const displayName = member?.displayName || user?.name || "名無し";
+  return discordId ? `<@${discordId}>（${displayName}）` : displayName;
+}
+
+function guildIdFromInternalUserId(internalUserId) {
+  const text = String(internalUserId || "");
+  const index = text.indexOf(":");
+  return index < 0 ? null : text.slice(0, index) || null;
+}
+
+function memberDirectoryForActor(actor) {
+  const guildId = guildIdFromInternalUserId(actor?.id);
+  return guildId && guildId !== "dm" ? global.__IRIS_GUILD_MEMBER_DIRECTORY__?.get?.(guildId) || null : null;
+}
+
+function memberRecordForUser(user, directory) {
+  const discordId = extractDiscordUserId(user?.id);
+  return directory && discordId ? directory.get(discordId) || null : null;
 }
 
 function leaderboardSpec(typeRaw) {
@@ -673,7 +690,13 @@ function leaderboardSpec(typeRaw) {
 
 function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
   const spec = leaderboardSpec(typeRaw);
-  const users = Object.values(engine.state.users || {}).filter((user) => user.joined);
+  const memberDirectory = memberDirectoryForActor(actor);
+  const users = Object.values(engine.state.users || {}).filter((user) => {
+    if (!user.joined) return false;
+    // キャッシュが利用できる場合は、退出済みの古い経済recordをランキングから除外する。
+    // キャッシュが空の起動直後は、ランキングを空にしないため既存recordを表示する。
+    return !memberDirectory?.size || Boolean(memberRecordForUser(user, memberDirectory));
+  });
   const ranked = users
     .map((user) => ({ user, value: spec.score(user) }))
     .sort((a, b) => b.value - a.value || String(a.user.name || "").localeCompare(String(b.user.name || ""), "ja"));
@@ -687,7 +710,7 @@ function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
   const top = ranked.slice(0, 10);
   const lines = top.map((entry, index) => {
     const selfMark = entry.user.id === actorId ? " ← あなた" : "";
-    return `${index + 1}. ${userMention(entry.user)} - ${spec.label(entry.value, entry.user)}${selfMark}`;
+    return `${index + 1}. ${userMention(entry.user, memberRecordForUser(entry.user, memberDirectory))} - ${spec.label(entry.value, entry.user)}${selfMark}`;
   });
 
   if (actorId) {
@@ -695,7 +718,7 @@ function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
     if (selfIndex >= 0) {
       const self = ranked[selfIndex];
       lines.push(`あなた: ${selfIndex + 1}位 / ${ranked.length}人中`);
-      lines.push(`${userMention(self.user)} - ${spec.label(self.value, self.user)}`);
+      lines.push(`${userMention(self.user, memberRecordForUser(self.user, memberDirectory))} - ${spec.label(self.value, self.user)}`);
       if (selfIndex >= 10 && ranked[9]) {
         const needed = Math.max(1, ranked[9].value - self.value + 1);
         lines.push(`Top10まであと ${needed.toLocaleString("ja-JP")} ${spec.unit}`);
@@ -703,7 +726,7 @@ function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
     } else {
       const self = engine.getUser(actor.id, actor.name);
       lines.push("あなた: まだランキング対象外です。");
-      lines.push(`${userMention(self)} - ${spec.label(spec.score(self), self)}`);
+      lines.push(`${userMention(self, memberRecordForUser(self, memberDirectory))} - ${spec.label(spec.score(self), self)}`);
     }
   }
 
