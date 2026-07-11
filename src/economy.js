@@ -2483,11 +2483,11 @@ class EconomyEngine {
     ]));
     return {
       title: "売上・取引",
-      description: "売上と手動対応中の商品を確認できます。手動対応商品は、購入者が受け取り確認をすると完了になります。",
+      description: "売上と手動対応中の商品を確認できます。手動対応商品の代金は、購入者が受け取り確認をした時点で支払われます。",
       color: 0x14b8a6,
       fields: [
         { name: "売上", value: fmt(user.marketplace.sales || 0), inline: true },
-        { name: "取引", value: orders.length ? orders.map((order) => `#${order.id} ${order.itemName} / ${orderStatusLabel(order.status)}`).join("\n") : "まだ取引はありません。", inline: false }
+        { name: "取引", value: orders.length ? orders.map((order) => `#${order.id} ${order.itemName} / ${orderStatusLabel(order.status)}${order.payout === "held" ? " / 代金保留中" : ""}`).join("\n") : "まだ取引はありません。", inline: false }
       ],
       components
     };
@@ -2793,6 +2793,7 @@ class EconomyEngine {
         { name: "金額", value: fmt(order.price), inline: true },
         { name: "手数料", value: fmt(order.fee || 0), inline: true },
         { name: "状態", value: statusLabel, inline: true },
+        { name: "代金", value: order.payout === "held" ? "エスクロー保留中" : order.payout === "cancelled" ? "返金で取消" : "販売者へ支払い済み", inline: true },
         { name: "手動対応", value: order.manual ? "はい" : "いいえ", inline: true },
         { name: "作成日時", value: order.createdAt ? shortDate(order.createdAt) : "-", inline: true }
       ],
@@ -3023,11 +3024,15 @@ class EconomyEngine {
     const seller = this.getUser(listing.sellerId, listing.sellerName);
     const fee = Math.floor(listing.price * this.state.marketplace.settings.feeBps / 10000);
     const sellerReceive = listing.price - fee;
+    // 手動対応商品は納品前の持ち逃げを防ぐため、購入者の受け取り確認（または運営完了）まで代金を預かる
+    const escrow = Boolean(listing.manual);
     user.wallet -= listing.price;
     user.lifetimeLost += listing.price;
-    seller.wallet += sellerReceive;
-    seller.lifetimeEarned += sellerReceive;
-    this.ensureShopShape(seller).sales += sellerReceive;
+    if (!escrow) {
+      seller.wallet += sellerReceive;
+      seller.lifetimeEarned += sellerReceive;
+      this.ensureShopShape(seller).sales += sellerReceive;
+    }
     listing.stock -= 1;
     listing.sold += 1;
     if (listing.stock <= 0) listing.status = "soldout";
@@ -3045,6 +3050,7 @@ class EconomyEngine {
       mode: listing.mode,
       type: listing.type,
       manual: listing.manual,
+      payout: escrow ? "held" : "paid",
       status: listing.manual ? "open" : "complete",
       createdAt: new Date().toISOString(),
       expiresAt: listing.mode === "timed" ? new Date(Date.now() + listing.durationDays * 86400000).toISOString() : null
@@ -3060,7 +3066,7 @@ class EconomyEngine {
       expiresAt: order.expiresAt,
       status: order.status
     });
-    this.marketLog(`${user.name} が ${seller.name} から ${listing.name} を購入しました。`);
+    this.marketLog(`${user.name} が ${seller.name} から ${listing.name} を購入しました。${escrow ? `代金 ${fmt(listing.price)} はエスクロー保留。` : ""}`);
     return {
       ok: true,
       title: listing.manual ? "購入完了（対応待ち）" : "購入完了",
@@ -3068,8 +3074,9 @@ class EconomyEngine {
         `商品: ${listing.name}`,
         `支払い: ${fmt(listing.price)}`,
         `残高: ${fmt(user.wallet)}`,
-        listing.manual ? "この商品は販売者の手動対応が必要です。取引中の商品から確認できます。" : "付与が完了しました。"
-      ],
+        listing.manual ? "この商品は販売者の手動対応が必要です。取引中の商品から確認できます。" : "付与が完了しました。",
+        escrow ? "代金は受け取り確認まで運営預かりです。商品を受け取ったら持ち物パネルから受け取り確認をしてください。" : null
+      ].filter(Boolean),
       panel: this.purchaseCompletePanel(user, {
         title: listing.manual ? "購入完了（対応待ち）" : "購入完了",
         itemName: listing.name,
@@ -3169,6 +3176,20 @@ class EconomyEngine {
     return { ok: true, title: "出品停止", lines: [`${listing.name} を停止しました。`], panel: this.myListingsPanel(user) };
   }
 
+  // エスクロー保留中の代金を販売者に支払う。保留中でない注文（旧データ含む）は何もしない。
+  releaseOrderPayout(order) {
+    if (order.payout !== "held") return 0;
+    const seller = this.getUser(order.sellerId, order.sellerName);
+    const receive = Math.max(0, order.price - (order.fee || 0));
+    seller.wallet += receive;
+    seller.lifetimeEarned += receive;
+    this.ensureShopShape(seller).sales += receive;
+    order.payout = "paid";
+    order.payoutAt = new Date().toISOString();
+    this.marketLog(`#${order.id} ${order.itemName} のエスクロー ${fmt(receive)} を ${seller.name} に支払いました。`);
+    return receive;
+  }
+
   completeOrder(user, id) {
     const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
     if (!order || order.buyerId !== user.id) {
@@ -3183,8 +3204,17 @@ class EconomyEngine {
     for (const item of buyerShop.inventory || []) {
       if (String(item.orderId) === String(order.id)) item.status = "complete";
     }
+    const paid = this.releaseOrderPayout(order);
     this.marketLog(`${user.name} が #${order.id} ${order.itemName} の受け取りを確認しました。`);
-    return { ok: true, title: "受け取り確認", lines: [`#${order.id} ${order.itemName} を完了にしました。`], panel: this.marketInventoryPanel(user) };
+    return {
+      ok: true,
+      title: "受け取り確認",
+      lines: [
+        `#${order.id} ${order.itemName} を完了にしました。`,
+        paid > 0 ? `預かっていた代金 ${fmt(paid)} を ${order.sellerName} に支払いました。` : null
+      ].filter(Boolean),
+      panel: this.marketInventoryPanel(user)
+    };
   }
 
   reportOrder(user, id) {
@@ -3211,11 +3241,16 @@ class EconomyEngine {
     order.completedBy = adminUser.id;
     order.completedByName = adminUser.name;
     order.completedByAdmin = true;
+    const paid = this.releaseOrderPayout(order);
     this.marketLog(`${adminUser.name} が #${order.id} ${order.itemName} を運営完了にしました。`);
     return {
       ok: true,
       title: "運営完了処理",
-      lines: [`#${order.id} ${order.itemName} を完了扱いにしました。`, `販売者: ${order.sellerName} / 購入者: ${order.buyerName}`],
+      lines: [
+        `#${order.id} ${order.itemName} を完了扱いにしました。`,
+        `販売者: ${order.sellerName} / 購入者: ${order.buyerName}`,
+        paid > 0 ? `預かっていた代金 ${fmt(paid)} を販売者に支払いました。` : null
+      ].filter(Boolean),
       panel: this.marketTradesPanel(),
       notifications: [
         {
@@ -3244,13 +3279,19 @@ class EconomyEngine {
       }
     ];
 
+    const wasHeld = order.payout === "held";
     if (order.sellerId !== "official") {
       const seller = this.getUser(order.sellerId, order.sellerName);
       const sellerReceive = Math.max(0, order.price - (order.fee || 0));
-      seller.wallet = Math.max(0, seller.wallet - sellerReceive);
-      seller.lifetimeLost += sellerReceive;
-      const shop = this.ensureShopShape(seller);
-      shop.sales = Math.max(0, (shop.sales || 0) - sellerReceive);
+      if (wasHeld) {
+        // エスクロー保留中の代金は販売者に渡っていないので、残高調整なしで預かり分を返すだけ
+        order.payout = "cancelled";
+      } else {
+        seller.wallet = Math.max(0, seller.wallet - sellerReceive);
+        seller.lifetimeLost += sellerReceive;
+        const shop = this.ensureShopShape(seller);
+        shop.sales = Math.max(0, (shop.sales || 0) - sellerReceive);
+      }
 
       const listing = this.findListing(order.listingId);
       if (listing) {
@@ -3261,7 +3302,7 @@ class EconomyEngine {
       notifications.push({
         userId: order.sellerId,
         event: "order_refunded",
-        data: { orderId: order.id, itemName: order.itemName, amount: sellerReceive, role: "seller" }
+        data: { orderId: order.id, itemName: order.itemName, amount: wasHeld ? 0 : sellerReceive, role: "seller" }
       });
     }
 
@@ -3279,7 +3320,11 @@ class EconomyEngine {
       lines: [
         `#${order.id} ${order.itemName} を返金しました。`,
         `購入者 ${buyer.name} に ${fmt(order.price)} を戻し、購入品を持ち物から削除しました。`,
-        order.sellerId === "official" ? "販売者は公式のため、売上調整は不要です。" : `販売者 ${order.sellerName} の売上と在庫を巻き戻しました。`
+        order.sellerId === "official"
+          ? "販売者は公式のため、売上調整は不要です。"
+          : wasHeld
+            ? "代金はエスクロー保留中だったため、販売者の残高調整はありません（在庫のみ戻しました）。"
+            : `販売者 ${order.sellerName} の売上と在庫を巻き戻しました。`
       ],
       panel: this.marketTradesPanel(),
       notifications
