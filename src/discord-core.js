@@ -660,6 +660,8 @@ function canRunCommand(context, command) {
   const normalized = String(command || "").trim().toLowerCase().replace(/\s+/g, " ");
   const restricted =
     normalized.startsWith("marketplace auction-end") ||
+    normalized.startsWith("marketplace review") ||
+    normalized.startsWith("marketplace order") ||
     normalized === "panel market-admin" ||
     normalized === "panel market-review" ||
     normalized === "panel market-trades" ||
