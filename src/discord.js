@@ -672,12 +672,10 @@ function leaderboardSpec(typeRaw) {
 function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
   const spec = leaderboardSpec(typeRaw);
   const memberDirectory = memberDirectoryForActor(actor);
-  const users = Object.values(engine.state.users || {}).filter((user) => {
-    if (!user.joined) return false;
-    // キャッシュが利用できる場合は、退出済みの古い経済recordをランキングから除外する。
-    // キャッシュが空の起動直後は、ランキングを空にしないため既存recordを表示する。
-    return !memberDirectory?.size || Boolean(memberRecordForUser(user, memberDirectory));
-  });
+  // guild.members.cache is intentionally partial: fetching every member here caused
+  // Discord rate limits and interaction timeouts. It can enrich display names, but it
+  // cannot decide who is eligible for a ledger-backed ranking.
+  const users = Object.values(engine.state.users || {}).filter((user) => user.joined);
   const ranked = users
     .map((user) => ({ user, value: spec.score(user) }))
     .sort((a, b) => b.value - a.value || String(a.user.name || "").localeCompare(String(b.user.name || ""), "ja"));

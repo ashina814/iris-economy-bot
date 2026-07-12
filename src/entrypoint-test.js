@@ -34,4 +34,18 @@ for (const command of [
   if (result.panel) buildComponents(result);
 }
 
+const missingFromCache = { id: "entrypoint-test:missing", name: "cache-missing member" };
+engine.run("join", missingFromCache);
+engine.getUser(actor.id, actor.name).activity.textXp = 10;
+engine.getUser(missingFromCache.id, missingFromCache.name).activity.textXp = 99;
+const savedDirectory = global.__IRIS_GUILD_MEMBER_DIRECTORY__;
+global.__IRIS_GUILD_MEMBER_DIRECTORY__ = {
+  get(guildId) {
+    return guildId === "entrypoint-test" ? new Map([["user", { id: "user", displayName: actor.name }]]) : null;
+  }
+};
+const partialCacheRank = engine.run("rank text", actor);
+global.__IRIS_GUILD_MEMBER_DIRECTORY__ = savedDirectory;
+assert(partialCacheRank.lines.some((line) => line.includes(missingFromCache.name)), "部分メンバーキャッシュで台帳上のランキング対象を除外してはいけません");
+
 console.log("entrypoint-test: passed");
