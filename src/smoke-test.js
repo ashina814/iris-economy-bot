@@ -104,7 +104,8 @@ const createOfficialItem = engine.adminCreateOfficialItem(officialAdmin, {
   max: "1",
   type: "ロール30日",
   effect: "VIPロール30日分（手動付与）",
-  description: "購入後、運営がロール付与を確認します。"
+  description: "購入後、運営がロール付与を確認します。",
+  fulfillmentMode: "manual"
 });
 assert(createOfficialItem.ok, "運営が公式ショップ商品を追加できる必要があります");
 assert(engine.state.marketplace.officialItems["official:vip-pass"], "追加公式商品がstateに保存される必要があります");
@@ -178,12 +179,49 @@ assert(!engine.recordOfficialFulfillmentTicket(officialAdmin, manualTicketTask.i
 const officialInventory = engine.run("panel market-inventory", actor);
 assert(JSON.stringify(officialInventory.panel).includes("VIPパス30日"), "追加公式商品が持ち物に表示される必要があります");
 
+const nameChangeItem = engine.adminCreateOfficialItem(officialAdmin, {
+  id: "name-change-request",
+  name: "名前変更権",
+  price: "5000",
+  max: "2",
+  type: "申請権",
+  effect: "希望する名前への変更を申請できます。",
+  description: "持ち物から使うと希望する名前を送信できます。",
+  fulfillmentMode: "on_use"
+});
+assert(nameChangeItem.ok, "持ち物から申請する公式商品を追加できる必要があります");
+const nameChangeManagement = engine.officialItemManagementPanel(officialAdmin, "official:name-change-request");
+assert(JSON.stringify(nameChangeManagement.components).includes("official-item-mode:official:name-change-request:on_use"), "公式商品管理から利用方式を確認できる必要があります");
+const fulfillmentCountBeforeNameChangeBuy = engine.state.marketplace.officialFulfillment.length;
+const nameChangeBuy = engine.run("marketplace buy official:name-change-request", actor);
+assert(nameChangeBuy.ok, "申請型の公式商品を購入できる必要があります");
+assert.strictEqual(engine.state.marketplace.officialFulfillment.length, fulfillmentCountBeforeNameChangeBuy, "申請型の商品は購入時に対応キューを作ってはいけません");
+const nameChangeInventory = engine.run("panel market-inventory", actor);
+assert(JSON.stringify(nameChangeInventory.panel).includes("run:use official:name-change-request"), "申請型の商品は持ち物から使用できる必要があります");
+const nameChangeUse = engine.beginOfficialItemUse(engine.getUser(actor.id, actor.name), "official:name-change-request", "tama_dane.");
+assert(nameChangeUse.ok, "申請型の商品を持ち物から使用できる必要があります");
+assert.strictEqual(engine.getUser(actor.id, actor.name).inventory["official:name-change-request"] || 0, 0, "利用申請時に商品を1つだけ消費する必要があります");
+const nameChangeTask = engine.officialFulfillmentTask(nameChangeUse.officialUse.id);
+assert.strictEqual(nameChangeTask.requestText, "tama_dane.", "利用申請の希望内容を対応キューへ記録する必要があります");
+assert(!engine.beginOfficialItemUse(engine.getUser(actor.id, actor.name), "official:name-change-request", "another-name").ok, "同じ所持分を二重に利用申請してはいけません");
+
 const freshEngine = new EconomyEngine(createInitialState(), { rng });
 const freshActor = { id: "test:fresh", name: "新規参加者" };
 const joinResult = freshEngine.run("join", freshActor);
 assert(joinResult.ok, "join が成功する必要があります");
 const freshUser = freshEngine.state.users[freshActor.id];
 assert.strictEqual(freshUser.wallet, 100000, `初期配布は素の10万Ris（実際: ${freshUser.wallet}）`);
+
+const legacyNameChangeState = createInitialState();
+legacyNameChangeState.marketplace.officialItems["official:name-henkou"] = {
+  id: "official:name-henkou",
+  name: "名前変更権",
+  price: 5000,
+  max: 1,
+  status: "active"
+};
+const migratedNameChangeEngine = new EconomyEngine(legacyNameChangeState, { rng });
+assert.strictEqual(migratedNameChangeEngine.state.marketplace.officialItems["official:name-henkou"].fulfillmentMode, "on_use", "既存の名前変更権は持ち物から申請する方式へ移行する必要があります");
 
 const migratedCampaignEngine = new EconomyEngine({ version: 4, users: {} }, { rng });
 assert(migratedCampaignEngine.state.inviteCampaign, "inactive campaign state が安全に補完される必要があります");

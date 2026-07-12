@@ -187,6 +187,10 @@ async function handleInteraction(interaction) {
     return;
   }
   if (interaction.isModalSubmit()) {
+    if (interaction.customId.startsWith("eco:modal:official-use:")) {
+      await submitOfficialItemUse(interaction);
+      return;
+    }
     if (interaction.customId.startsWith("eco:modal:yado-rename:")) {
       await renameYadoRoomFromModal(interaction);
       return;
@@ -336,6 +340,10 @@ async function handleInteraction(interaction) {
     }
     const command = commandFromComponent(interaction);
     if (!command) return;
+    if (command.startsWith("use ")) {
+      const itemId = command.split(/\s+/)[1];
+      if (await showOfficialItemUseModal(interaction, itemId)) return;
+    }
     if (command === "create-yado-vc") {
       await createYadoVoiceChannel(interaction, { secret: false });
       return;
@@ -1525,7 +1533,8 @@ async function handleOfficialMarketControl(interaction) {
   }
   const parts = interaction.customId.split(":");
   const action = parts[2].replace("official-item-", "");
-  const id = parts.slice(3).join(":");
+  const mode = action === "mode" ? parts.at(-1) : null;
+  const id = action === "mode" ? parts.slice(3, -1).join(":") : parts.slice(3).join(":");
   const actor = actorFromInteraction(interaction);
   const admin = engine.getUser(actor.id, actor.name);
   if (action === "edit") {
@@ -1534,6 +1543,13 @@ async function handleOfficialMarketControl(interaction) {
   }
   if (action === "toggle") {
     const result = engine.adminToggleOfficialItem(admin, id);
+    decorateResultForDiscord(result, interaction);
+    store.save(engine.state);
+    await updateDiscord(interaction, result);
+    return;
+  }
+  if (action === "mode") {
+    const result = engine.adminSetOfficialItemFulfillmentMode(admin, id, mode);
     decorateResultForDiscord(result, interaction);
     store.save(engine.state);
     await updateDiscord(interaction, result);
@@ -1601,33 +1617,45 @@ async function createOfficialFulfillmentTicket(interaction, admin, taskId) {
     await interaction.reply({ content: "この購入には新しい対応チケットを作成できません。対応キューを開き直してください。", ephemeral: true });
     return;
   }
-
-  const lockKey = `${interaction.guild.id}:${task.id}`;
-  if (officialFulfillmentTicketLocks.has(lockKey)) {
-    await interaction.reply({ content: "この購入のチケットを作成しています。少し待ってから対応キューを最新化してください。", ephemeral: true });
+  const provision = await provisionOfficialFulfillmentTicket(interaction.guild, task, admin, interaction.user.id);
+  if (!provision.ok) {
+    await interaction.reply({ content: provision.message, ephemeral: true });
     return;
+  }
+  const result = {
+    ok: true,
+    title: "対応チケットを作成しました",
+    lines: [`#${task.id} ${task.itemName}`, `<#${provision.channelId}>`],
+    panel: engine.officialFulfillmentTaskPanel(admin, task.id)
+  };
+  decorateResultForDiscord(result, interaction);
+  await updateDiscord(interaction, result);
+}
+
+async function provisionOfficialFulfillmentTicket(guild, task, actor, initiatorId) {
+  const lockKey = `${guild.id}:${task.id}`;
+  if (officialFulfillmentTicketLocks.has(lockKey)) {
+    return { ok: false, message: "この購入のチケットを作成しています。少し待ってから対応キューを最新化してください。" };
   }
 
   officialFulfillmentTicketLocks.add(lockKey);
   try {
     const discordUserId = extractDiscordUserId(task.buyerId);
-    const buyer = discordUserId ? await interaction.guild.members.fetch(discordUserId).catch(() => null) : null;
-    const botMember = interaction.guild.members.me;
+    const buyer = discordUserId ? await guild.members.fetch(discordUserId).catch(() => null) : null;
+    const botMember = guild.members.me;
     if (!buyer) {
-      await interaction.reply({ content: "購入者がサーバー内で見つかりません。対応キューから手動対応してください。", ephemeral: true });
-      return;
+      return { ok: false, message: "購入者がサーバー内で見つかりません。対応キューから手動対応してください。" };
     }
     if (!botMember?.permissions?.has?.(PermissionFlagsBits.ManageChannels)) {
-      await interaction.reply({ content: "Botにチャンネル管理権限がないため、対応チケットを作成できません。", ephemeral: true });
-      return;
+      return { ok: false, message: "Botにチャンネル管理権限がないため、対応チケットを作成できません。" };
     }
 
-    const accessIds = [...new Set([buyer.id, interaction.user.id, client.user?.id, ...adminUserIds].filter(Boolean))];
-    const channel = await interaction.guild.channels.create({
+    const accessIds = [...new Set([buyer.id, initiatorId, client.user?.id, ...adminUserIds].filter(Boolean))];
+    const channel = await guild.channels.create({
       name: safeChannelName(`shop-${task.id}-${buyer.user.username}`),
       type: ChannelType.GuildText,
       permissionOverwrites: [
-        { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
         ...accessIds.map((id) => ({
           id,
           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
@@ -1636,10 +1664,9 @@ async function createOfficialFulfillmentTicket(interaction, admin, taskId) {
       reason: `公式商品対応 #${task.id}`
     });
 
-    let result;
     const logLength = engine.state.marketplace.logs.length;
     try {
-      result = engine.recordOfficialFulfillmentTicket(admin, task.id, channel.id);
+      const result = engine.recordOfficialFulfillmentTicket(actor, task.id, channel.id);
       if (!result.ok) throw new Error("公式商品対応チケットの状態を保存できませんでした。");
       store.save(engine.state);
     } catch (error) {
@@ -1652,19 +1679,69 @@ async function createOfficialFulfillmentTicket(interaction, admin, taskId) {
       content: `<@${buyer.id}>`,
       embeds: [new EmbedBuilder()
         .setTitle(`公式商品対応 #${task.id}`)
-        .setDescription("購入内容の確認と必要事項の聞き取りを行うチケットです。名前変更の商品は、希望する名前をこのチャンネルに送ってください。")
+        .setDescription(task.requestText ? "利用申請を受け付けました。運営が内容を確認して対応します。" : "購入内容の確認と必要事項の聞き取りを行うチケットです。名前変更の商品は、希望する名前をこのチャンネルに送ってください。")
         .addFields(
           { name: "商品", value: task.itemName },
-          { name: "購入者", value: buyer.user.username }
+          { name: "購入者", value: buyer.user.username },
+          ...(task.requestText ? [{ name: "希望内容", value: task.requestText }] : [])
         )
         .setColor(0x334155)]
     }).catch((error) => console.warn(`公式商品対応チケットの案内送信に失敗しました: ${error.message}`));
-
-    decorateResultForDiscord(result, interaction);
-    await updateDiscord(interaction, result);
+    return { ok: true, channelId: channel.id };
   } finally {
     officialFulfillmentTicketLocks.delete(lockKey);
   }
+}
+
+async function showOfficialItemUseModal(interaction, itemId) {
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const item = engine.officialItemDefinition(itemId);
+  if (!engine.officialItemUsesRequest(item) || !user.inventory[itemId]) return false;
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:official-use:${itemId}`)
+    .setTitle(`${item.name} を使用`);
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("requestText")
+        .setLabel("希望する名前・内容")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(80)
+        .setPlaceholder("例: tama_dane.")
+    )
+  );
+  await interaction.showModal(modal);
+  return true;
+}
+
+async function submitOfficialItemUse(interaction) {
+  if (!interaction.guild) {
+    await interaction.reply({ content: "サーバー内の持ち物から使用してください。", ephemeral: true });
+    return;
+  }
+  const itemId = interaction.customId.split(":").slice(3).join(":");
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.beginOfficialItemUse(user, itemId, interaction.fields.getTextInputValue("requestText"));
+  decorateResultForDiscord(result, interaction);
+  if (!result.ok) {
+    await replyDiscord(interaction, result, { ephemeral: true });
+    return;
+  }
+  store.save(engine.state);
+
+  const task = engine.officialFulfillmentTask(result.officialUse.id);
+  try {
+    const provision = await provisionOfficialFulfillmentTicket(interaction.guild, task, user, interaction.user.id);
+    if (provision.ok) result.lines.push(`対応チケット: <#${provision.channelId}>`);
+    else result.lines.push(`チケットは自動作成できませんでした。運営対応キューに申請を記録しています。`);
+  } catch (error) {
+    console.warn(`公式商品の利用申請チケット作成に失敗しました: ${error.message}`);
+    result.lines.push("チケットは自動作成できませんでした。運営対応キューに申請を記録しています。");
+  }
+  await replyDiscord(interaction, result, { ephemeral: true });
 }
 
 async function showOfficialItemEditModal(interaction, id) {
