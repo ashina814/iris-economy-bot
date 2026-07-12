@@ -793,6 +793,7 @@ function canRunCommand(context, command) {
     normalized === "panel campaign-pending" ||
     normalized === "panel admin-balance" ||
     normalized === "panel admin-rank" ||
+    normalized === "panel admin-maintenance" ||
     normalized === "panel boost-rewards" ||
     normalized === "panel rank-xp-settings" ||
     normalized === "panel vc-xp-location-settings" ||
@@ -4388,17 +4389,28 @@ function buildComponents(result, options = {}) {
 
 function assertUniquePanelComponentIds(panel) {
   const seen = new Set();
-  for (const row of panel.components || []) {
-    if (row?.type !== "buttons") continue;
-    for (const item of row.items || []) {
-      const id = item.kind === "panel"
-        ? `eco:panel:${item.panel}`
-        : item.kind === "custom"
-          ? item.customId
-          : `eco:run:${item.command}`;
-      if (seen.has(id)) throw new Error(`重複したコンポーネントID: ${id}`);
-      seen.add(id);
+  for (const [rowIndex, row] of (panel.components || []).entries()) {
+    if (row?.type === "buttons") {
+      for (const item of row.items || []) {
+        const id = item.kind === "panel"
+          ? `eco:panel:${item.panel}`
+          : item.kind === "custom"
+            ? item.customId
+            : `eco:run:${item.command}`;
+        if (seen.has(id)) throw new Error(`重複したコンポーネントID: ${id}`);
+        seen.add(id);
+      }
+      continue;
     }
+
+    const id = row?.type === "select"
+      ? `eco:select:${rowIndex}`
+      : row?.type === "channel-select" || row?.type === "role-select"
+        ? String(row.customId || "")
+        : "";
+    if (!id) continue;
+    if (seen.has(id)) throw new Error(`重複したコンポーネントID: ${id}`);
+    seen.add(id);
   }
 }
 
