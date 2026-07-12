@@ -21,6 +21,14 @@ assert.strictEqual(parseOfficialFulfillmentControlId("eco:market:official-fulfil
 
 const actor = { id: "entrypoint-test:user", name: "entrypoint tester" };
 engine.run("join", actor);
+const fulfillmentTask = engine.createOfficialFulfillment(engine.getUser(actor.id, actor.name), {
+  id: "entrypoint-fulfillment",
+  name: "対応テスト商品",
+  roleId: null,
+  roleDurationDays: 0,
+  dmGuide: ""
+});
+buildComponents({ panel: engine.officialFulfillmentTaskPanel(engine.getUser(actor.id, actor.name), fulfillmentTask.id) });
 for (const command of [
   "panel home",
   "panel admin",

@@ -3160,8 +3160,7 @@ class EconomyEngine {
       components: [
         ...(task.status === "pending" ? [buttons([
           customButton("対応を完了", `eco:market:official-fulfillment-complete:${task.id}`, "success"),
-          ...(task.roleId ? [customButton("ロールを再試行", `eco:market:official-fulfillment-retry:${task.id}`, "primary")] : []),
-          panelButton("対応キュー", "official-fulfillment")
+          ...(task.roleId ? [customButton("ロールを再試行", `eco:market:official-fulfillment-retry:${task.id}`, "primary")] : [])
         ])] : []),
         buttons([panelButton("対応キュー", "official-fulfillment"), panelButton("ショップ管理", "market-admin")])
       ]
