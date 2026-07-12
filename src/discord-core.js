@@ -85,6 +85,7 @@ const rankPanelRefreshTimers = new Map();
 const salarySessions = new Map();
 const SALARY_SESSION_TTL_MS = 10 * 60 * 1000;
 const DISBOARD_BOT_ID = "302050872383242240";
+const boostRewardSweepMs = Math.max(60, parsePositiveIntEnv("IRIS_BOOST_REWARD_SWEEP_SECONDS", 6 * 60 * 60)) * 1000;
 
 global.__IRIS_GUILD_MEMBER_DIRECTORY__ = {
   get(id) {
@@ -154,6 +155,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   startVoiceRewardSweeper();
   startMarketSweeper();
   startOfficialRoleExpirySweeper();
+  startBoostRewardSweeper();
   startYadoSweeper();
   startYadoControlRefreshSweeper();
 });
@@ -270,6 +272,10 @@ async function handleInteraction(interaction) {
       await handleBalanceRoleSelect(interaction);
       return;
     }
+    if (interaction.customId.startsWith("eco:role:boost:")) {
+      await handleBoostRewardRoleSelect(interaction);
+      return;
+    }
     if (interaction.customId.startsWith("eco:role:official-item:")) {
       await handleOfficialItemRoleSelect(interaction);
       return;
@@ -320,6 +326,10 @@ async function handleInteraction(interaction) {
     }
     if (interaction.isButton() && interaction.customId === "eco:user:notify-toggle") {
       await handleNotifyToggle(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:boost:")) {
+      await handleBoostRewardButton(interaction);
       return;
     }
     const command = commandFromComponent(interaction);
@@ -402,6 +412,10 @@ async function handleInteraction(interaction) {
     }
     if (command === "shop-status-toggle") {
       await handleShopStatusToggle(interaction);
+      return;
+    }
+    if (command === "shop-sales-dm-toggle") {
+      await handleShopSalesDmToggle(interaction);
       return;
     }
     if (command.startsWith("shop-edit ")) {
@@ -547,6 +561,7 @@ client.on(Events.InviteDelete, async (invite) => {
 client.on(Events.GuildMemberAdd, async (member) => {
   if (member.user.bot) return;
   syncGuildMember(member);
+  await handleBoostMemberState(member, "member-add");
   const used = await detectUsedInvite(member.guild);
   const result = used?.inviter
     ? engine.recordInviteJoin(
@@ -576,12 +591,15 @@ client.on(Events.GuildMemberAdd, async (member) => {
 client.on(Events.GuildMemberRemove, async (member) => {
   if (member.user.bot) return;
   removeGuildMember(member);
+  recordBoostMemberLeft(member);
   engine.recordInviteLeave(actorFromMember(member));
   store.save(engine.state);
 });
 
-client.on(Events.GuildMemberUpdate, (_oldMember, member) => {
-  if (!member.user.bot) syncGuildMember(member);
+client.on(Events.GuildMemberUpdate, async (_oldMember, member) => {
+  if (member.user.bot) return;
+  syncGuildMember(member);
+  await handleBoostMemberState(member, "member-update");
 });
 
 if (process.env.IRIS_ENTRYPOINT_TEST === "1") {
@@ -775,6 +793,7 @@ function canRunCommand(context, command) {
     normalized === "panel campaign-pending" ||
     normalized === "panel admin-balance" ||
     normalized === "panel admin-rank" ||
+    normalized === "panel boost-rewards" ||
     normalized === "panel rank-xp-settings" ||
     normalized === "panel vc-xp-location-settings" ||
     normalized === "panel vc-xp-location" ||
@@ -944,11 +963,20 @@ async function updateDiscord(interaction, result) {
 
 async function deliverNotifications(notifications) {
   if (!Array.isArray(notifications) || notifications.length === 0) return;
+  let stateChanged = false;
   for (const note of notifications) {
     try {
-      await deliverOne(note);
+      const delivered = await deliverOne(note);
+      if (delivered?.stateChanged) stateChanged = true;
     } catch (error) {
       console.warn(`通知配送失敗 (${note.event}): ${error.message}`);
+    }
+  }
+  if (stateChanged) {
+    try {
+      store.save(engine.state);
+    } catch (error) {
+      console.warn(`通知状態の保存に失敗しました: ${error.message}`);
     }
   }
 }
@@ -956,23 +984,34 @@ async function deliverNotifications(notifications) {
 async function deliverOne(note) {
   const userRec = engine.state.users?.[note.userId];
   const enabled = Boolean(userRec?.notifyEnabled);
+  const sellerSaleDm = note.event === "listing_sold" && userRec?.marketplace?.salesDmEnabled !== false;
   const embed = buildNotificationEmbed(note);
-  if (!embed) return;
-  if (enabled) {
+  if (!embed) return { stateChanged: false };
+  let stateChanged = false;
+  if (enabled || sellerSaleDm) {
     const discordId = extractDiscordUserId(note.userId);
     if (discordId) {
       try {
         const user = await client.users.fetch(discordId).catch(() => null);
         if (user) {
           await user.send({ embeds: [embed] });
-          return;
+          const changed = sellerSaleDm && note.data?.orderId
+            ? engine.markOrderSellerNotification(note.data.orderId, "sent")
+            : false;
+          return { stateChanged: changed };
         }
       } catch (error) {
-        // DM 拒否や fetch 失敗はログ fallback
+        if (sellerSaleDm && note.data?.orderId) {
+          stateChanged = engine.markOrderSellerNotification(note.data.orderId, "failed") || stateChanged;
+        }
       }
     }
   }
   await sendLog({ ok: true, title: embed.data?.title || "通知", lines: [embed.data?.description || ""].filter(Boolean) });
+  if (sellerSaleDm && note.data?.orderId) {
+    stateChanged = engine.markOrderSellerNotification(note.data.orderId, "failed") || stateChanged;
+  }
+  return { stateChanged };
 }
 
 function extractDiscordUserId(internalUserId) {
@@ -1003,6 +1042,8 @@ function buildNotificationEmbed(note) {
         .setColor(0x22c55e)
         .setDescription(`#${data.listingId} **${data.itemName}** を ${data.buyerName} が購入しました。`)
         .addFields(
+          { name: "取引ID", value: data.orderId ? `#${data.orderId}` : "-", inline: true },
+          { name: "購入者", value: extractDiscordUserId(data.buyerId) ? `<@${extractDiscordUserId(data.buyerId)}>` : data.buyerName || "-", inline: true },
           { name: "売上", value: fmt(data.sellerReceive || 0), inline: true },
           { name: "価格", value: fmt(data.price || 0), inline: true },
           { name: "対応", value: data.manual ? "手動対応が必要（取引中）" : "自動付与済み", inline: true }
@@ -2466,6 +2507,50 @@ async function handleShopStatusToggle(interaction) {
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
   await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleShopSalesDmToggle(interaction) {
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.setSalesDmEnabled(user);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleBoostRewardRoleSelect(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const key = interaction.customId.split(":")[3];
+  const roleId = interaction.values?.[0] || null;
+  if (!roleId || !interaction.guild?.roles?.cache?.has(roleId)) {
+    await interaction.reply({ content: "このサーバー内のロールを選んでください。", ephemeral: true });
+    return;
+  }
+  const actor = actorFromInteraction(interaction);
+  const result = engine.adminSetBoostRewardRole(engine.getUser(actor.id, actor.name), key, roleId);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await updateDiscord(interaction, result);
+}
+
+async function handleBoostRewardButton(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (interaction.customId === "eco:boost:run-monthly") {
+    await interaction.deferUpdate();
+    const result = await reconcileTrackedBoostRewards("manual");
+    const actor = actorFromInteraction(interaction);
+    const panelResult = engine.panelResult(engine.boostRewardAdminPanel(engine.getUser(actor.id, actor.name)));
+    panelResult.title = "ブースト報酬を再確認しました";
+    panelResult.lines.unshift(`付与 ${result.paid}件 / スキップ ${result.skipped}件 / エラー ${result.failed}件`);
+    decorateResultForDiscord(panelResult, interaction);
+    await interaction.editReply({ embeds: [buildEmbed(panelResult)], components: buildComponents(panelResult, { fallback: true }) });
+  }
 }
 
 async function handleReviewButton(interaction) {
@@ -4035,6 +4120,126 @@ function startOfficialRoleExpirySweeper() {
   }, 60_000).unref?.();
 }
 
+function startBoostRewardSweeper() {
+  setTimeout(() => {
+    void reconcileTrackedBoostRewards("ready");
+  }, 10_000).unref?.();
+  setInterval(() => {
+    void reconcileTrackedBoostRewards("sweeper");
+  }, boostRewardSweepMs).unref?.();
+}
+
+async function reconcileTrackedBoostRewards(reason = "sweeper") {
+  const tracked = Object.values(engine.state.boostRewards?.members || {}).filter((member) => member.active && member.guildId && member.discordUserId);
+  const summary = { paid: 0, skipped: 0, failed: 0 };
+  for (const trackedMember of tracked) {
+    const guild = client.guilds.cache.get(trackedMember.guildId);
+    if (!guild) {
+      summary.skipped += 1;
+      continue;
+    }
+    const member = await guild.members.fetch(trackedMember.discordUserId).catch(() => null);
+    if (!member || member.user?.bot) {
+      const before = snapshotEngineState();
+      try {
+        recordBoostMemberLeft({
+          guild,
+          user: { id: trackedMember.discordUserId, bot: false },
+          displayName: trackedMember.displayName
+        });
+        store.save(engine.state);
+      } catch (error) {
+        engine.state = before;
+        console.warn(`ブースト追跡状態の保存に失敗しました: ${error.message}`);
+      }
+      summary.skipped += 1;
+      continue;
+    }
+    const result = await handleBoostMemberState(member, reason);
+    if (result?.reward?.changed) summary.paid += 1;
+    else if (result?.ok === false) summary.failed += 1;
+    else summary.skipped += 1;
+  }
+  return summary;
+}
+
+async function handleBoostMemberState(member, reason = "member-update") {
+  if (!member?.guild || !member.user || member.user.bot) return { ok: false };
+  const active = Boolean(member.premiumSince);
+  const before = snapshotEngineState();
+  let observation = null;
+  let reward = null;
+  try {
+    observation = engine.recordBoostMemberObservation({
+      guildId: member.guild.id,
+      discordUserId: member.user.id,
+      displayName: member.displayName || member.user.globalName || member.user.username,
+      premiumSince: member.premiumSince ? member.premiumSince.toISOString() : null,
+      active
+    });
+    await syncConfiguredBoosterRole(member, active);
+    reward = active
+      ? engine.claimBoostMonthlyRewardForMember({
+          guildId: member.guild.id,
+          discordUserId: member.user.id,
+          displayName: member.displayName || member.user.globalName || member.user.username,
+          premiumSince: member.premiumSince.toISOString(),
+          roleIds: member.roles.cache.keys()
+        })
+      : { changed: false };
+    if (observation?.changed || reward?.changed) {
+      store.save(engine.state);
+      if (reward?.changed) {
+        await sendLog({
+          ok: true,
+          title: "サーバーブースト報酬",
+          lines: [
+            `${member.displayName} に ${fmt(reward.reward.amount)} を付与しました。`,
+            `tier ${reward.reward.tier} / ${reward.reward.monthKey}${reward.reward.continuityBonus ? ` / 継続 ${fmt(reward.reward.continuityBonus)}` : ""}`
+          ]
+        });
+      }
+    }
+    return { ok: true, observation, reward };
+  } catch (error) {
+    engine.state = before;
+    console.warn(`ブースト報酬処理に失敗しました (${reason}): ${error.message}`);
+    return { ok: false, error };
+  }
+}
+
+function recordBoostMemberLeft(member) {
+  if (!member?.guild || !member.user || member.user.bot) return;
+  engine.recordBoostMemberObservation({
+    guildId: member.guild.id,
+    discordUserId: member.user.id,
+    displayName: member.displayName || member.user.globalName || member.user.username,
+    active: false
+  });
+}
+
+async function syncConfiguredBoosterRole(member, active) {
+  const roleId = engine.boostRewardSettings?.().boosterRoleId;
+  if (!roleId || !member?.guild || !member.roles?.cache) return;
+  const role = await member.guild.roles.fetch(roleId).catch(() => null);
+  const botMember = member.guild.members.me;
+  if (!role || role.managed || !botMember?.permissions.has(PermissionFlagsBits.ManageRoles) || role.position >= botMember.roles.highest.position) {
+    console.warn("ブースター自動ロールを操作できません。ロール位置とManage Roles権限を確認してください。");
+    return;
+  }
+  const hasRole = member.roles.cache.has(roleId);
+  try {
+    if (active && !hasRole) await member.roles.add(role, "サーバーブースト報酬: ブースター自動ロール");
+    if (!active && hasRole) await member.roles.remove(role, "サーバーブースト報酬: ブースター自動ロール解除");
+  } catch (error) {
+    console.warn(`ブースター自動ロール操作に失敗しました: ${error.message}`);
+  }
+}
+
+function snapshotEngineState() {
+  return JSON.parse(JSON.stringify(engine.state));
+}
+
 function formatDiscord(result) {
   return formatResult(result).replace(/^◆ /, "**◆ ").replace(/^◇ /, "**◇ ").replace(/\n/, "**\n");
 }
@@ -4165,6 +4370,18 @@ function buildComponents(result, options = {}) {
       return row;
     }
 
+    if (component.type === "role-select") {
+      row.addComponents(
+        new RoleSelectMenuBuilder()
+          .setCustomId(String(component.customId || `eco:role-select:${rowIndex}`).slice(0, 100))
+          .setPlaceholder(component.placeholder || "ロールを選択")
+          .setMinValues(1)
+          .setMaxValues(1)
+          .setDisabled(Boolean(component.disabled))
+      );
+      return row;
+    }
+
     return row;
   });
 }
@@ -4224,6 +4441,7 @@ function commandFromComponent(interaction) {
     if (parts[1] === "admin" && parts[2] === "balance-role-cancel") return `balance-role-cancel ${parts[3]}`;
     if (parts[1] === "shop" && parts[2] === "search-open") return "shop-search-open";
     if (parts[1] === "shop" && parts[2] === "status-toggle") return "shop-status-toggle";
+    if (parts[1] === "shop" && parts[2] === "sales-dm-toggle") return "shop-sales-dm-toggle";
     if (parts[1] === "shop" && parts[2] === "edit") return `shop-edit ${parts[3]}`;
     if (parts[1] === "shop" && parts[2] === "resubmit") return `shop-resubmit ${parts[3]}`;
     if (parts[1] === "market" && parts[2] === "settings-edit") return "market-settings-edit";
