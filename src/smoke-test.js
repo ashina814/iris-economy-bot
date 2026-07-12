@@ -114,8 +114,13 @@ const marketAdminIds = marketAdminPanel.components
   .filter((component) => component.type === "buttons")
   .flatMap((component) => component.items.map((item) => item.kind === "custom" ? item.customId : `${item.kind}:${item.panel || item.command}`));
 assert.strictEqual(new Set(marketAdminIds).size, marketAdminIds.length, "ショップ管理トップに重複ボタンを置いてはいけません");
+assert(JSON.stringify(marketAdminPanel.components).includes("official-fulfillment"), "market admin must open the official fulfillment queue");
+const marketAdminSecondary = marketAdminPanel.components.find((component) => component.type === "select");
+assert(marketAdminSecondary?.options.some((item) => item.value === "panel:user-shops"), "private listings must remain reachable from secondary navigation");
+assert(marketAdminSecondary?.options.some((item) => item.value === "panel:marketplace"), "buyer shop view must remain reachable from secondary navigation");
 const officialProductAdminPanel = engine.run("panel official-product-admin", officialAdminActor).panel;
 assert(JSON.stringify(officialProductAdminPanel.components).includes("eco:market:official-item-create"), "公式商品管理から商品追加へ進める必要があります");
+assert(!JSON.stringify(officialProductAdminPanel.components).includes("official-shop"), "official product management must not duplicate the buyer shop link");
 const setOfficialPurchaseLog = engine.setOfficialPurchaseLogChannel(officialAdmin, "123456789012345678");
 assert(setOfficialPurchaseLog.ok, "公式商品購入の通知先を設定できる必要があります");
 assert.strictEqual(engine.officialPurchaseLogChannelId(), "123456789012345678", "公式商品購入の通知先を保存する必要があります");

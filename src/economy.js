@@ -1855,7 +1855,7 @@ class EconomyEngine {
         ]),
         buttons([
           panelButton("対応キュー", "official-fulfillment"),
-          panelButton("公式ショップ確認", "official-shop"),
+          panelButton("商品一覧", "official-product-admin"),
           panelButton("ショップ管理", "market-admin")
         ])
       ]
@@ -3019,18 +3019,19 @@ class EconomyEngine {
       components: [
         buttons([
           panelButton("公式商品", "official-product-admin", "primary"),
-          panelButton("民営出品", "user-shops"),
-          panelButton("取引対応", "market-trades")
+          panelButton("対応キュー", "official-fulfillment", "primary"),
+          panelButton("公式オークション", "official-auction-admin", "primary")
         ]),
         buttons([
           panelButton("出品審査", "market-review"),
-          panelButton("公式オークション管理", "official-auction-admin"),
+          panelButton("取引対応", "market-trades"),
           customButton("ショップ設定", "eco:market:settings-edit", "secondary")
         ]),
-        buttons([
-          panelButton("ログ確認", "market-logs"),
-          panelButton("ショップを確認", "marketplace"),
-          panelButton("運営パネル", "admin")
+        select("その他の管理画面", [
+          option("民営出品一覧", "panel:user-shops", "公開中の民営出品を確認"),
+          option("ショップログ", "panel:market-logs", "直近の運営操作を確認"),
+          option("購入者画面を確認", "panel:marketplace", "住民に見えるショップ画面"),
+          option("運営パネルへ", "panel:admin", "管理トップへ戻る")
         ])
       ]
     };
@@ -3055,8 +3056,7 @@ class EconomyEngine {
         buttons([
           customButton("商品を追加", "eco:market:official-item-create", "primary"),
           panelButton("対応キュー", "official-fulfillment"),
-          panelButton("ショップを確認", "official-shop"),
-          panelButton("戻る", "market-admin")
+          panelButton("ショップ管理", "market-admin")
         ]),
         buttons([
           customButton("このチャンネルに購入通知", "eco:market:official-purchase-log-set", "success"),
@@ -3088,7 +3088,7 @@ class EconomyEngine {
         buttons([
           customButton("オークションを作成", "eco:market:auction-create", "success"),
           panelButton("開催中を確認", "official-auctions", "primary"),
-          panelButton("戻る", "market-admin")
+          panelButton("ショップ管理", "market-admin")
         ]),
         ...(openAuctions.length
           ? [select("緊急終了するオークション", openAuctions.slice(0, 25).map((auction) =>
@@ -3163,9 +3163,8 @@ class EconomyEngine {
           option(`#${task.id} ${task.itemName}`.slice(0, 90), `run:marketplace official-fulfillment ${task.id}`, `${task.buyerName} / ${officialFulfillmentStatusLabel(task.status)}`.slice(0, 100))
         ))] : []),
         buttons([
-          panelButton("ショップ管理", "market-admin"),
-          panelButton("公式ショップ確認", "official-shop"),
-          panelButton("ショップ", "marketplace")
+          panelButton("公式商品", "official-product-admin"),
+          panelButton("ショップ管理", "market-admin")
         ])
       ]
     };
@@ -3364,7 +3363,7 @@ class EconomyEngine {
       components.push(select("審査する商品を選ぶ", pending.map((listing) =>
         option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace review ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`))));
     }
-    components.push(buttons([panelButton("ショップ管理", "market-admin"), panelButton("運営パネル", "admin")]));
+    components.push(buttons([panelButton("ショップ管理", "market-admin")]));
     return {
       title: "出品審査",
       description: pending.length ? "審査待ちの商品です。1件を選んで承認/却下してください。" : "審査待ちの商品はありません。",
@@ -3423,7 +3422,7 @@ class EconomyEngine {
       components.push(select("この取引を管理", openOrders.map((order) =>
         option(`#${order.id} ${order.itemName}`.slice(0, 90), `run:marketplace order ${order.id}`, `${order.buyerName} <- ${order.sellerName}`))));
     }
-    components.push(buttons([panelButton("ショップ管理", "market-admin"), panelButton("運営パネル", "admin")]));
+    components.push(buttons([panelButton("ショップ管理", "market-admin")]));
     return {
       title: "取引対応",
       description: openOrders.length ? "手動対応中または報告中の取引です。1件を選んで対応してください。" : "対応待ちの取引はありません。",
@@ -3576,7 +3575,7 @@ class EconomyEngine {
       fields: [
         { name: "ログ", value: this.state.marketplace.logs.slice(-10).reverse().join("\n") || "まだログはありません。", inline: false }
       ],
-      components: [buttons([panelButton("ショップ管理", "market-admin"), panelButton("運営パネル", "admin")])]
+      components: [buttons([panelButton("ショップ管理", "market-admin")])]
     };
   }
 
