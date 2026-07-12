@@ -145,6 +145,19 @@ const officialTask = engine.state.marketplace.officialFulfillment[0];
 assert.strictEqual(officialTask.status, "pending", "ロール未設定の商品は運営対応待ちにする必要があります");
 const completeOfficialTask = engine.completeOfficialFulfillment(officialAdmin, officialTask.id);
 assert(completeOfficialTask.ok && officialTask.status === "completed", "運営が公式商品対応を完了できる必要があります");
+const manualTicketTask = engine.createOfficialFulfillment(officialAdmin, {
+  id: "name-change",
+  name: "名前変更権",
+  roleId: null,
+  roleDurationDays: 0,
+  dmGuide: ""
+});
+const manualTicketPanel = engine.officialFulfillmentTaskPanel(officialAdmin, manualTicketTask.id);
+assert(JSON.stringify(manualTicketPanel.components).includes(`eco:market:official-fulfillment-ticket:${manualTicketTask.id}`), "手動対応の公式商品にはチケット作成導線が必要です");
+const recordOfficialTicket = engine.recordOfficialFulfillmentTicket(officialAdmin, manualTicketTask.id, "123456789012345678");
+assert(recordOfficialTicket.ok, "公式商品対応チケットを記録できる必要があります");
+assert.strictEqual(manualTicketTask.ticketChannelId, "123456789012345678", "公式商品対応チケットのチャンネルIDを保存する必要があります");
+assert(!engine.recordOfficialFulfillmentTicket(officialAdmin, manualTicketTask.id, "234567890123456789").ok, "同じ公式商品対応にチケットを重複作成してはいけません");
 const officialInventory = engine.run("panel market-inventory", actor);
 assert(JSON.stringify(officialInventory.panel).includes("VIPパス30日"), "追加公式商品が持ち物に表示される必要があります");
 

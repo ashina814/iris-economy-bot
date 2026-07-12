@@ -84,6 +84,7 @@ const tempInnVoiceChannels = new Set();
 const yadoTimers = new Map();
 const rankPanelRefreshTimers = new Map();
 const salarySessions = new Map();
+const officialFulfillmentTicketLocks = new Set();
 const SALARY_SESSION_TTL_MS = 10 * 60 * 1000;
 const DISBOARD_BOT_ID = "302050872383242240";
 const boostRewardSweepMs = Math.max(60, parsePositiveIntEnv("IRIS_BOOST_REWARD_SWEEP_SECONDS", 6 * 60 * 60)) * 1000;
@@ -446,6 +447,7 @@ async function handleInteraction(interaction) {
 
     const actor = actorFromInteraction(interaction);
     const result = engine.run(command, actor);
+    applyOfficialPurchaseUsername(result, interaction.user);
     decorateResultForDiscord(result, interaction);
     store.save(engine.state);
     await updateDiscord(interaction, result);
@@ -472,6 +474,7 @@ async function handleInteraction(interaction) {
   }
   const actor = actorFromInteraction(interaction);
   const result = engine.run(command, actor);
+  applyOfficialPurchaseUsername(result, interaction.user);
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
 
@@ -518,6 +521,7 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
   const result = engine.run(command, actor);
+  applyOfficialPurchaseUsername(result, message.author);
   decorateResultForDiscord(result, message);
   store.save(engine.state);
   await sendResult(message.channel, result);
@@ -605,7 +609,7 @@ client.on(Events.GuildMemberUpdate, async (_oldMember, member) => {
 });
 
 if (process.env.IRIS_ENTRYPOINT_TEST === "1") {
-  module.exports = { assertUniquePanelComponentIds, buildComponents, client, engine, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult };
+  module.exports = { applyOfficialPurchaseUsername, assertUniquePanelComponentIds, buildComponents, client, engine, officialPurchaseBuyerName, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult };
 } else {
   client.login(token);
 }
@@ -1574,6 +1578,10 @@ async function handleOfficialFulfillmentControl(interaction) {
     const result = await grantOfficialRoleForTask(interaction.guild, task, interaction.user.id);
     decorateResultForDiscord(result, interaction);
     await updateDiscord(interaction, result);
+    return;
+  }
+  if (action === "ticket") {
+    await createOfficialFulfillmentTicket(interaction, admin, taskId);
   }
 }
 
@@ -1583,8 +1591,80 @@ function parseOfficialFulfillmentControlId(customId) {
   const taskId = parts[3] || "";
   if (parts[0] !== "eco" || parts[1] !== "market" || !actionToken.startsWith("official-fulfillment-") || !taskId) return null;
   const action = actionToken.slice("official-fulfillment-".length);
-  if (!["complete", "retry"].includes(action)) return null;
+  if (!["complete", "retry", "ticket"].includes(action)) return null;
   return { action, taskId };
+}
+
+async function createOfficialFulfillmentTicket(interaction, admin, taskId) {
+  const task = engine.officialFulfillmentTask(taskId);
+  if (!task || task.status !== "pending" || task.roleId || task.ticketChannelId || !interaction.guild) {
+    await interaction.reply({ content: "この購入には新しい対応チケットを作成できません。対応キューを開き直してください。", ephemeral: true });
+    return;
+  }
+
+  const lockKey = `${interaction.guild.id}:${task.id}`;
+  if (officialFulfillmentTicketLocks.has(lockKey)) {
+    await interaction.reply({ content: "この購入のチケットを作成しています。少し待ってから対応キューを最新化してください。", ephemeral: true });
+    return;
+  }
+
+  officialFulfillmentTicketLocks.add(lockKey);
+  try {
+    const discordUserId = extractDiscordUserId(task.buyerId);
+    const buyer = discordUserId ? await interaction.guild.members.fetch(discordUserId).catch(() => null) : null;
+    const botMember = interaction.guild.members.me;
+    if (!buyer) {
+      await interaction.reply({ content: "購入者がサーバー内で見つかりません。対応キューから手動対応してください。", ephemeral: true });
+      return;
+    }
+    if (!botMember?.permissions?.has?.(PermissionFlagsBits.ManageChannels)) {
+      await interaction.reply({ content: "Botにチャンネル管理権限がないため、対応チケットを作成できません。", ephemeral: true });
+      return;
+    }
+
+    const accessIds = [...new Set([buyer.id, interaction.user.id, client.user?.id, ...adminUserIds].filter(Boolean))];
+    const channel = await interaction.guild.channels.create({
+      name: safeChannelName(`shop-${task.id}-${buyer.user.username}`),
+      type: ChannelType.GuildText,
+      permissionOverwrites: [
+        { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        ...accessIds.map((id) => ({
+          id,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+        }))
+      ],
+      reason: `公式商品対応 #${task.id}`
+    });
+
+    let result;
+    const logLength = engine.state.marketplace.logs.length;
+    try {
+      result = engine.recordOfficialFulfillmentTicket(admin, task.id, channel.id);
+      if (!result.ok) throw new Error("公式商品対応チケットの状態を保存できませんでした。");
+      store.save(engine.state);
+    } catch (error) {
+      engine.rollbackOfficialFulfillmentTicket(task.id, channel.id, logLength);
+      await channel.delete("公式商品対応チケットの保存に失敗したため削除").catch(() => null);
+      throw error;
+    }
+
+    await channel.send({
+      content: `<@${buyer.id}>`,
+      embeds: [new EmbedBuilder()
+        .setTitle(`公式商品対応 #${task.id}`)
+        .setDescription("購入内容の確認と必要事項の聞き取りを行うチケットです。名前変更の商品は、希望する名前をこのチャンネルに送ってください。")
+        .addFields(
+          { name: "商品", value: task.itemName },
+          { name: "購入者", value: buyer.user.username }
+        )
+        .setColor(0x334155)]
+    }).catch((error) => console.warn(`公式商品対応チケットの案内送信に失敗しました: ${error.message}`));
+
+    decorateResultForDiscord(result, interaction);
+    await updateDiscord(interaction, result);
+  } finally {
+    officialFulfillmentTicketLocks.delete(lockKey);
+  }
 }
 
 async function showOfficialItemEditModal(interaction, id) {
@@ -4095,6 +4175,20 @@ async function processOfficialPurchaseEffects(interaction, result) {
       embeds: [new EmbedBuilder().setTitle(`購入ありがとうございます: ${fulfillment.itemName}`).setDescription(guide.slice(0, 4000)).setColor(0x8b5cf6)]
     }).catch(() => null);
   }
+}
+
+function officialPurchaseBuyerName(user) {
+  const username = String(user?.username || "").trim();
+  return username ? username.slice(0, 80) : null;
+}
+
+function applyOfficialPurchaseUsername(result, user) {
+  const username = officialPurchaseBuyerName(user);
+  const purchase = result?.officialPurchase;
+  if (!username || !purchase) return;
+  purchase.buyerName = username;
+  const task = purchase.fulfillmentId ? engine.officialFulfillmentTask(purchase.fulfillmentId) : null;
+  if (task) task.buyerName = username;
 }
 
 async function notifyOfficialPurchase(result) {
