@@ -233,23 +233,6 @@ function decorateTunedPanels(result, engine) {
   const panel = result?.panel;
   if (!panel || typeof panel !== "object") return result;
 
-  if (panel.title === "運営パネル") {
-    panel.fields ||= [];
-    if (!panel.fields.some((field) => field?.name === "TC/VC XP設定")) {
-      panel.fields.splice(3, 0, {
-        name: "TC/VC XP設定",
-        value: "TC獲得XP、TCクールダウン、VC XP/分、VC場所別倍率を調整できます。",
-        inline: true
-      });
-    }
-
-    panel.components ||= [];
-    const row = panel.components.find((component) => component?.type === "buttons" && Array.isArray(component.items));
-    if (row && !row.items.some((item) => item?.panel === "rank-xp-settings")) {
-      row.items.splice(Math.max(0, row.items.length - 1), 0, panelButton("XP設定", "rank-xp-settings"));
-    }
-  }
-
   if (panel.title === "ランク設定") {
     panel.fields ||= [];
     if (!panel.fields.some((field) => field?.name === "TC/VC XP設定")) {
@@ -266,13 +249,16 @@ function decorateTunedPanels(result, engine) {
         inline: false
       });
     }
-
     panel.components ||= [];
-    panel.components.push(buttons([
-      panelButton("XP設定", "rank-xp-settings", "primary"),
-      panelButton("VC XP倍率設定", "vc-xp-location-settings", "success"),
-      panelButton("運営パネル", "admin")
-    ]));
+    const hasXpControls = panel.components.some((component) =>
+      component?.type === "buttons" && component.items?.some((item) => item?.panel === "rank-xp-settings")
+    );
+    if (!hasXpControls) {
+      panel.components.push(buttons([
+        panelButton("TC/VC XP設定", "rank-xp-settings", "primary"),
+        panelButton("VC XP倍率設定", "vc-xp-location-settings", "success")
+      ]));
+    }
   }
 
   return result;
@@ -498,11 +484,6 @@ function vcXpLocationPanel(engine, message = null) {
         { name: "挙動", value: "通常XP対象が1件もない場合は既存互換として全VCを100%扱いにします。Ris報酬とVC分数は倍率の影響を受けません。", inline: false }
       ],
       components: [
-        { type: "buttons", items: [
-          { kind: "custom", label: "カテゴリを追加", customId: "eco:vcxp:noop:category", style: "secondary", disabled: true },
-          { kind: "custom", label: "VCを追加", customId: "eco:vcxp:noop:channel", style: "secondary", disabled: true },
-          panelButton("対象一覧", "vc-xp-location-settings")
-        ] },
         channelSelect("eco:vcxp:category-add", "通常XPカテゴリを追加", ["category"]),
         channelSelect("eco:vcxp:channel-add", "通常XP VCを追加", ["voice"]),
         { type: "buttons", items: [
@@ -512,7 +493,7 @@ function vcXpLocationPanel(engine, message = null) {
         ] },
         { type: "buttons", items: [
           runButton("対象を全解除", "rankxp vc-location clear", "danger", settings.vcFullXpCategoryIds.length + settings.vcFullXpChannelIds.length === 0),
-          panelButton("戻る", "admin-rank")
+          panelButton("ランク・XP管理", "admin-rank")
         ] }
       ]
     }

@@ -18,7 +18,18 @@ assert(!fs.readFileSync(require.resolve("./discord-entry-manual-join"), "utf8").
 
 const actor = { id: "entrypoint-test:user", name: "entrypoint tester" };
 engine.run("join", actor);
-for (const command of ["panel home", "panel admin", "panel market-admin", "panel official-product-admin", "panel official-auction-admin"]) {
+for (const command of [
+  "panel home",
+  "panel admin",
+  "panel admin-maintenance",
+  "panel admin-rank",
+  "panel rank-xp-settings",
+  "panel vc-xp-location-settings",
+  "panel boost-rewards",
+  "panel market-admin",
+  "panel official-product-admin",
+  "panel official-auction-admin"
+]) {
   const result = engine.run(command, actor);
   if (result.panel) buildComponents(result);
 }

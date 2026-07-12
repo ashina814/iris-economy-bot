@@ -522,6 +522,7 @@ class EconomyEngine {
       "campaign-pending": () => this.campaignPendingPanel(user),
       "admin-balance": () => this.adminBalancePanel(user),
       "admin-rank": () => this.adminRankPanel(user),
+      "admin-maintenance": () => this.adminMaintenancePanel(user),
       "boost-rewards": () => this.boostRewardAdminPanel(user),
       "search-results": () => this.searchResultsPanel(user),
       "notify": () => this.notifyPanel(user),
@@ -569,36 +570,27 @@ class EconomyEngine {
       }),
       admin: () => ({
         title: "運営パネル",
-        description: "運営機能を目的別のサブパネルに分けています。",
+        description: "目的ごとの入口です。日常の操作と危険な一括操作を分けています。",
         color: 0x334155,
         fields: [
           { name: "ショップ管理", value: "公式商品、審査、取引対応、公式オークション", inline: true },
           { name: "残高操作", value: "個人セット/加算/減算、ロール一括セット、給与配布（一括加算）", inline: true },
-          { name: "ランク設定", value: "昇格通知先の指定、ランク確認パネルの設置", inline: true },
+          { name: "ランク・XP", value: "昇格通知、ランク確認パネル、TC/VC XP、VC場所別倍率", inline: true },
+          { name: "ブースト報酬", value: "自動ブースターロール、1/2/3枠+報酬、月次支給状況", inline: true },
           { name: "Invite Campaign", value: "定期開催型の招待キャンペーン管理", inline: true },
-          { name: "パネル送信", value: "住民向けの常設パネルをこのチャンネルへ送信できます。", inline: false }
+          { name: "保守・パネル", value: "ショップ入口の送信、ニックネーム整理などの運営保守", inline: true }
         ],
         components: [
           buttons([
             panelButton("ショップ管理", "market-admin", "primary"),
             panelButton("残高操作", "admin-balance", "success"),
-            panelButton("ランク設定", "admin-rank"),
-            panelButton("Campaign管理", "admin-campaign"),
+            panelButton("ランク・XP", "admin-rank", "primary"),
             panelButton("ブースト報酬", "boost-rewards", "primary")
           ]),
           buttons([
-            customButton("常設ショップ送信", "eco:market:post-panel"),
+            panelButton("Campaign管理", "admin-campaign"),
+            panelButton("保守・パネル", "admin-maintenance"),
             panelButton("ホーム", "home")
-          ]),
-          select("公開したいパネル", [
-            option("ホーム", "panel:home", "入口"),
-            option("ショップ", "panel:marketplace", "買う側の入口"),
-            option("自分の店", "panel:my-shop", "売る側の入口"),
-            option("ショップ管理", "panel:market-admin", "公式商品、審査、取引対応"),
-            option("Campaign管理", "panel:admin-campaign", "IRIS Invite Campaign"),
-            option("ブースト報酬", "panel:boost-rewards", "月次報酬とロール設定"),
-            option("二人宿", "panel:inn", "2人用VC作成パネル"),
-            option("招待", "panel:invite", "招待台帳")
           ])
         ]
       }),
@@ -3477,25 +3469,43 @@ class EconomyEngine {
   adminRankPanel(user) {
     return {
       title: "ランク設定",
-      description: "発言/通話ランクの昇格通知先と、住民向けランク確認パネルを管理します。",
+      description: "昇格通知と常設ランクパネルを管理します。TC/VC XPの調整は下のXP設定から行えます。",
       color: 0x7c3aed,
       fields: [
         { name: "ランク確認パネル", value: "住民が自分のランクと順位を見るための常設パネル。テキストチャンネルに1枚置くだけ。", inline: false },
         { name: "昇格通知先", value: "発言/通話ランクが上がった時にお祝いメッセージを投稿するチャンネル。未設定なら環境変数を使います。", inline: false },
-        { name: "VC XP倍率設定", value: "通常XP対象カテゴリ/VCと、対象外VCのXP倍率を管理します。", inline: false }
+        { name: "一括リセット", value: "TC/VCの経験値と集計を全員分リセットします。確認画面を経て実行されます。", inline: false }
       ],
       components: [
         buttons([
           customButton("ランク確認パネル設置", "eco:admin:rank-panel-post", "primary"),
           customButton("昇格通知先をここに", "eco:admin:rank-notify-set", "success"),
           customButton("昇格通知先をクリア", "eco:admin:rank-notify-clear"),
-          panelButton("VC XP倍率設定", "vc-xp-location-settings", "primary"),
           panelButton("運営パネル", "admin")
         ]),
         buttons([
           customButton("TC一括リセット", "eco:admin:rank-reset-confirm:tc", "danger"),
           customButton("VC一括リセット", "eco:admin:rank-reset-confirm:vc", "danger"),
           customButton("TC/VC一括リセット", "eco:admin:rank-reset-confirm:both", "danger")
+        ])
+      ]
+    };
+  }
+
+  adminMaintenancePanel(user) {
+    return {
+      title: "保守・パネル",
+      description: "常設メッセージの送信と、サーバー運用向けの保守操作です。影響範囲を確認してから実行してください。",
+      color: 0x475569,
+      fields: [
+        { name: "ショップ入口", value: "このチャンネルに、利用者向けのショップ入口パネルを送信します。", inline: true },
+        { name: "ニックネーム整理", value: "対象人数を確認してから、変更可能なカスタムニックネームだけを一括削除します。", inline: true }
+      ],
+      components: [
+        buttons([
+          customButton("ショップ入口を送信", "eco:market:post-panel", "primary"),
+          customButton("ニックネーム整理", "eco:admin:nickname-clear-preview", "danger"),
+          panelButton("運営パネル", "admin")
         ])
       ]
     };

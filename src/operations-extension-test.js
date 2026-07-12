@@ -124,7 +124,7 @@ assert.strictEqual(nextJstMidnight("2026-07-11T14:59:59.000Z").toISOString(), "2
   const user = fakeUser({ joined: true });
   const adminPanel = engine.panel(user, "admin").panel;
   assert.ok(adminPanel.components.every((row) => row.type !== "buttons" || row.items.length <= 5));
-  assert.ok(adminPanel.components.flatMap((row) => row.items || []).some((item) => item.customId === "eco:admin:nickname-clear-preview"));
+  assert.ok(!adminPanel.components.flatMap((row) => row.items || []).some((item) => item.customId === "eco:admin:nickname-clear-preview"));
   const homePanel = engine.panel(user, "home").panel;
   assert.ok(homePanel.fields.some((field) => field.name === "ログボ"));
 }

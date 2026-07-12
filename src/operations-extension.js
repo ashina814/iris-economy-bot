@@ -204,29 +204,6 @@ function installEconomyExtensions(economyModule) {
       }
     }
 
-    if (["admin", "管理", "運営"].includes(panelId)) {
-      panel.fields = Array.isArray(panel.fields) ? panel.fields : [];
-      panel.fields.push({
-        name: "ニックネーム整理",
-        value: "サーバー内のカスタムニックネームを確認後に一括削除します。権限順位で変更できないメンバーは自動でスキップします。",
-        inline: false
-      });
-      panel.components = Array.isArray(panel.components) ? panel.components : [];
-      panel.components.push({
-        type: "buttons",
-        items: [{
-          kind: "custom",
-          label: "ニックネーム一括削除",
-          customId: "eco:admin:nickname-clear-preview",
-          style: "danger",
-          disabled: false
-        }]
-      });
-      if (Array.isArray(result.lines)) {
-        result.lines.push("ニックネーム整理: 実行前に対象件数を確認します。");
-      }
-    }
-
     normalizePanelComponentRows(panel);
     return result;
   };
