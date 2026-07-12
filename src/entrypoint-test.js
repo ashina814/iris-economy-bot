@@ -56,8 +56,10 @@ for (const command of [
 const missingFromCache = { id: "entrypoint-test:missing", name: "cache-missing member" };
 engine.run("join", missingFromCache);
 const unjoinedActivity = { id: "entrypoint-test:activity-only", name: "activity-only member" };
-engine.getUser(unjoinedActivity.id, unjoinedActivity.name).activity.textXp = 150;
-engine.getUser(unjoinedActivity.id, unjoinedActivity.name).activity.vcXp = 150;
+// The entrypoint test may load a populated production-like state, so this must
+// remain above any existing leaderboard value rather than assuming a fresh store.
+engine.getUser(unjoinedActivity.id, unjoinedActivity.name).activity.textXp = 1_000_000;
+engine.getUser(unjoinedActivity.id, unjoinedActivity.name).activity.vcXp = 1_000_000;
 engine.getUser(actor.id, actor.name).activity.textXp = 10;
 engine.getUser(missingFromCache.id, missingFromCache.name).activity.textXp = 99;
 const savedDirectory = global.__IRIS_GUILD_MEMBER_DIRECTORY__;
