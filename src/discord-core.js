@@ -603,7 +603,7 @@ client.on(Events.GuildMemberUpdate, async (_oldMember, member) => {
 });
 
 if (process.env.IRIS_ENTRYPOINT_TEST === "1") {
-  module.exports = { assertUniquePanelComponentIds, buildComponents, client, engine };
+  module.exports = { assertUniquePanelComponentIds, buildComponents, client, engine, parseOfficialFulfillmentControlId };
 } else {
   client.login(token);
 }
@@ -1544,9 +1544,12 @@ async function handleOfficialMarketControl(interaction) {
 }
 
 async function handleOfficialFulfillmentControl(interaction) {
-  const parts = interaction.customId.split(":");
-  const action = parts[3];
-  const taskId = parts[4];
+  const control = parseOfficialFulfillmentControlId(interaction.customId);
+  if (!control) {
+    await interaction.reply({ content: "公式商品対応の操作を確認できませんでした。対応キューを開き直してください。", ephemeral: true });
+    return;
+  }
+  const { action, taskId } = control;
   const actor = actorFromInteraction(interaction);
   const admin = engine.getUser(actor.id, actor.name);
   if (action === "complete") {
@@ -1566,6 +1569,16 @@ async function handleOfficialFulfillmentControl(interaction) {
     decorateResultForDiscord(result, interaction);
     await updateDiscord(interaction, result);
   }
+}
+
+function parseOfficialFulfillmentControlId(customId) {
+  const parts = String(customId || "").split(":");
+  const actionToken = parts[2] || "";
+  const taskId = parts[3] || "";
+  if (parts[0] !== "eco" || parts[1] !== "market" || !actionToken.startsWith("official-fulfillment-") || !taskId) return null;
+  const action = actionToken.slice("official-fulfillment-".length);
+  if (!["complete", "retry"].includes(action)) return null;
+  return { action, taskId };
 }
 
 async function showOfficialItemEditModal(interaction, id) {
