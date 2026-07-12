@@ -52,6 +52,18 @@ assert(user.activity.textXp > 0, "TC経験値が増える必要があります")
 assert(user.activity.vcXp > 0, "VC経験値が増える必要があります");
 assert(!user.inventory.frame, "公式ショップ撤去中は商品を購入できてはいけません");
 
+const unjoinedRankerActor = { id: "test:unjoined-ranker", name: "未加入ランカー" };
+const unjoinedRanker = engine.getUser(unjoinedRankerActor.id, unjoinedRankerActor.name);
+unjoinedRanker.activity.textXp = 999;
+unjoinedRanker.activity.textMessages = 80;
+unjoinedRanker.activity.vcXp = 888;
+unjoinedRanker.activity.vcMinutes = 160;
+assert.strictEqual(unjoinedRanker.joined, false, "ランキング修正テスト用ユーザーは未加入のままにする必要があります");
+assert(engine.run("rank text", actor).lines.some((line) => line.includes(unjoinedRankerActor.name)), "TC実績を持つ未加入ユーザーはランキング対象にする必要があります");
+assert(engine.run("rank vc", actor).lines.some((line) => line.includes(unjoinedRankerActor.name)), "VC実績を持つ未加入ユーザーはランキング対象にする必要があります");
+assert.strictEqual(engine.serverPositionByTextXp(unjoinedRankerActor.id), 1, "TC昇格時の順位も未加入の活動者を含める必要があります");
+assert.strictEqual(engine.serverPositionByVcXp(unjoinedRankerActor.id), 1, "VC昇格時の順位も未加入の活動者を含める必要があります");
+
 const card = engine.run("card", actor);
 assert(card.card, "カードコマンドにDiscordカード情報が必要です");
 assert(card.lines.some((line) => line.includes("カード")), "カードコマンドにCLIカード表示が必要です");

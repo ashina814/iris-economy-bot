@@ -622,6 +622,14 @@ function memberRecordForUser(user, directory) {
   return directory && discordId ? directory.get(discordId) || null : null;
 }
 
+function isActivityLeaderboardEligible(user, axis) {
+  if (user?.joined) return true;
+  const activity = user?.activity || {};
+  if (axis === "text") return Number(activity.textXp) > 0 || Number(activity.textMessages) > 0;
+  if (axis === "vc") return Number(activity.vcXp) > 0 || Number(activity.vcMinutes) > 0;
+  return false;
+}
+
 function leaderboardSpec(typeRaw) {
   const type = normalizePanelId(typeRaw || "net");
   if (["text", "txt", "tc", "発言"].includes(type)) {
@@ -675,7 +683,11 @@ function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
   // guild.members.cache is intentionally partial: fetching every member here caused
   // Discord rate limits and interaction timeouts. It can enrich display names, but it
   // cannot decide who is eligible for a ledger-backed ranking.
-  const users = Object.values(engine.state.users || {}).filter((user) => user.joined);
+  const users = Object.values(engine.state.users || {}).filter((user) =>
+    spec.key === "text" || spec.key === "vc"
+      ? isActivityLeaderboardEligible(user, spec.key)
+      : user.joined
+  );
   const ranked = users
     .map((user) => ({ user, value: spec.score(user) }))
     .sort((a, b) => b.value - a.value || String(a.user.name || "").localeCompare(String(b.user.name || ""), "ja"));
