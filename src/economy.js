@@ -3138,7 +3138,10 @@ class EconomyEngine {
       createdAt: now,
       completedAt: null,
       completedBy: null,
-      expiresAt: null
+      expiresAt: null,
+      ticketChannelId: null,
+      ticketCreatedAt: null,
+      ticketCreatedBy: null
     };
     this.officialFulfillmentTasks().push(task);
     return task;
@@ -3152,7 +3155,7 @@ class EconomyEngine {
       color: 0x334155,
       fields: tasks.length ? tasks.map((task) => ({
         name: `#${task.id} ${task.itemName}`.slice(0, 256),
-        value: `${task.buyerName} / ${officialFulfillmentStatusLabel(task.status)}\n${task.roleId ? `ロール: <@&${task.roleId}>${task.expiresAt ? ` / 期限 ${shortDate(task.expiresAt)}` : ""}` : "手動対応"}\n${task.note || "対応待ち"}`.slice(0, 1024),
+        value: `${task.buyerName} / ${officialFulfillmentStatusLabel(task.status)}\n${task.roleId ? `ロール: <@&${task.roleId}>${task.expiresAt ? ` / 期限 ${shortDate(task.expiresAt)}` : ""}` : task.ticketChannelId ? `手動対応 / チケット <#${task.ticketChannelId}>` : "手動対応 / チケット未作成"}\n${task.note || "対応待ち"}`.slice(0, 1024),
         inline: false
       })) : [{ name: "対応待ちなし", value: "現在、運営対応が必要な公式商品の購入はありません。", inline: false }],
       components: [
@@ -3181,12 +3184,14 @@ class EconomyEngine {
         { name: "状態", value: officialFulfillmentStatusLabel(task.status), inline: true },
         { name: "ロール", value: task.roleId ? `<@&${task.roleId}>` : "なし", inline: true },
         { name: "期限", value: task.roleDurationDays > 0 ? `${task.roleDurationDays}日` : "なし / 無期限", inline: true },
+        { name: "チケット", value: task.ticketChannelId ? `<#${task.ticketChannelId}>` : task.roleId ? "不要（ロール自動付与）" : "未作成", inline: true },
         { name: "メモ", value: task.note || "-", inline: false }
       ],
       components: [
         ...(task.status === "pending" ? [buttons([
           customButton("対応を完了", `eco:market:official-fulfillment-complete:${task.id}`, "success"),
-          ...(task.roleId ? [customButton("ロールを再試行", `eco:market:official-fulfillment-retry:${task.id}`, "primary")] : [])
+          ...(task.roleId ? [customButton("ロールを再試行", `eco:market:official-fulfillment-retry:${task.id}`, "primary")] : []),
+          ...(!task.roleId && !task.ticketChannelId ? [customButton("購入者とチケットを作成", `eco:market:official-fulfillment-ticket:${task.id}`, "primary")] : [])
         ])] : []),
         buttons([panelButton("対応キュー", "official-fulfillment"), panelButton("ショップ管理", "market-admin")])
       ]
@@ -3207,6 +3212,33 @@ class EconomyEngine {
     task.completedBy = adminUser.id;
     this.marketLog(`${adminUser.name} が公式商品対応 #${task.id} を完了しました。`);
     return { ok: true, title: "公式商品対応を完了しました", lines: [`#${task.id} ${task.itemName}`, task.note], panel: this.officialFulfillmentPanel(adminUser) };
+  }
+
+  recordOfficialFulfillmentTicket(adminUser, id, channelId) {
+    const task = this.officialFulfillmentTask(id);
+    if (!task) return { ok: false, title: "対応キューが見つかりません", lines: ["対象の購入記録はありません。"] };
+    if (task.status !== "pending") return { ok: false, title: "対応は完了済みです", lines: [`#${task.id} は完了済みです。`], panel: this.officialFulfillmentTaskPanel(adminUser, task.id) };
+    if (task.roleId) return { ok: false, title: "チケット対象の商品ではありません", lines: ["ロール自動付与の商品は対応キューからロールを再試行してください。"], panel: this.officialFulfillmentTaskPanel(adminUser, task.id) };
+    if (!isDiscordSnowflake(channelId)) return { ok: false, title: "チケットを確認してください", lines: ["Discordテキストチャンネルとして作成できませんでした。"], panel: this.officialFulfillmentTaskPanel(adminUser, task.id) };
+    if (task.ticketChannelId) return { ok: false, title: "チケットは作成済みです", lines: [`<#${task.ticketChannelId}> を確認してください。`], panel: this.officialFulfillmentTaskPanel(adminUser, task.id) };
+
+    task.ticketChannelId = String(channelId);
+    task.ticketCreatedAt = this.now().toISOString();
+    task.ticketCreatedBy = adminUser.id;
+    task.note = "購入者との対応チケットを作成しました";
+    this.marketLog(`${adminUser.name} が公式商品対応 #${task.id} のチケットを作成しました。`);
+    return { ok: true, title: "対応チケットを作成しました", lines: [`#${task.id} ${task.itemName}`, `<#${task.ticketChannelId}>`], panel: this.officialFulfillmentTaskPanel(adminUser, task.id) };
+  }
+
+  rollbackOfficialFulfillmentTicket(id, channelId, logLength = null) {
+    const task = this.officialFulfillmentTask(id);
+    if (!task || task.ticketChannelId !== String(channelId)) return false;
+    task.ticketChannelId = null;
+    task.ticketCreatedAt = null;
+    task.ticketCreatedBy = null;
+    task.note = "手動対応待ち";
+    if (Number.isInteger(logLength) && logLength >= 0) this.state.marketplace.logs.splice(logLength);
+    return true;
   }
 
   recordOfficialRoleGrant(id, data = {}) {
@@ -5825,7 +5857,10 @@ function migrateOfficialFulfillment(task = {}) {
     createdAt: validDateIso(task.createdAt) || new Date(0).toISOString(),
     completedAt: validDateIso(task.completedAt),
     completedBy: task.completedBy || null,
-    expiresAt: validDateIso(task.expiresAt)
+    expiresAt: validDateIso(task.expiresAt),
+    ticketChannelId: isDiscordSnowflake(task.ticketChannelId) ? String(task.ticketChannelId) : null,
+    ticketCreatedAt: validDateIso(task.ticketCreatedAt),
+    ticketCreatedBy: task.ticketCreatedBy || null
   };
 }
 
