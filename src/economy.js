@@ -263,7 +263,8 @@ function createInitialState() {
         feeBps: MARKETPLACE_CONFIG.feeBps,
         reviewPrice: MARKETPLACE_CONFIG.reviewPrice,
         maxActiveListings: MARKETPLACE_CONFIG.maxActiveListings,
-        auctionExtendMinutes: MARKETPLACE_CONFIG.auctionExtendMinutes
+        auctionExtendMinutes: MARKETPLACE_CONFIG.auctionExtendMinutes,
+        officialPurchaseLogChannelId: null
       }
     },
     invites: {
@@ -3039,6 +3040,7 @@ class EconomyEngine {
     const items = Object.values(this.officialCustomItems());
     const selling = items.filter((item) => this.isOfficialItemOnSale(item)).length;
     const pending = this.officialFulfillmentTasks().filter((task) => task.status === "pending").length;
+    const purchaseLogChannelId = this.officialPurchaseLogChannelId();
     return {
       title: "公式商品管理",
       description: "公式商品の追加・編集・販売停止と、購入後対応をここで行います。",
@@ -3046,6 +3048,7 @@ class EconomyEngine {
       fields: [
         { name: "販売状況", value: `販売中 ${selling}件 / 停止・期間外 ${items.length - selling}件`, inline: true },
         { name: "対応キュー", value: `未完了 ${pending}件`, inline: true },
+        { name: "購入通知先", value: purchaseLogChannelId ? `<#${purchaseLogChannelId}>` : "未設定（この画面を開いたチャンネルへ設定できます）", inline: true },
         { name: "次の操作", value: "商品を追加した後は、一覧から在庫・販売期間・ロール・DM案内を編集できます。", inline: false }
       ],
       components: [
@@ -3054,6 +3057,10 @@ class EconomyEngine {
           panelButton("対応キュー", "official-fulfillment"),
           panelButton("ショップを確認", "official-shop"),
           panelButton("戻る", "market-admin")
+        ]),
+        buttons([
+          customButton("このチャンネルに購入通知", "eco:market:official-purchase-log-set", "success"),
+          customButton("通知先をクリア", "eco:market:official-purchase-log-clear", "secondary")
         ]),
         ...(items.length
           ? [select("編集する公式商品", items.slice(0, 25).map((item) =>
@@ -3094,6 +3101,25 @@ class EconomyEngine {
 
   officialFulfillmentTasks() {
     return Array.isArray(this.state.marketplace.officialFulfillment) ? this.state.marketplace.officialFulfillment : [];
+  }
+
+  officialPurchaseLogChannelId() {
+    const id = this.state.marketplace?.settings?.officialPurchaseLogChannelId;
+    return isDiscordSnowflake(id) ? String(id) : null;
+  }
+
+  setOfficialPurchaseLogChannel(adminUser, channelId = null) {
+    if (channelId !== null && !isDiscordSnowflake(channelId)) {
+      return { ok: false, title: "通知先を確認してください", lines: ["Discordテキストチャンネルとして扱えない値です。"], panel: this.officialProductAdminPanel(adminUser) };
+    }
+    this.state.marketplace.settings.officialPurchaseLogChannelId = channelId ? String(channelId) : null;
+    this.marketLog(`${adminUser.name} が公式商品購入通知先を ${channelId ? String(channelId) : "未設定"} にしました。`);
+    return {
+      ok: true,
+      title: channelId ? "公式商品購入の通知先を設定しました" : "公式商品購入の通知先をクリアしました",
+      lines: [channelId ? `<#${channelId}> に公式商品購入を通知します。` : "環境変数の通知先、または通知なしへ戻します。"],
+      panel: this.officialProductAdminPanel(adminUser)
+    };
   }
 
   createOfficialFulfillment(user, item) {
@@ -4577,6 +4603,14 @@ class EconomyEngine {
         anotherCommand: "marketplace recommended",
         useCommand: item.kind === "consumable" ? `use ${id}` : null
       }),
+      officialPurchase: {
+        itemId: id,
+        itemName: item.name,
+        price,
+        buyerId: user.id,
+        buyerName: user.name,
+        fulfillmentId: fulfillment?.id || null
+      },
       officialFulfillment: fulfillment ? { id: fulfillment.id, itemName: item.name, roleId: fulfillment.roleId, dmGuide: item.dmGuide } : null
     };
   }
@@ -5585,6 +5619,9 @@ function migrateState(state) {
     ...next.marketplace.officialFulfillment.map((task) => Number(task.id) + 1 || 1));
   next.marketplace.logs = Array.isArray(next.marketplace.logs) ? next.marketplace.logs : [];
   next.marketplace.settings = { ...base.marketplace.settings, ...(next.marketplace.settings || {}) };
+  next.marketplace.settings.officialPurchaseLogChannelId = isDiscordSnowflake(next.marketplace.settings.officialPurchaseLogChannelId)
+    ? String(next.marketplace.settings.officialPurchaseLogChannelId)
+    : null;
   next.marketplace.nextListingId = Math.max(1, Number(next.marketplace.nextListingId) || 1);
   next.marketplace.nextOrderId = Math.max(1, Number(next.marketplace.nextOrderId) || 1);
   next.marketplace.nextAuctionId = Math.max(1, Number(next.marketplace.nextAuctionId) || 1);

@@ -48,6 +48,7 @@ const clientId = process.env.DISCORD_CLIENT_ID;
 const guildId = process.env.DISCORD_GUILD_ID;
 const prefix = process.env.BOT_PREFIX || "!eco";
 const logChannelId = process.env.DISCORD_LOG_CHANNEL_ID;
+const officialShopLogChannelId = process.env.IRIS_OFFICIAL_SHOP_LOG_CHANNEL_ID || logChannelId;
 const rankChannelId = process.env.DISCORD_RANK_CHANNEL_ID || process.env.DISCORD_LOG_CHANNEL_ID;
 const yadoPublicCost = parseNonNegativeIntEnv("YADO_PUBLIC_COST", 0);
 const yadoSecretCost = parsePositiveIntEnv("YADO_SECRET_COST", 10000);
@@ -520,6 +521,7 @@ client.on(Events.MessageCreate, async (message) => {
   decorateResultForDiscord(result, message);
   store.save(engine.state);
   await sendResult(message.channel, result);
+  await notifyOfficialPurchase(result);
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
@@ -603,7 +605,7 @@ client.on(Events.GuildMemberUpdate, async (_oldMember, member) => {
 });
 
 if (process.env.IRIS_ENTRYPOINT_TEST === "1") {
-  module.exports = { assertUniquePanelComponentIds, buildComponents, client, engine, parseOfficialFulfillmentControlId };
+  module.exports = { assertUniquePanelComponentIds, buildComponents, client, engine, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult };
 } else {
   client.login(token);
 }
@@ -1112,10 +1114,10 @@ async function sendResult(channel, result) {
   }
 }
 
-async function sendLog(result) {
-  if (!logChannelId) return;
+async function sendLog(result, channelId = logChannelId) {
+  if (!channelId) return;
   try {
-    const channel = await client.channels.fetch(logChannelId);
+    const channel = await client.channels.fetch(channelId);
     if (channel?.isTextBased()) await sendResult(channel, result);
   } catch (error) {
     console.warn(`ログ送信に失敗しました: ${error.message}`);
@@ -1507,6 +1509,10 @@ async function createOfficialItemFromModal(interaction) {
 async function handleOfficialMarketControl(interaction) {
   if (!isAdmin(interaction)) {
     await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (interaction.customId.startsWith("eco:market:official-purchase-log-")) {
+    await handleOfficialPurchaseLogControl(interaction);
     return;
   }
   if (interaction.customId.startsWith("eco:market:official-fulfillment-")) {
@@ -4076,6 +4082,8 @@ function startMarketSweeper() {
 }
 
 async function processOfficialPurchaseEffects(interaction, result) {
+  await notifyOfficialPurchase(result);
+
   const fulfillment = result?.officialFulfillment;
   if (!fulfillment || !interaction?.guild) return;
   const task = engine.officialFulfillmentTask(fulfillment.id);
@@ -4087,6 +4095,43 @@ async function processOfficialPurchaseEffects(interaction, result) {
       embeds: [new EmbedBuilder().setTitle(`購入ありがとうございます: ${fulfillment.itemName}`).setDescription(guide.slice(0, 4000)).setColor(0x8b5cf6)]
     }).catch(() => null);
   }
+}
+
+async function notifyOfficialPurchase(result) {
+  const purchaseNotification = officialPurchaseNotificationResult(result?.officialPurchase);
+  if (purchaseNotification) await sendLog(purchaseNotification, engine.officialPurchaseLogChannelId?.() || officialShopLogChannelId);
+}
+
+async function handleOfficialPurchaseLogControl(interaction) {
+  const action = interaction.customId.split(":")[2].replace("official-purchase-log-", "");
+  if (!["set", "clear"].includes(action)) {
+    await interaction.reply({ content: "公式商品購入通知の操作を確認できませんでした。", ephemeral: true });
+    return;
+  }
+  if (action === "set" && !interaction.channel?.isTextBased?.()) {
+    await interaction.reply({ content: "購入通知を送るテキストチャンネルで操作してください。", ephemeral: true });
+    return;
+  }
+  const actor = actorFromInteraction(interaction);
+  const result = engine.setOfficialPurchaseLogChannel(engine.getUser(actor.id, actor.name), action === "set" ? interaction.channelId : null);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await updateDiscord(interaction, result);
+}
+
+function officialPurchaseNotificationResult(purchase) {
+  if (!purchase?.itemName || !purchase?.buyerName || !Number.isSafeInteger(purchase.price) || purchase.price < 0) return null;
+  const discordUserId = extractDiscordUserId(purchase.buyerId);
+  return {
+    ok: true,
+    title: "公式商品購入",
+    lines: [
+      `購入者: ${purchase.buyerName}${discordUserId ? ` (${discordUserId})` : ""}`,
+      `商品: ${purchase.itemName}`,
+      `金額: ${fmt(purchase.price)}`,
+      purchase.fulfillmentId ? `対応キュー: #${purchase.fulfillmentId}` : "対応: 不要"
+    ]
+  };
 }
 
 async function grantOfficialRoleForTask(guild, task, completedBy) {
