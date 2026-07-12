@@ -274,6 +274,7 @@ function createInitialState() {
     },
     inviteCampaign: createInviteCampaignState(),
     casino: createCasinoState(),
+    boostRewards: createBoostRewardsState(),
     inn: {
       nextId: 1,
       rooms: [],
@@ -457,6 +458,9 @@ class EconomyEngine {
       "キャンペーン": "campaign",
       "campaign shop": "campaign-shop",
       "campaign-shop": "campaign-shop",
+      "boost": "boost-rewards",
+      "boost-rewards": "boost-rewards",
+      "server-boost": "boost-rewards",
       "campaign管理": "admin-campaign",
       "管理": "admin",
       "運営": "admin"
@@ -518,6 +522,7 @@ class EconomyEngine {
       "campaign-pending": () => this.campaignPendingPanel(user),
       "admin-balance": () => this.adminBalancePanel(user),
       "admin-rank": () => this.adminRankPanel(user),
+      "boost-rewards": () => this.boostRewardAdminPanel(user),
       "search-results": () => this.searchResultsPanel(user),
       "notify": () => this.notifyPanel(user),
       lounge: () => ({
@@ -579,6 +584,9 @@ class EconomyEngine {
             panelButton("残高操作", "admin-balance", "success"),
             panelButton("ランク設定", "admin-rank"),
             panelButton("Campaign管理", "admin-campaign"),
+            panelButton("ブースト報酬", "boost-rewards", "primary")
+          ]),
+          buttons([
             customButton("常設ショップ送信", "eco:market:post-panel"),
             panelButton("ホーム", "home")
           ]),
@@ -588,6 +596,7 @@ class EconomyEngine {
             option("自分の店", "panel:my-shop", "売る側の入口"),
             option("ショップ管理", "panel:market-admin", "公式商品、審査、取引対応"),
             option("Campaign管理", "panel:admin-campaign", "IRIS Invite Campaign"),
+            option("ブースト報酬", "panel:boost-rewards", "月次報酬とロール設定"),
             option("二人宿", "panel:inn", "2人用VC作成パネル"),
             option("招待", "panel:invite", "招待台帳")
           ])
@@ -914,6 +923,138 @@ class EconomyEngine {
       settledAt: transaction.settledAt,
       cancelledAt: transaction.cancelledAt
     };
+  }
+
+  boostRewardSettings() {
+    this.state.boostRewards = createBoostRewardsState(this.state.boostRewards || {});
+    return this.state.boostRewards.settings;
+  }
+
+  recordBoostMemberObservation(data = {}) {
+    const guildId = String(data.guildId || "");
+    const discordUserId = String(data.discordUserId || "");
+    if (!isDiscordSnowflake(guildId) || !isDiscordSnowflake(discordUserId)) {
+      return { ok: false, changed: false, code: "INVALID_BOOST_MEMBER" };
+    }
+    const now = this.now().toISOString();
+    const userId = `${guildId}:${discordUserId}`;
+    const current = this.state.boostRewards.members[userId] || {};
+    const active = Boolean(data.active);
+    const activeSince = validDateIso(data.premiumSince) || current.activeSince || (active ? now : null);
+    this.state.boostRewards.members[userId] = {
+      ...migrateBoostRewardMember(current, userId),
+      userId,
+      guildId,
+      discordUserId,
+      displayName: cleanMarketText(data.displayName || current.displayName || "", 80),
+      active,
+      activeSince: active ? activeSince : current.activeSince || null,
+      lastSeenAt: now,
+      lastEndedAt: active ? null : now
+    };
+    return { ok: true, changed: true, member: this.state.boostRewards.members[userId] };
+  }
+
+  boostRewardTierForRoleIds(roleIds = []) {
+    const settings = this.boostRewardSettings();
+    const roles = new Set(Array.from(roleIds || []).map(String));
+    if (settings.tierRoleIds.tier3 && roles.has(settings.tierRoleIds.tier3)) return 3;
+    if (settings.tierRoleIds.tier2 && roles.has(settings.tierRoleIds.tier2)) return 2;
+    if (settings.tierRoleIds.tier1 && roles.has(settings.tierRoleIds.tier1)) return 1;
+    return 0;
+  }
+
+  claimBoostMonthlyRewardForMember(data = {}) {
+    const settings = this.boostRewardSettings();
+    if (!settings.enabled) return { ok: false, changed: false, code: "BOOST_REWARD_DISABLED", message: "boost rewards are disabled" };
+    const guildId = String(data.guildId || "");
+    const discordUserId = String(data.discordUserId || "");
+    if (!isDiscordSnowflake(guildId) || !isDiscordSnowflake(discordUserId)) {
+      return { ok: false, changed: false, code: "INVALID_BOOST_MEMBER", message: "guildId and discordUserId are required" };
+    }
+    const userId = `${guildId}:${discordUserId}`;
+    if (!validDateIso(data.premiumSince)) {
+      return { ok: false, changed: false, code: "BOOST_NOT_ACTIVE", message: "member is not boosting" };
+    }
+    const tier = this.boostRewardTierForRoleIds(data.roleIds || []);
+    if (tier < 1) {
+      return { ok: false, changed: false, code: "BOOST_TIER_UNSET", message: "boost tier role is not set" };
+    }
+    const monthKey = data.monthKey || jstMonthKey(this.now());
+    const rewardId = `${userId}:${monthKey}`;
+    const existing = this.state.boostRewards.rewards[rewardId];
+    if (existing?.status === "paid") {
+      return { ok: true, changed: false, code: "BOOST_REWARD_ALREADY_PAID", reward: existing };
+    }
+    const previous = this.state.boostRewards.rewards[`${userId}:${previousJstMonthKey(monthKey)}`];
+    const baseReward = settings.tierRewards[`tier${tier}`] || 0;
+    const continuityBonus = previous?.status === "paid" ? settings.continuityBonus : 0;
+    const amount = baseReward + continuityBonus;
+    if (!Number.isSafeInteger(amount) || amount < 0) {
+      return { ok: false, changed: false, code: "BOOST_REWARD_OVERFLOW", message: "boost reward amount is outside the safe integer range" };
+    }
+    const user = this.getUser(userId, data.displayName || "Server Booster");
+    const walletCheck = this.nextCasinoWallet(user, amount);
+    if (!walletCheck.ok) return { ...walletCheck, changed: false };
+    const lifetimeCheck = this.nextCasinoLifetimeTotals(user, amount);
+    if (!lifetimeCheck.ok) return { ...lifetimeCheck, changed: false };
+    user.wallet = walletCheck.wallet;
+    user.lifetimeEarned = lifetimeCheck.lifetimeEarned;
+    user.lifetimeLost = lifetimeCheck.lifetimeLost;
+    user.name = data.displayName || user.name;
+
+    const now = this.now().toISOString();
+    const reward = {
+      id: rewardId,
+      userId,
+      guildId,
+      discordUserId,
+      monthKey,
+      tier,
+      baseReward,
+      continuityBonus,
+      amount,
+      paidAt: now,
+      status: "paid"
+    };
+    this.state.boostRewards.rewards[rewardId] = reward;
+    const member = this.state.boostRewards.members[userId] || migrateBoostRewardMember({}, userId);
+    this.state.boostRewards.members[userId] = {
+      ...member,
+      userId,
+      guildId,
+      discordUserId,
+      displayName: data.displayName || member.displayName || user.name,
+      active: true,
+      activeSince: validDateIso(data.premiumSince) || member.activeSince || now,
+      lastSeenAt: now,
+      lastEndedAt: null,
+      lastRewardMonth: monthKey,
+      lastTier: tier
+    };
+    this.log(user, "boost_reward", amount, `tier ${tier} / ${monthKey}${continuityBonus ? " / continuity" : ""}`);
+    this.boostRewardLog(`${user.name} ${monthKey} tier${tier} ${fmt(amount)} を付与しました。`);
+    return { ok: true, changed: true, reward, wallet: user.wallet };
+  }
+
+  adminSetBoostRewardRole(adminUser, key, roleId) {
+    const normalized = String(key || "").toLowerCase();
+    if (!["booster", "tier1", "tier2", "tier3"].includes(normalized)) {
+      return { ok: false, title: "設定できません", lines: ["不明なブースト報酬ロールです。"], panel: this.boostRewardAdminPanel(adminUser) };
+    }
+    if (roleId !== null && !isDiscordSnowflake(roleId)) {
+      return { ok: false, title: "ロールを確認してください", lines: ["DiscordロールIDとして扱えない値です。"], panel: this.boostRewardAdminPanel(adminUser) };
+    }
+    const settings = this.boostRewardSettings();
+    if (normalized === "booster") settings.boosterRoleId = roleId ? String(roleId) : null;
+    else settings.tierRoleIds[normalized] = roleId ? String(roleId) : null;
+    this.boostRewardLog(`${adminUser.name} が boost role ${normalized} を更新しました。`);
+    return { ok: true, title: "ブースト報酬設定を更新しました", lines: [`${normalized}: ${roleId ? `<@&${roleId}>` : "未設定"}`], panel: this.boostRewardAdminPanel(adminUser) };
+  }
+
+  boostRewardLog(line) {
+    this.state.boostRewards.logs.push(`${shortDate(this.now().toISOString())} ${line}`);
+    this.state.boostRewards.logs = this.state.boostRewards.logs.slice(-80);
   }
 
   profile(user) {
@@ -1947,6 +2088,7 @@ class EconomyEngine {
     if (action === "review") return this.panelResult(this.reviewListingPanel(user, args[1]));
     if (action === "order") return this.panelResult(this.adminOrderPanel(user, args[1]));
     if (action === "shop-view") return this.panelResult(this.shopViewPanel(user, args[1]));
+    if (action === "sale") return this.panelResult(this.saleDetailPanel(user, args[1]));
     if (action === "restart-listing") return this.restartListing(user, args[1]);
     if (action === "edit-listing") return this.panelResult(this.editListingPromptPanel(user, args[1]));
     if (action === "resubmit-listing") return this.panelResult(this.resubmitListingPromptPanel(user, args[1]));
@@ -2576,6 +2718,7 @@ class EconomyEngine {
     const active = this.sellerListings(user.id).filter((listing) => listing.status === "active").length;
     const pending = this.sellerListings(user.id).filter((listing) => listing.status === "pending").length;
     const openOrders = this.sellerOrders(user.id).filter((order) => order.status === "open").length;
+    const unreadSales = this.sellerOrders(user.id).filter((order) => !order.sellerSeenAt).length;
     const isClosed = (shop.shopStatus || "open") === "closed";
     return {
       title: `自分の店${isClosed ? "（休業中）" : ""}`,
@@ -2586,7 +2729,8 @@ class EconomyEngine {
         { name: "売上", value: fmt(shop.sales || 0), inline: true },
         { name: "出品中", value: `${active}件`, inline: true },
         { name: "審査待ち", value: `${pending}件`, inline: true },
-        { name: "取引中", value: `${openOrders}件`, inline: true }
+        { name: "取引中", value: `${openOrders}件`, inline: true },
+        { name: "販売通知", value: `${shop.salesDmEnabled === false ? "DM OFF" : "DM ON"} / 未確認 ${unreadSales}件`, inline: true }
       ],
       components: [
         buttons([
@@ -2598,6 +2742,7 @@ class EconomyEngine {
         ]),
         buttons([
           panelButton("売上を見る", "my-sales"),
+          customButton(shop.salesDmEnabled === false ? "販売DMをON" : "販売DMをOFF", "eco:shop:sales-dm-toggle", shop.salesDmEnabled === false ? "success" : "secondary"),
           panelButton("民営ショップ", "user-shops"),
           panelButton("ショップ", "marketplace")
         ])
@@ -2724,6 +2869,11 @@ class EconomyEngine {
   mySalesPanel(user) {
     const orders = this.sellerOrders(user.id).slice(0, 10);
     const components = [];
+    if (orders.length) {
+      components.push(select("販売履歴を選ぶ", orders.slice(0, 25).map((order) =>
+        option(`#${order.id} ${order.itemName}`.slice(0, 90), `run:marketplace sale ${order.id}`, `${order.buyerName} / ${orderStatusLabel(order.status)} / ${fmt(order.price)}`.slice(0, 100))
+      )));
+    }
     components.push(buttons([
       panelButton("自分の店", "my-shop"),
       panelButton("商品管理", "my-listings"),
@@ -2735,9 +2885,35 @@ class EconomyEngine {
       color: 0x14b8a6,
       fields: [
         { name: "売上", value: fmt(user.marketplace.sales || 0), inline: true },
-        { name: "取引", value: orders.length ? orders.map((order) => `#${order.id} ${order.itemName} / ${orderStatusLabel(order.status)}${order.payout === "held" ? " / 代金保留中" : ""}`).join("\n") : "まだ取引はありません。", inline: false }
+        { name: "取引", value: orders.length ? orders.map((order) => `#${order.id} ${order.itemName} / 購入者 ${order.buyerName} / ${orderStatusLabel(order.status)}${order.payout === "held" ? " / 代金保留中" : ""}`).join("\n") : "まだ取引はありません。", inline: false }
       ],
       components
+    };
+  }
+
+  saleDetailPanel(user, id) {
+    const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
+    if (!order || order.sellerId !== user.id) return this.mySalesPanel(user);
+    order.sellerSeenAt = order.sellerSeenAt || this.now().toISOString();
+    return {
+      title: `販売履歴 #${order.id}`,
+      description: `${order.itemName} の購入情報です。`,
+      color: 0x14b8a6,
+      fields: [
+        { name: "購入者", value: order.buyerName || "-", inline: true },
+        { name: "商品", value: order.itemName || "-", inline: true },
+        { name: "価格", value: fmt(order.price || 0), inline: true },
+        { name: "手数料", value: fmt(order.fee || 0), inline: true },
+        { name: "状態", value: orderStatusLabel(order.status), inline: true },
+        { name: "代金", value: order.payout === "held" ? "保留中" : order.payout === "cancelled" ? "返金済み" : "支払い済み", inline: true },
+        { name: "販売DM", value: order.sellerDmNotifiedAt ? `送信済み ${shortDate(order.sellerDmNotifiedAt)}` : order.sellerDmFailedAt ? `送信失敗 ${shortDate(order.sellerDmFailedAt)}` : "未送信", inline: true },
+        { name: "購入日時", value: order.createdAt ? shortDate(order.createdAt) : "-", inline: true }
+      ],
+      components: [buttons([
+        panelButton("売上を見る", "my-sales", "primary"),
+        panelButton("自分の店", "my-shop"),
+        panelButton("ショップ", "marketplace")
+      ])]
     };
   }
 
@@ -3242,6 +3418,37 @@ class EconomyEngine {
     };
   }
 
+  boostRewardAdminPanel(user) {
+    const settings = this.boostRewardSettings();
+    const monthKey = jstMonthKey(this.now());
+    const rewardsThisMonth = Object.values(this.state.boostRewards.rewards || {}).filter((reward) => reward.monthKey === monthKey && reward.status === "paid");
+    const trackedActive = Object.values(this.state.boostRewards.members || {}).filter((member) => member.active).length;
+    const totalThisMonth = rewardsThisMonth.reduce((sum, reward) => sum + (Number(reward.amount) || 0), 0);
+    return {
+      title: "サーバーブースト報酬",
+      description: "ブースト中の人へ月1回だけRisを付与します。枠数ロールは運営が付け替え、Botは読み取りだけを行います。",
+      color: 0xf97316,
+      fields: [
+        { name: "今月", value: `${monthKey} / 支払い ${rewardsThisMonth.length}件 / ${fmt(totalThisMonth)}`, inline: true },
+        { name: "追跡中", value: `ブースト中 ${trackedActive}人`, inline: true },
+        { name: "報酬", value: `1枠 ${fmt(settings.tierRewards.tier1)} / 2枠 ${fmt(settings.tierRewards.tier2)} / 3枠+ ${fmt(settings.tierRewards.tier3)}\n継続 ${fmt(settings.continuityBonus)}`, inline: false },
+        { name: "自動ロール", value: settings.boosterRoleId ? `<@&${settings.boosterRoleId}>` : "未設定", inline: true },
+        { name: "枠数ロール", value: `1枠 ${settings.tierRoleIds.tier1 ? `<@&${settings.tierRoleIds.tier1}>` : "未設定"}\n2枠 ${settings.tierRoleIds.tier2 ? `<@&${settings.tierRoleIds.tier2}>` : "未設定"}\n3枠+ ${settings.tierRoleIds.tier3 ? `<@&${settings.tierRoleIds.tier3}>` : "未設定"}`, inline: true },
+        { name: "最近のログ", value: this.state.boostRewards.logs.slice(-5).reverse().join("\n") || "まだログはありません。", inline: false }
+      ],
+      components: [
+        roleSelect("ブースター自動ロールを選択", "eco:role:boost:booster"),
+        roleSelect("1枠ロールを選択", "eco:role:boost:tier1"),
+        roleSelect("2枠ロールを選択", "eco:role:boost:tier2"),
+        roleSelect("3枠以上ロールを選択", "eco:role:boost:tier3"),
+        buttons([
+          customButton("今月分を再確認", "eco:boost:run-monthly", "primary"),
+          panelButton("運営パネル", "admin")
+        ])
+      ]
+    };
+  }
+
   adminBalancePanel(user) {
     return {
       title: "残高操作",
@@ -3316,15 +3523,45 @@ class EconomyEngine {
       shopName: "",
       shopDescription: "",
       shopStatus: "open",
+      salesDmEnabled: true,
       sales: 0,
       inventory: [],
       listingDraft: { type: "item", mode: "permanent" },
       ...(user.marketplace || {})
     };
     if (!["open", "closed"].includes(user.marketplace.shopStatus)) user.marketplace.shopStatus = "open";
+    user.marketplace.salesDmEnabled = user.marketplace.salesDmEnabled !== false;
     user.marketplace.inventory = Array.isArray(user.marketplace.inventory) ? user.marketplace.inventory : [];
     user.marketplace.listingDraft = { type: "item", mode: "permanent", ...(user.marketplace.listingDraft || {}) };
     return user.marketplace;
+  }
+
+  setSalesDmEnabled(user, enabled = null) {
+    const shop = this.ensureShopShape(user);
+    const next = enabled === null ? shop.salesDmEnabled === false : Boolean(enabled);
+    shop.salesDmEnabled = next;
+    return {
+      ok: true,
+      title: next ? "販売DMをONにしました" : "販売DMをOFFにしました",
+      lines: [next ? "民営商品が売れたとき、販売者へDM通知を試みます。" : "民営商品の販売DM通知を止めました。売上画面では引き続き確認できます。"],
+      panel: this.myShopPanel(user)
+    };
+  }
+
+  markOrderSellerNotification(orderId, status) {
+    const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(orderId));
+    if (!order) return false;
+    const now = this.now().toISOString();
+    if (status === "sent" && !order.sellerDmNotifiedAt) {
+      order.sellerDmNotifiedAt = now;
+      order.sellerDmFailedAt = null;
+      return true;
+    }
+    if (status === "failed" && !order.sellerDmNotifiedAt) {
+      order.sellerDmFailedAt = now;
+      return true;
+    }
+    return false;
   }
 
   openShop(user) {
@@ -3487,7 +3724,10 @@ class EconomyEngine {
       payout: escrow ? "held" : "paid",
       status: listing.manual ? "open" : "complete",
       createdAt: new Date().toISOString(),
-      expiresAt: listing.mode === "timed" ? new Date(Date.now() + listing.durationDays * 86400000).toISOString() : null
+      expiresAt: listing.mode === "timed" ? new Date(Date.now() + listing.durationDays * 86400000).toISOString() : null,
+      sellerDmNotifiedAt: null,
+      sellerDmFailedAt: null,
+      sellerSeenAt: null
     };
     this.state.marketplace.orders.push(order);
     this.ensureShopShape(user).inventory.push({
@@ -3524,7 +3764,9 @@ class EconomyEngine {
           event: "listing_sold",
           data: {
             listingId: listing.id,
+            orderId: order.id,
             itemName: listing.name,
+            buyerId: user.id,
             buyerName: user.name,
             price: listing.price,
             sellerReceive,
@@ -5239,6 +5481,7 @@ function createUser(id, name) {
       shopOpened: false,
       shopName: "",
       shopDescription: "",
+      salesDmEnabled: true,
       sales: 0,
       inventory: [],
       listingDraft: {
@@ -5287,6 +5530,30 @@ function createCasinoState(overrides = {}) {
   };
 }
 
+function createBoostRewardsState(overrides = {}) {
+  const rewards = overrides?.settings?.tierRewards || {};
+  return {
+    settings: {
+      enabled: overrides?.settings?.enabled !== false,
+      boosterRoleId: isDiscordSnowflake(overrides?.settings?.boosterRoleId) ? String(overrides.settings.boosterRoleId) : null,
+      tierRoleIds: {
+        tier1: isDiscordSnowflake(overrides?.settings?.tierRoleIds?.tier1) ? String(overrides.settings.tierRoleIds.tier1) : null,
+        tier2: isDiscordSnowflake(overrides?.settings?.tierRoleIds?.tier2) ? String(overrides.settings.tierRoleIds.tier2) : null,
+        tier3: isDiscordSnowflake(overrides?.settings?.tierRoleIds?.tier3) ? String(overrides.settings.tierRoleIds.tier3) : null
+      },
+      tierRewards: {
+        tier1: clamp(Math.floor(Number(rewards.tier1) || 10000), 0, Number.MAX_SAFE_INTEGER),
+        tier2: clamp(Math.floor(Number(rewards.tier2) || 20000), 0, Number.MAX_SAFE_INTEGER),
+        tier3: clamp(Math.floor(Number(rewards.tier3) || 30000), 0, Number.MAX_SAFE_INTEGER)
+      },
+      continuityBonus: clamp(Math.floor(Number(overrides?.settings?.continuityBonus) || 10000), 0, Number.MAX_SAFE_INTEGER)
+    },
+    members: { ...((overrides && overrides.members) || {}) },
+    rewards: { ...((overrides && overrides.rewards) || {}) },
+    logs: Array.isArray(overrides?.logs) ? overrides.logs : []
+  };
+}
+
 function migrateState(state) {
   const base = createInitialState();
   const next = { ...base, ...state };
@@ -5294,7 +5561,7 @@ function migrateState(state) {
   next.marketplace = { ...base.marketplace, ...(next.marketplace || {}) };
   next.marketplace.shops = { ...base.marketplace.shops, ...(next.marketplace.shops || {}) };
   next.marketplace.listings = Array.isArray(next.marketplace.listings) ? next.marketplace.listings : [];
-  next.marketplace.orders = Array.isArray(next.marketplace.orders) ? next.marketplace.orders : [];
+  next.marketplace.orders = Array.isArray(next.marketplace.orders) ? next.marketplace.orders.map(migrateMarketplaceOrder) : [];
   next.marketplace.auctions = Array.isArray(next.marketplace.auctions) ? next.marketplace.auctions : [];
   next.marketplace.officialItems = Object.fromEntries(
     Object.entries(next.marketplace.officialItems || {}).map(([id, item]) => [id, migrateOfficialItem(item, id)])
@@ -5327,6 +5594,14 @@ function migrateState(state) {
   );
   next.casino.settings.maxPayoutMultiplier = Math.max(0, Number(next.casino.settings.maxPayoutMultiplier) || CASINO_CONFIG.maxPayoutMultiplier);
   next.casino.settings.maxPayoutRis = Math.max(0, Number(next.casino.settings.maxPayoutRis) || CASINO_CONFIG.maxPayoutRis);
+  next.boostRewards = createBoostRewardsState(next.boostRewards || {});
+  next.boostRewards.members = Object.fromEntries(
+    Object.entries(next.boostRewards.members || {}).map(([id, entry]) => [id, migrateBoostRewardMember(entry, id)])
+  );
+  next.boostRewards.rewards = Object.fromEntries(
+    Object.entries(next.boostRewards.rewards || {}).map(([id, entry]) => [id, migrateBoostRewardPayment(entry, id)])
+  );
+  next.boostRewards.logs = Array.isArray(next.boostRewards.logs) ? next.boostRewards.logs : [];
   next.inn = { ...base.inn, ...(next.inn || {}) };
   next.inn.rooms = Array.isArray(next.inn.rooms) ? next.inn.rooms : [];
   next.inn.history = Array.isArray(next.inn.history) ? next.inn.history : [];
@@ -5420,6 +5695,47 @@ function migrateCasinoTransaction(tx = {}, id = "") {
     reservedAt: tx.reservedAt || tx.createdAt || null,
     settledAt: tx.settledAt || null,
     cancelledAt: tx.cancelledAt || null
+  };
+}
+
+function migrateBoostRewardMember(entry = {}, id = "") {
+  const [guildId = entry.guildId, discordUserId = entry.discordUserId] = String(id).split(":");
+  return {
+    userId: entry.userId || (isDiscordSnowflake(guildId) && isDiscordSnowflake(discordUserId) ? `${guildId}:${discordUserId}` : String(id)),
+    guildId: isDiscordSnowflake(entry.guildId || guildId) ? String(entry.guildId || guildId) : null,
+    discordUserId: isDiscordSnowflake(entry.discordUserId || discordUserId) ? String(entry.discordUserId || discordUserId) : null,
+    displayName: cleanMarketText(entry.displayName || entry.userName || "", 80),
+    active: Boolean(entry.active),
+    activeSince: validDateIso(entry.activeSince),
+    lastSeenAt: validDateIso(entry.lastSeenAt),
+    lastEndedAt: validDateIso(entry.lastEndedAt),
+    lastRewardMonth: cleanToken(entry.lastRewardMonth, 16) || null,
+    lastTier: clamp(Math.floor(Number(entry.lastTier) || 0), 0, 3)
+  };
+}
+
+function migrateBoostRewardPayment(entry = {}, id = "") {
+  return {
+    id: cleanToken(entry.id || id, 120),
+    userId: String(entry.userId || ""),
+    guildId: isDiscordSnowflake(entry.guildId) ? String(entry.guildId) : null,
+    discordUserId: isDiscordSnowflake(entry.discordUserId) ? String(entry.discordUserId) : null,
+    monthKey: cleanToken(entry.monthKey, 16),
+    tier: clamp(Math.floor(Number(entry.tier) || 0), 0, 3),
+    baseReward: Math.max(0, Math.floor(Number(entry.baseReward) || 0)),
+    continuityBonus: Math.max(0, Math.floor(Number(entry.continuityBonus) || 0)),
+    amount: Math.max(0, Math.floor(Number(entry.amount) || 0)),
+    paidAt: validDateIso(entry.paidAt),
+    status: entry.status === "paid" ? "paid" : "paid"
+  };
+}
+
+function migrateMarketplaceOrder(order = {}) {
+  return {
+    ...order,
+    sellerDmNotifiedAt: validDateIso(order.sellerDmNotifiedAt),
+    sellerDmFailedAt: validDateIso(order.sellerDmFailedAt),
+    sellerSeenAt: validDateIso(order.sellerSeenAt)
   };
 }
 
@@ -5643,6 +5959,10 @@ function select(placeholder, options, disabled = false) {
   return { type: "select", placeholder, options, disabled };
 }
 
+function roleSelect(placeholder, customId, disabled = false) {
+  return { type: "role-select", placeholder, customId, disabled };
+}
+
 function option(label, value, description) {
   return { label, value, description };
 }
@@ -5704,6 +6024,19 @@ function shortDate(value) {
 
 function dayKey(date) {
   return date.toISOString().slice(0, 10);
+}
+
+function jstMonthKey(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  const shifted = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return shifted.toISOString().slice(0, 7);
+}
+
+function previousJstMonthKey(monthKey) {
+  const match = String(monthKey || "").match(/^(\d{4})-(\d{2})$/);
+  if (!match) return "";
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 2, 1));
+  return date.toISOString().slice(0, 7);
 }
 
 function formatResult(result) {

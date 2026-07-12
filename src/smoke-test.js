@@ -511,6 +511,80 @@ const buyRes = engine.buyUserListing(engine.getUser(buyer.id, buyer.name), purch
 assert(buyRes.ok, "通常購入OK");
 assert(buyRes.notifications.some((n) => n.event === "listing_purchased" && n.userId === buyer.id), "購入者にも通知が発火");
 assert(buyRes.notifications.some((n) => n.event === "listing_sold" && n.userId === seller.id), "販売者にも通知");
+const soldOrder = engine.state.marketplace.orders.find((order) => order.listingId === purchaseFreshListing.id && order.buyerId === buyer.id);
+assert(soldOrder, "販売履歴に注文が残る");
+assert.strictEqual(soldOrder.buyerName, buyer.name, "販売履歴に購入者名が残る");
+assert.strictEqual(soldOrder.sellerDmNotifiedAt, null, "販売DM状態は未送信から始まる");
+const sellerSalesPanel = engine.run("panel my-sales", seller);
+assert(JSON.stringify(sellerSalesPanel.panel).includes(buyer.name), "売上画面に購入者名が出る");
+const sellerSaleDetail = engine.run(`marketplace sale ${soldOrder.id}`, seller);
+assert(sellerSaleDetail.panel.fields.some((field) => field.name === "購入者" && field.value === buyer.name), "販売詳細に購入者が出る");
+assert(engine.state.marketplace.orders.find((order) => order.id === soldOrder.id).sellerSeenAt, "販売詳細を見ると確認済みになる");
+const salesDmOff = engine.setSalesDmEnabled(engine.getUser(seller.id, seller.name), false);
+assert(salesDmOff.ok, "販売DMをOFFにできる");
+assert.strictEqual(engine.getUser(seller.id, seller.name).marketplace.salesDmEnabled, false, "販売DM OFFが保存される");
+const salesDmOn = engine.setSalesDmEnabled(engine.getUser(seller.id, seller.name), true);
+assert(salesDmOn.ok, "販売DMをONに戻せる");
+assert.strictEqual(engine.getUser(seller.id, seller.name).marketplace.salesDmEnabled, true, "販売DM ONが保存される");
+
+let boostNow = new Date("2026-07-12T00:00:00.000Z");
+const boostEngine = new EconomyEngine(createInitialState(), { now: () => boostNow });
+const boostAdmin = boostEngine.getUser("123456789012345678:111111111111111111", "Boost Admin");
+const boostGuildId = "123456789012345678";
+const boostUserId = "222222222222222222";
+const tier1Role = "333333333333333331";
+const tier2Role = "333333333333333332";
+const tier3Role = "333333333333333333";
+assert(boostEngine.adminSetBoostRewardRole(boostAdmin, "tier1", tier1Role).ok, "1枠ロールを設定できる");
+assert(boostEngine.adminSetBoostRewardRole(boostAdmin, "tier2", tier2Role).ok, "2枠ロールを設定できる");
+assert(boostEngine.adminSetBoostRewardRole(boostAdmin, "tier3", tier3Role).ok, "3枠ロールを設定できる");
+boostEngine.recordBoostMemberObservation({
+  guildId: boostGuildId,
+  discordUserId: boostUserId,
+  displayName: "ブースター",
+  premiumSince: "2026-07-01T00:00:00.000Z",
+  active: true
+});
+const noTierBoost = boostEngine.claimBoostMonthlyRewardForMember({
+  guildId: boostGuildId,
+  discordUserId: boostUserId,
+  displayName: "ブースター",
+  premiumSince: "2026-07-01T00:00:00.000Z",
+  roleIds: []
+});
+assert.strictEqual(noTierBoost.changed, false, "枠数ロールがない場合は支払わない");
+assert.strictEqual(noTierBoost.code, "BOOST_TIER_UNSET", "枠数未設定として扱う");
+const julyBoost = boostEngine.claimBoostMonthlyRewardForMember({
+  guildId: boostGuildId,
+  discordUserId: boostUserId,
+  displayName: "ブースター",
+  premiumSince: "2026-07-01T00:00:00.000Z",
+  roleIds: [tier2Role]
+});
+assert(julyBoost.changed, "初回月次ブースト報酬を支払う");
+assert.strictEqual(julyBoost.reward.amount, 20000, "2枠は20,000 Ris");
+const walletAfterJuly = boostEngine.getUser(`${boostGuildId}:${boostUserId}`, "ブースター").wallet;
+const julyAgain = boostEngine.claimBoostMonthlyRewardForMember({
+  guildId: boostGuildId,
+  discordUserId: boostUserId,
+  displayName: "ブースター",
+  premiumSince: "2026-07-01T00:00:00.000Z",
+  roleIds: [tier2Role]
+});
+assert.strictEqual(julyAgain.changed, false, "同月再送では二重付与しない");
+assert.strictEqual(boostEngine.getUser(`${boostGuildId}:${boostUserId}`, "ブースター").wallet, walletAfterJuly, "同月再送で財布は増えない");
+boostNow = new Date("2026-08-01T00:00:00.000Z");
+const augustBoost = boostEngine.claimBoostMonthlyRewardForMember({
+  guildId: boostGuildId,
+  discordUserId: boostUserId,
+  displayName: "ブースター",
+  premiumSince: "2026-07-01T00:00:00.000Z",
+  roleIds: [tier3Role]
+});
+assert(augustBoost.changed, "翌月のブースト報酬を支払う");
+assert.strictEqual(augustBoost.reward.baseReward, 30000, "3枠以上は30,000 Ris");
+assert.strictEqual(augustBoost.reward.continuityBonus, 10000, "前月継続で10,000 Risを足す");
+assert.strictEqual(augustBoost.reward.amount, 40000, "3枠以上 + 継続は40,000 Ris");
 
 // ソート: price_asc で価格昇順
 const sortedAsc = engine.searchListings({ sort: "price_asc" });
