@@ -55,6 +55,9 @@ for (const command of [
 
 const missingFromCache = { id: "entrypoint-test:missing", name: "cache-missing member" };
 engine.run("join", missingFromCache);
+const unjoinedActivity = { id: "entrypoint-test:activity-only", name: "activity-only member" };
+engine.getUser(unjoinedActivity.id, unjoinedActivity.name).activity.textXp = 150;
+engine.getUser(unjoinedActivity.id, unjoinedActivity.name).activity.vcXp = 150;
 engine.getUser(actor.id, actor.name).activity.textXp = 10;
 engine.getUser(missingFromCache.id, missingFromCache.name).activity.textXp = 99;
 const savedDirectory = global.__IRIS_GUILD_MEMBER_DIRECTORY__;
@@ -66,5 +69,7 @@ global.__IRIS_GUILD_MEMBER_DIRECTORY__ = {
 const partialCacheRank = engine.run("rank text", actor);
 global.__IRIS_GUILD_MEMBER_DIRECTORY__ = savedDirectory;
 assert(partialCacheRank.lines.some((line) => line.includes(missingFromCache.name)), "部分メンバーキャッシュで台帳上のランキング対象を除外してはいけません");
+assert(partialCacheRank.lines.some((line) => line.includes(unjoinedActivity.name)), "実績を持つ未加入ユーザーをDiscordランキングから除外してはいけません");
+assert(engine.run("rank vc", actor).lines.some((line) => line.includes(unjoinedActivity.name)), "VC実績を持つ未加入ユーザーをDiscordランキングから除外してはいけません");
 
 console.log("entrypoint-test: passed");

@@ -4686,16 +4686,19 @@ class EconomyEngine {
 
   leaderboard(typeRaw = "net") {
     const type = String(typeRaw || "net").toLowerCase();
-    const users = Object.values(this.state.users).filter((user) => user.joined);
+    const allUsers = Object.values(this.state.users);
+    let rankAxis = null;
     let title = "純資産ランキング";
     let score = (user) => Math.floor(this.netWorth(user));
     let label = (value) => fmt(value);
 
     if (["text", "txt"].includes(type)) {
+      rankAxis = "text";
       title = "発言ランクランキング";
       score = (user) => user.activity.textXp;
       label = (value) => `経験値 ${value}`;
     } else if (["vc", "voice"].includes(type)) {
+      rankAxis = "vc";
       title = "VCランクランキング";
       score = (user) => user.activity.vcXp;
       label = (value) => `経験値 ${value}`;
@@ -4708,6 +4711,8 @@ class EconomyEngine {
       score = (user) => user.bump?.count || 0;
       label = (value) => `${value}回 / ${rankFor(BUMP_RANKS, value).name}`;
     }
+
+    const users = allUsers.filter((user) => rankAxis ? this.isActivityRankEligible(user, rankAxis) : user.joined);
 
     const ranked = users
       .map((user) => ({ user, value: score(user) }))
@@ -4758,7 +4763,7 @@ class EconomyEngine {
           nextRankAt: progress.nextMin,
           progressPercent: rankProgressPercent(progress),
           serverPosition: this.serverPositionByTextXp(user.id),
-          serverTotal: this.joinedUserCount(),
+          serverTotal: this.activityRankUsers("text").length,
           totalMessages: user.activity.textMessages,
           xpTotal: user.activity.textXp,
           xpGained: xp,
@@ -4868,7 +4873,7 @@ class EconomyEngine {
           nextRankAt: progress.nextMin,
           progressPercent: rankProgressPercent(progress),
           serverPosition: this.serverPositionByVcXp(user.id),
-          serverTotal: this.joinedUserCount(),
+          serverTotal: this.activityRankUsers("vc").length,
           totalMinutes: user.activity.vcMinutes,
           xpTotal: user.activity.vcXp,
           xpGained: xp,
@@ -4890,17 +4895,30 @@ class EconomyEngine {
   }
 
   serverPositionByTextXp(userId) {
-    const users = Object.values(this.state.users).filter((u) => u.joined);
+    const users = this.activityRankUsers("text");
     users.sort((a, b) => (b.activity?.textXp || 0) - (a.activity?.textXp || 0));
     const index = users.findIndex((u) => u.id === userId);
     return index >= 0 ? index + 1 : users.length;
   }
 
   serverPositionByVcXp(userId) {
-    const users = Object.values(this.state.users).filter((u) => u.joined);
+    const users = this.activityRankUsers("vc");
     users.sort((a, b) => (b.activity?.vcXp || 0) - (a.activity?.vcXp || 0));
     const index = users.findIndex((u) => u.id === userId);
     return index >= 0 ? index + 1 : users.length;
+  }
+
+  isActivityRankEligible(user, axis) {
+    if (!user) return false;
+    if (user.joined) return true;
+    const activity = user.activity || {};
+    if (axis === "text") return Number(activity.textXp) > 0 || Number(activity.textMessages) > 0;
+    if (axis === "vc") return Number(activity.vcXp) > 0 || Number(activity.vcMinutes) > 0;
+    return false;
+  }
+
+  activityRankUsers(axis) {
+    return Object.values(this.state.users).filter((user) => this.isActivityRankEligible(user, axis));
   }
 
   joinedUserCount() {
