@@ -8,13 +8,16 @@ process.env.DISCORD_CLIENT_ID = "000000000000000000";
 
 const originalLoader = Module._extensions[".js"];
 require("./discord-entry-operations");
-const { buildComponents, engine } = require("./discord-core");
+const { buildComponents, engine, parseOfficialFulfillmentControlId } = require("./discord-core");
 
 assert.strictEqual(Module._extensions[".js"], originalLoader, "起動経路でModule._extensionsを上書きしてはいけません");
 assert(!require.cache[require.resolve("./discord-entry-manual-join")], "通常起動でmanual-joinラッパーを経由してはいけません");
 assert(!fs.readFileSync(require.resolve("./discord-core"), "utf8").includes('engine.run("join", actorFromMember(member))'), "入室時に初期Risを自動付与してはいけません");
 assert(!fs.readFileSync(require.resolve("./discord-entry"), "utf8").includes("Module._extensions"), "discord-entryはソースを書き換えてはいけません");
 assert(!fs.readFileSync(require.resolve("./discord-entry-manual-join"), "utf8").includes("Interaction.prototype"), "応答メソッドをプロトタイプで置き換えてはいけません");
+assert.deepStrictEqual(parseOfficialFulfillmentControlId("eco:market:official-fulfillment-complete:42"), { action: "complete", taskId: "42" }, "公式対応の完了ボタンは対応IDを正しく読める必要があります");
+assert.deepStrictEqual(parseOfficialFulfillmentControlId("eco:market:official-fulfillment-retry:42"), { action: "retry", taskId: "42" }, "公式対応の再試行ボタンは対応IDを正しく読める必要があります");
+assert.strictEqual(parseOfficialFulfillmentControlId("eco:market:official-fulfillment-complete"), null, "対応IDのない公式対応ボタンは拒否する必要があります");
 
 const actor = { id: "entrypoint-test:user", name: "entrypoint tester" };
 engine.run("join", actor);
