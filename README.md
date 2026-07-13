@@ -180,11 +180,25 @@ GET  /internal/v1/wallets/:discordUserId
 POST /internal/v1/casino/reservations
 POST /internal/v1/casino/reservations/:transactionId/settle
 POST /internal/v1/casino/reservations/:transactionId/cancel
+POST /internal/v1/activity/adjustments
 ```
 
 The API is scoped to `DISCORD_GUILD_ID`. `guildId` and every `discordUserId` must be numeric Discord Snowflakes; users are resolved only as `${DISCORD_GUILD_ID}:${discordUserId}`. Internal user IDs and suffix matching are not accepted. Reserve, settle, and cancel all enforce the same guild boundary; cross-guild or inconsistent transactions return `TRANSACTION_NOT_FOUND`. Users must have completed `join` before wallet or casino access is allowed. `bet`, `payout`, wallet results, and casino lifetime totals must remain safe integers, and reservations enforce `IRIS_CASINO_MIN_BET` and `IRIS_CASINO_MAX_BET`.
 
-Failed casino state saves restore the complete in-memory state, including wallets, transactions, ledger entries, and lifetime totals. A retry can then complete the same reserve, settle, or cancel operation once. If the internal API cannot bind its configured host/port, the error is logged without secrets and the Discord Bot process continues so the main production bot is not stopped by an optional internal API listener failure.
+Failed casino and Activity state saves restore the complete in-memory state, including wallets, transactions, ledger entries, and lifetime totals. A retry can then complete the same reserve, settle, cancel, or Activity adjustment once. If the internal API cannot bind its configured host/port, the error is logged without secrets and the Discord Bot process continues so the main production bot is not stopped by an optional internal API listener failure.
+
+`POST /internal/v1/activity/adjustments` は、Discord Activityの既存の支給・消費制度をRis台帳へ移すための内部専用APIです。ブラウザから呼ばせず、Activityバックエンドだけが取引IDを発行して呼び出します。同じ `transactionId` と同じ内容の再送は冪等で、内容が異なる再送は拒否されます。理由コードは許可リスト方式で、支給は `daily`、`mission`、`weekly`、`mystery`、`season`、`album`、`raid`、`pvp`、`party`、`event`、`collection`、`odyssey`、`circuit`、`chest`、`vault`、`relief`、`refund`、`migration`、`treasury-refund`、`bonus` のみ、消費は `treasury` のみです。
+
+```json
+{
+  "transactionId": "activity-daily-001",
+  "discordUserId": "123456789012345678",
+  "sessionId": "activity-session-001",
+  "operation": "credit",
+  "amount": 500,
+  "reason": "daily"
+}
+```
 
 予約 `POST /internal/v1/casino/reservations`:
 

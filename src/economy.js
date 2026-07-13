@@ -104,6 +104,30 @@ const CASINO_CONFIG = {
   maxPayoutRis: 100000000
 };
 
+const ACTIVITY_ADJUSTMENT_OPERATIONS = {
+  bonus: "credit",
+  daily: "credit",
+  mission: "credit",
+  weekly: "credit",
+  mystery: "credit",
+  season: "credit",
+  album: "credit",
+  raid: "credit",
+  pvp: "credit",
+  party: "credit",
+  event: "credit",
+  collection: "credit",
+  odyssey: "credit",
+  circuit: "credit",
+  chest: "credit",
+  vault: "credit",
+  relief: "credit",
+  refund: "credit",
+  migration: "credit",
+  "treasury-refund": "credit",
+  treasury: "debit"
+};
+
 const WORKS = [
   { text: "自販機の下を金融街として再開発した", min: 90, max: 260, xp: 8 },
   { text: "会議で『それはレバレッジですね』だけ言い続けた", min: 120, max: 310, xp: 10 },
@@ -277,6 +301,7 @@ function createInitialState() {
     },
     inviteCampaign: createInviteCampaignState(),
     casino: createCasinoState(),
+    activity: createActivityState(),
     boostRewards: createBoostRewardsState(),
     inn: {
       nextId: 1,
@@ -823,6 +848,105 @@ class EconomyEngine {
     transaction.cancelledAt = this.now().toISOString();
     this.log(user, "casino_cancel", transaction.bet, `${transaction.game} / ${transaction.sessionId} / ${transactionId}`);
     return { ok: true, status: 200, changed: true, transaction: this.publicCasinoTransaction(transaction), wallet: user.wallet };
+  }
+
+  applyActivityAdjustment(data = {}, guildId) {
+    const normalized = this.normalizeActivityAdjustment(data, guildId);
+    if (!normalized.ok) return normalized;
+    const { transactionId, discordUserId, sessionId, operation, amount, reason } = normalized;
+    const existing = this.state.activity.adjustments[transactionId];
+    if (existing) {
+      const scoped = this.scopedActivityAdjustment(existing, guildId);
+      if (!scoped.ok) return scoped;
+      return this.idempotentActivityAdjustment(existing, normalized);
+    }
+
+    const resolved = this.resolveCasinoUserRecord(guildId, discordUserId);
+    const user = resolved.user;
+    if (!user) return resolved.error;
+    const delta = operation === "credit" ? amount : -amount;
+    if (operation === "debit" && user.wallet < amount) {
+      return { ok: false, code: "INSUFFICIENT_FUNDS", status: 409, message: "insufficient wallet balance", wallet: user.wallet };
+    }
+    const walletCheck = this.nextCasinoWallet(user, delta);
+    if (!walletCheck.ok) return walletCheck;
+    const lifetimeCheck = this.nextCasinoLifetimeTotals(user, delta);
+    if (!lifetimeCheck.ok) return lifetimeCheck;
+
+    user.wallet = walletCheck.wallet;
+    user.lifetimeEarned = lifetimeCheck.lifetimeEarned;
+    user.lifetimeLost = lifetimeCheck.lifetimeLost;
+    const transaction = {
+      transactionId,
+      discordUserId,
+      userId: user.id,
+      userName: user.name,
+      sessionId,
+      operation,
+      amount,
+      reason,
+      createdAt: this.now().toISOString()
+    };
+    this.state.activity.adjustments[transactionId] = transaction;
+    this.log(user, `activity_${operation}`, delta, `${reason} / ${sessionId} / ${transactionId}`);
+    return { ok: true, status: 201, changed: true, transaction: this.publicActivityAdjustment(transaction), wallet: user.wallet };
+  }
+
+  normalizeActivityAdjustment(data, guildId) {
+    const transactionId = cleanToken(data.transactionId, 120);
+    const discordUserId = cleanToken(data.discordUserId, 80);
+    const sessionId = cleanToken(data.sessionId, 120);
+    const operation = cleanToken(data.operation, 16);
+    const amount = parseIntegerField(data.amount);
+    const reason = cleanToken(data.reason, 40);
+    if (!transactionId) return { ok: false, code: "INVALID_TRANSACTION_ID", status: 400, message: "transactionId is required" };
+    if (!isDiscordSnowflake(guildId)) return { ok: false, code: "INVALID_GUILD_ID", status: 400, message: "guildId must be a Discord Snowflake" };
+    if (!isDiscordSnowflake(discordUserId)) return { ok: false, code: "INVALID_DISCORD_USER_ID", status: 400, message: "discordUserId must be a Discord Snowflake" };
+    if (!sessionId) return { ok: false, code: "INVALID_SESSION_ID", status: 400, message: "sessionId is required" };
+    if (operation !== "credit" && operation !== "debit") return { ok: false, code: "INVALID_ACTIVITY_OPERATION", status: 400, message: "operation must be credit or debit" };
+    if (!Number.isSafeInteger(amount) || amount <= 0) return { ok: false, code: "INVALID_ACTIVITY_AMOUNT", status: 400, message: "amount must be a positive safe integer" };
+    if (!reason || ACTIVITY_ADJUSTMENT_OPERATIONS[reason] !== operation) {
+      return { ok: false, code: "INVALID_ACTIVITY_REASON", status: 400, message: "reason is not allowed for this operation" };
+    }
+    return { ok: true, transactionId, discordUserId, sessionId, operation, amount, reason };
+  }
+
+  idempotentActivityAdjustment(existing, normalized) {
+    const same =
+      existing.discordUserId === normalized.discordUserId &&
+      existing.sessionId === normalized.sessionId &&
+      existing.operation === normalized.operation &&
+      existing.amount === normalized.amount &&
+      existing.reason === normalized.reason;
+    if (!same) {
+      return { ok: false, code: "TRANSACTION_CONFLICT", status: 409, message: "transactionId already exists with different activity adjustment data" };
+    }
+    const user = this.state.users[existing.userId];
+    return { ok: true, status: 200, changed: false, transaction: this.publicActivityAdjustment(existing), wallet: user?.wallet ?? null };
+  }
+
+  scopedActivityAdjustment(transaction, guildId) {
+    if (!isDiscordSnowflake(guildId) || !isDiscordSnowflake(transaction.discordUserId)) {
+      return { ok: false, code: "TRANSACTION_NOT_FOUND", status: 404, message: "transaction not found" };
+    }
+    const expectedUserId = `${guildId}:${transaction.discordUserId}`;
+    if (transaction.userId !== expectedUserId) {
+      return { ok: false, code: "TRANSACTION_NOT_FOUND", status: 404, message: "transaction not found" };
+    }
+    return { ok: true };
+  }
+
+  publicActivityAdjustment(transaction) {
+    return {
+      transactionId: transaction.transactionId,
+      discordUserId: transaction.discordUserId,
+      userId: transaction.userId,
+      sessionId: transaction.sessionId,
+      operation: transaction.operation,
+      amount: transaction.amount,
+      reason: transaction.reason,
+      createdAt: transaction.createdAt
+    };
   }
 
   normalizeCasinoReservation(data, guildId, limits = {}) {
@@ -5698,6 +5822,12 @@ function createCasinoState(overrides = {}) {
   };
 }
 
+function createActivityState(overrides = {}) {
+  return {
+    adjustments: { ...((overrides && overrides.adjustments) || {}) }
+  };
+}
+
 function createBoostRewardsState(overrides = {}) {
   const rewards = overrides?.settings?.tierRewards || {};
   return {
@@ -5765,6 +5895,10 @@ function migrateState(state) {
   );
   next.casino.settings.maxPayoutMultiplier = Math.max(0, Number(next.casino.settings.maxPayoutMultiplier) || CASINO_CONFIG.maxPayoutMultiplier);
   next.casino.settings.maxPayoutRis = Math.max(0, Number(next.casino.settings.maxPayoutRis) || CASINO_CONFIG.maxPayoutRis);
+  next.activity = createActivityState(next.activity || {});
+  next.activity.adjustments = Object.fromEntries(
+    Object.entries(next.activity.adjustments || {}).map(([id, tx]) => [id, migrateActivityAdjustment(tx, id)])
+  );
   next.boostRewards = createBoostRewardsState(next.boostRewards || {});
   next.boostRewards.members = Object.fromEntries(
     Object.entries(next.boostRewards.members || {}).map(([id, entry]) => [id, migrateBoostRewardMember(entry, id)])
@@ -5866,6 +6000,22 @@ function migrateCasinoTransaction(tx = {}, id = "") {
     reservedAt: tx.reservedAt || tx.createdAt || null,
     settledAt: tx.settledAt || null,
     cancelledAt: tx.cancelledAt || null
+  };
+}
+
+function migrateActivityAdjustment(tx = {}, id = "") {
+  const reason = cleanToken(tx.reason, 40);
+  const operation = ACTIVITY_ADJUSTMENT_OPERATIONS[reason] === tx.operation ? tx.operation : null;
+  return {
+    transactionId: cleanToken(tx.transactionId || id, 120),
+    discordUserId: cleanToken(tx.discordUserId, 80),
+    userId: tx.userId || null,
+    userName: tx.userName || "",
+    sessionId: cleanToken(tx.sessionId, 120),
+    operation,
+    amount: Math.max(0, Number(tx.amount) || 0),
+    reason,
+    createdAt: tx.createdAt || null
   };
 }
 

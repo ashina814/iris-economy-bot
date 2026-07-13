@@ -578,6 +578,96 @@ async function main() {
     assert.strictEqual(unsafeWalletReserve.status, 409, "unsafe wallet state rejects reservation");
     assert.strictEqual(unsafeWalletReserve.body.error.code, "INVALID_WALLET_STATE", "unsafe wallet state has a clear code");
     assert.deepStrictEqual(engine.state, beforeUnsafeWalletState, "unsafe wallet reservation does not mutate state");
+
+    const activityUser = engine.getUser(actor.id, actor.name);
+    activityUser.wallet = 1000;
+    const beforeActivityCredit = activityUser.wallet;
+    const activityCredit = await request(port, {
+      method: "POST",
+      path: "/internal/v1/activity/adjustments",
+      body: { transactionId: "activity-daily-001", discordUserId, sessionId: "activity-session-001", operation: "credit", amount: 250, reason: "daily" }
+    });
+    assert.strictEqual(activityCredit.status, 201, "activity daily credit succeeds");
+    assert.strictEqual(activityCredit.body.wallet, beforeActivityCredit + 250, "activity credit returns the updated wallet");
+    assert.strictEqual(activityUser.wallet, beforeActivityCredit + 250, "activity credit adds Ris once");
+    assert.strictEqual(activityCredit.body.transaction.reason, "daily", "activity credit records the reason");
+    assert(engine.state.ledger.some((entry) => entry.type === "activity_credit"), "activity credits are written to the ledger");
+
+    const duplicateActivityCredit = await request(port, {
+      method: "POST",
+      path: "/internal/v1/activity/adjustments",
+      body: { transactionId: "activity-daily-001", discordUserId, sessionId: "activity-session-001", operation: "credit", amount: 250, reason: "daily" }
+    });
+    assert.strictEqual(duplicateActivityCredit.status, 200, "activity adjustment retries are idempotent");
+    assert.strictEqual(activityUser.wallet, beforeActivityCredit + 250, "activity retry does not double credit");
+
+    const conflictingActivityCredit = await request(port, {
+      method: "POST",
+      path: "/internal/v1/activity/adjustments",
+      body: { transactionId: "activity-daily-001", discordUserId, sessionId: "activity-session-001", operation: "credit", amount: 251, reason: "daily" }
+    });
+    assert.strictEqual(conflictingActivityCredit.status, 409, "activity transaction id conflicts are rejected");
+
+    const invalidActivityReason = await request(port, {
+      method: "POST",
+      path: "/internal/v1/activity/adjustments",
+      body: { transactionId: "activity-invalid-reason", discordUserId, sessionId: "activity-session-001", operation: "debit", amount: 100, reason: "daily" }
+    });
+    assert.strictEqual(invalidActivityReason.status, 400, "activity reasons are limited to their permitted operation");
+    assert.strictEqual(invalidActivityReason.body.error.code, "INVALID_ACTIVITY_REASON", "invalid activity reasons keep a clear code");
+
+    const beforeTreasuryDebit = activityUser.wallet;
+    const activityDebit = await request(port, {
+      method: "POST",
+      path: "/internal/v1/activity/adjustments",
+      body: { transactionId: "activity-treasury-001", discordUserId, sessionId: "activity-session-001", operation: "debit", amount: 300, reason: "treasury" }
+    });
+    assert.strictEqual(activityDebit.status, 201, "activity treasury debit succeeds");
+    assert.strictEqual(activityUser.wallet, beforeTreasuryDebit - 300, "activity debit consumes Ris once");
+    assert(engine.state.ledger.some((entry) => entry.type === "activity_debit"), "activity debits are written to the ledger");
+
+    const insufficientActivityDebit = await request(port, {
+      method: "POST",
+      path: "/internal/v1/activity/adjustments",
+      body: { transactionId: "activity-treasury-insufficient", discordUserId, sessionId: "activity-session-001", operation: "debit", amount: activityUser.wallet + 1, reason: "treasury" }
+    });
+    assert.strictEqual(insufficientActivityDebit.status, 409, "activity debits reject insufficient funds");
+
+    const otherGuildActivityTransaction = "activity-other-guild";
+    engine.state.activity.adjustments[otherGuildActivityTransaction] = {
+      transactionId: otherGuildActivityTransaction,
+      discordUserId: otherGuildUser,
+      userId: `345678901234567890:${otherGuildUser}`,
+      userName: "Other Guild",
+      sessionId: "other-session",
+      operation: "credit",
+      amount: 100,
+      reason: "daily",
+      createdAt: new Date().toISOString()
+    };
+    const crossGuildActivity = await request(port, {
+      method: "POST",
+      path: "/internal/v1/activity/adjustments",
+      body: { transactionId: otherGuildActivityTransaction, discordUserId, sessionId: "activity-session-001", operation: "credit", amount: 100, reason: "daily" }
+    });
+    assert.strictEqual(crossGuildActivity.status, 404, "cross-guild activity transaction ids are hidden");
+
+    failNextSave = true;
+    const beforeActivitySaveFailure = JSON.parse(JSON.stringify(engine.state));
+    const activitySaveFailure = await request(port, {
+      method: "POST",
+      path: "/internal/v1/activity/adjustments",
+      body: { transactionId: "activity-save-retry", discordUserId, sessionId: "activity-session-001", operation: "credit", amount: 200, reason: "mission" }
+    });
+    assert.strictEqual(activitySaveFailure.status, 500, "activity save failure returns 500");
+    assert.deepStrictEqual(engine.state, beforeActivitySaveFailure, "activity save failure restores the full state");
+    const activitySaveRetry = await request(port, {
+      method: "POST",
+      path: "/internal/v1/activity/adjustments",
+      body: { transactionId: "activity-save-retry", discordUserId, sessionId: "activity-session-001", operation: "credit", amount: 200, reason: "mission" }
+    });
+    assert.strictEqual(activitySaveRetry.status, 201, "activity retries after save failure credit once");
+    assert.strictEqual(activityUser.wallet, beforeActivitySaveFailure.users[actor.id].wallet + 200, "activity retry keeps one durable credit");
     assert(engine.state.ledger.some((entry) => entry.type === "casino_reserve"), "casino_reserve が台帳に残る");
     assert(engine.state.ledger.some((entry) => entry.type === "casino_settle"), "casino_settle が台帳に残る");
     assert(engine.state.ledger.some((entry) => entry.type === "casino_cancel"), "casino_cancel が台帳に残る");

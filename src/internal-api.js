@@ -104,7 +104,22 @@ async function handleInternalRequest(req, res, context) {
       sendJson(res, body.status, { ok: false, error: { code: body.code, message: body.message } });
       return;
     }
-    const result = persistCasinoMutation(context, () => context.engine.reserveCasinoBet(body.value, context.guildId, context.betLimits));
+    const result = persistEconomyMutation(context, () => context.engine.reserveCasinoBet(body.value, context.guildId, context.betLimits));
+    sendDomainResult(res, result);
+    return;
+  }
+
+  if (method === "POST" && pathname === "/internal/v1/activity/adjustments") {
+    if (!hasJsonContentType(req)) {
+      sendJson(res, 415, { ok: false, error: { code: "UNSUPPORTED_MEDIA_TYPE", message: "content-type must be application/json" } });
+      return;
+    }
+    const body = await readJsonBody(req, context.bodyLimit);
+    if (!body.ok) {
+      sendJson(res, body.status, { ok: false, error: { code: body.code, message: body.message } });
+      return;
+    }
+    const result = persistEconomyMutation(context, () => context.engine.applyActivityAdjustment(body.value, context.guildId));
     sendDomainResult(res, result);
     return;
   }
@@ -125,7 +140,7 @@ async function handleInternalRequest(req, res, context) {
       sendJson(res, body.status, { ok: false, error: { code: body.code, message: body.message } });
       return;
     }
-    const result = persistCasinoMutation(context, () => context.engine.settleCasinoReservation(decoded.value, body.value, context.guildId, context.payoutLimits));
+    const result = persistEconomyMutation(context, () => context.engine.settleCasinoReservation(decoded.value, body.value, context.guildId, context.payoutLimits));
     sendDomainResult(res, result);
     return;
   }
@@ -146,7 +161,7 @@ async function handleInternalRequest(req, res, context) {
       sendJson(res, body.status, { ok: false, error: { code: body.code, message: body.message } });
       return;
     }
-    const result = persistCasinoMutation(context, () => context.engine.cancelCasinoReservation(decoded.value, context.guildId));
+    const result = persistEconomyMutation(context, () => context.engine.cancelCasinoReservation(decoded.value, context.guildId));
     sendDomainResult(res, result);
     return;
   }
@@ -163,7 +178,7 @@ function isAuthorized(req, apiKey) {
   return crypto.timingSafeEqual(headerBytes, expectedBytes);
 }
 
-function persistCasinoMutation(context, operation) {
+function persistEconomyMutation(context, operation) {
   const snapshot = cloneState(context.engine.state);
   const result = operation();
   if (!result.ok || !result.changed) return result;
