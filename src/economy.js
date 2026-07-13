@@ -97,6 +97,8 @@ const MARKETPLACE_CONFIG = {
   auctionExtendMinutes: 5
 };
 
+const OFFICIAL_FULFILLMENT_MODES = new Set(["instant", "manual", "on_use"]);
+
 const CASINO_CONFIG = {
   maxPayoutMultiplier: 100,
   maxPayoutRis: 100000000
@@ -1786,6 +1788,7 @@ class EconomyEngine {
     const type = cleanMarketText(data.type, 32) || "アイテム";
     const price = parsePositiveInt(data.price);
     const max = parsePositiveInt(data.max);
+    const fulfillmentMode = normalizeOfficialFulfillmentMode(data.fulfillmentMode, "instant");
     if (!id) return { ok: false, title: "公式商品IDが空です", lines: ["英数字・_・-・.・: だけでIDを指定してください。"] };
     if (SHOP_ITEMS[id] || this.state.marketplace.officialItems[id]) {
       return { ok: false, title: "公式商品IDが重複しています", lines: [`${id} はすでに使われています。`] };
@@ -1810,6 +1813,7 @@ class EconomyEngine {
       saleEndsAt: null,
       roleId: null,
       roleDurationDays: 0,
+      fulfillmentMode,
       dmGuide: "購入内容は持ち物と運営対応キューに記録されます。",
       source: "admin",
       createdAt: now,
@@ -1844,6 +1848,7 @@ class EconomyEngine {
         { name: "在庫", value: item.stock === null ? "無制限" : `${item.stock} 個`, inline: true },
         { name: "所持上限", value: `${item.max} 個`, inline: true },
         { name: "ロール", value: item.roleId ? `<@&${item.roleId}> / ${item.roleDurationDays > 0 ? `${item.roleDurationDays}日` : "無期限"}` : "なし", inline: false },
+        { name: "利用方式", value: officialFulfillmentModeLabel(item), inline: true },
         { name: "運営対応", value: `未完了 ${queueCount} 件`, inline: true },
         { name: "DM案内", value: item.dmGuide || "なし", inline: false }
       ],
@@ -1854,8 +1859,13 @@ class EconomyEngine {
           customButton("ロールを選択", `eco:market:official-item-role:${id}`, "secondary")
         ]),
         buttons([
+          customButton("即時完了", `eco:market:official-item-mode:${id}:instant`, "secondary", Boolean(item.roleId) || item.fulfillmentMode === "instant"),
+          customButton("購入時に対応", `eco:market:official-item-mode:${id}:manual`, "secondary", Boolean(item.roleId) || item.fulfillmentMode === "manual"),
+          customButton("持ち物から申請", `eco:market:official-item-mode:${id}:on_use`, "primary", Boolean(item.roleId) || item.fulfillmentMode === "on_use")
+        ]),
+        buttons([
           panelButton("対応キュー", "official-fulfillment"),
-          panelButton("公式ショップ確認", "official-shop"),
+          panelButton("商品一覧", "official-product-admin"),
           panelButton("ショップ管理", "market-admin")
         ])
       ]
@@ -1924,6 +1934,18 @@ class EconomyEngine {
     item.updatedBy = adminUser.id;
     this.marketLog(`${adminUser.name} が公式商品 ${id} のロール設定を更新しました。`);
     return { ok: true, title: "ロール設定を更新しました", lines: [item.roleId ? "購入時にロール付与を試みます。失敗時は対応キューから再試行できます。" : "ロール自動付与を解除しました。"], panel: this.officialItemManagementPanel(adminUser, id) };
+  }
+
+  adminSetOfficialItemFulfillmentMode(adminUser, id, mode) {
+    const item = this.officialCustomItems()[id];
+    if (!item) return { ok: false, title: "公式商品が見つかりません", lines: ["対象の商品は削除済みです。"] };
+    if (item.roleId) return { ok: false, title: "ロール商品の利用方式は変更できません", lines: ["ロール商品は購入時の自動付与と、失敗時の対応キューを使用します。"], panel: this.officialItemManagementPanel(adminUser, id) };
+    if (!OFFICIAL_FULFILLMENT_MODES.has(mode)) return { ok: false, title: "利用方式が不正です", lines: ["即時完了、購入時に対応、持ち物から申請のいずれかを選んでください。"] };
+    item.fulfillmentMode = mode;
+    item.updatedAt = this.now().toISOString();
+    item.updatedBy = adminUser.id;
+    this.marketLog(`${adminUser.name} が公式商品 ${id} の利用方式を ${officialFulfillmentModeLabel(item)} に変更しました。`);
+    return { ok: true, title: "利用方式を更新しました", lines: [item.name, officialFulfillmentModeLabel(item)], panel: this.officialItemManagementPanel(adminUser, id) };
   }
 
   loopSuggestion(user) {
@@ -2377,7 +2399,8 @@ class EconomyEngine {
         { name: "在庫", value: item.stock === null || item.stock === undefined ? "無制限" : `${item.stock} 個`, inline: true },
         { name: "販売期間", value: this.officialSaleWindowLine(item), inline: false },
         { name: "効果", value: item.effect, inline: false },
-        { name: "使い方", value: item.usage, inline: false },
+        { name: "使い方", value: this.officialItemUsesRequest(item) ? "購入後、持ち物の「使う・申請する」から希望する名前・内容を送信します。送信時に1個消費します。" : item.usage, inline: false },
+        { name: "利用方式", value: officialFulfillmentModeLabel(item), inline: false },
         { name: "販売方式", value: item.kind === "consumable" ? "使い切り（消費型）" : "常時発動（所持型）", inline: false }
       ],
       components: [
@@ -2657,10 +2680,13 @@ class EconomyEngine {
   marketInventoryPanel(user) {
     this.ensureShopShape(user);
     const officialEntries = Object.entries(user.inventory || {}).filter(([, count]) => count > 0);
-    const consumables = officialEntries.filter(([id]) => this.officialItemDefinition(id)?.kind === "consumable");
+    const usableItems = officialEntries.filter(([id]) => {
+      const item = this.officialItemDefinition(id);
+      return item?.kind === "consumable" || this.officialItemUsesRequest(item);
+    });
     const officialLines = officialEntries.map(([id, count]) => {
       const item = this.officialItemDefinition(id);
-      const kindLabel = item?.kind === "consumable" ? "使い切り" : item?.source === "admin" ? "所持型" : "常時発動";
+      const kindLabel = item?.kind === "consumable" ? "使い切り" : this.officialItemUsesRequest(item) ? "申請型" : item?.source === "admin" ? "所持型" : "常時発動";
       return `${item?.name || id} x${count} [${kindLabel}]`;
     });
     const marketItems = (user.marketplace.inventory || []).slice(-8).reverse().map((item) => {
@@ -2670,9 +2696,13 @@ class EconomyEngine {
     });
     const orders = this.userOrders(user.id).slice(0, 5).map((order) => `#${order.id} ${order.itemName} / ${orderStatusLabel(order.status)}`);
     const components = [];
-    if (consumables.length) {
-      components.push(select("使う商品を選ぶ（使い切り）", consumables.map(([id, count]) =>
-        option(`${this.officialItemDefinition(id).name}（残り${count}）`.slice(0, 90), `run:use ${id}`, this.officialItemDefinition(id).effect || "効果を発動"))));
+    if (usableItems.length) {
+      components.push(select("使う・申請する商品を選ぶ", usableItems.map(([id, count]) => {
+        const item = this.officialItemDefinition(id);
+        const label = this.officialItemUsesRequest(item) ? "申請" : "使う";
+        const description = this.officialItemUsesRequest(item) ? "希望する名前・内容を送信します" : item.usage || item.effect || "内容を確認";
+        return option(`${item.name}（${label} ${count}）`.slice(0, 90), `run:use ${id}`, description);
+      })));
     }
     const awaitingOrders = this.userOrders(user.id).filter((order) => ["open", "reported"].includes(order.status)).slice(0, 25);
     const reportableOrders = awaitingOrders.filter((order) => order.status === "open");
@@ -3019,18 +3049,19 @@ class EconomyEngine {
       components: [
         buttons([
           panelButton("公式商品", "official-product-admin", "primary"),
-          panelButton("民営出品", "user-shops"),
-          panelButton("取引対応", "market-trades")
+          panelButton("対応キュー", "official-fulfillment", "primary"),
+          panelButton("公式オークション", "official-auction-admin", "primary")
         ]),
         buttons([
           panelButton("出品審査", "market-review"),
-          panelButton("公式オークション管理", "official-auction-admin"),
+          panelButton("取引対応", "market-trades"),
           customButton("ショップ設定", "eco:market:settings-edit", "secondary")
         ]),
-        buttons([
-          panelButton("ログ確認", "market-logs"),
-          panelButton("ショップを確認", "marketplace"),
-          panelButton("運営パネル", "admin")
+        select("その他の管理画面", [
+          option("民営出品一覧", "panel:user-shops", "公開中の民営出品を確認"),
+          option("ショップログ", "panel:market-logs", "直近の運営操作を確認"),
+          option("購入者画面を確認", "panel:marketplace", "住民に見えるショップ画面"),
+          option("運営パネルへ", "panel:admin", "管理トップへ戻る")
         ])
       ]
     };
@@ -3055,8 +3086,7 @@ class EconomyEngine {
         buttons([
           customButton("商品を追加", "eco:market:official-item-create", "primary"),
           panelButton("対応キュー", "official-fulfillment"),
-          panelButton("ショップを確認", "official-shop"),
-          panelButton("戻る", "market-admin")
+          panelButton("ショップ管理", "market-admin")
         ]),
         buttons([
           customButton("このチャンネルに購入通知", "eco:market:official-purchase-log-set", "success"),
@@ -3088,7 +3118,7 @@ class EconomyEngine {
         buttons([
           customButton("オークションを作成", "eco:market:auction-create", "success"),
           panelButton("開催中を確認", "official-auctions", "primary"),
-          panelButton("戻る", "market-admin")
+          panelButton("ショップ管理", "market-admin")
         ]),
         ...(openAuctions.length
           ? [select("緊急終了するオークション", openAuctions.slice(0, 25).map((auction) =>
@@ -3122,7 +3152,7 @@ class EconomyEngine {
     };
   }
 
-  createOfficialFulfillment(user, item) {
+  createOfficialFulfillment(user, item, options = {}) {
     const id = this.state.marketplace.nextOfficialFulfillmentId++;
     const now = this.now().toISOString();
     const task = {
@@ -3141,7 +3171,9 @@ class EconomyEngine {
       expiresAt: null,
       ticketChannelId: null,
       ticketCreatedAt: null,
-      ticketCreatedBy: null
+      ticketCreatedBy: null,
+      requestText: cleanMarketText(options.requestText, 80) || null,
+      requestedAt: options.requestText ? now : null
     };
     this.officialFulfillmentTasks().push(task);
     return task;
@@ -3151,11 +3183,11 @@ class EconomyEngine {
     const tasks = this.officialFulfillmentTasks().filter((task) => task.status !== "completed").slice(-25).reverse();
     return {
       title: "公式商品対応キュー",
-      description: "購入後の運営対応とロール付与の再試行を管理します。ここで完了にしても返金・残高処理は行いません。",
+      description: "購入後または利用申請後の運営対応とロール付与の再試行を管理します。ここで完了にしても返金・残高処理は行いません。",
       color: 0x334155,
       fields: tasks.length ? tasks.map((task) => ({
         name: `#${task.id} ${task.itemName}`.slice(0, 256),
-        value: `${task.buyerName} / ${officialFulfillmentStatusLabel(task.status)}\n${task.roleId ? `ロール: <@&${task.roleId}>${task.expiresAt ? ` / 期限 ${shortDate(task.expiresAt)}` : ""}` : task.ticketChannelId ? `手動対応 / チケット <#${task.ticketChannelId}>` : "手動対応 / チケット未作成"}\n${task.note || "対応待ち"}`.slice(0, 1024),
+        value: `${task.buyerName} / ${officialFulfillmentStatusLabel(task.status)}\n${task.roleId ? `ロール: <@&${task.roleId}>${task.expiresAt ? ` / 期限 ${shortDate(task.expiresAt)}` : ""}` : task.ticketChannelId ? `手動対応 / チケット <#${task.ticketChannelId}>` : "手動対応 / チケット未作成"}${task.requestText ? `\n希望: ${task.requestText}` : ""}\n${task.note || "対応待ち"}`.slice(0, 1024),
         inline: false
       })) : [{ name: "対応待ちなし", value: "現在、運営対応が必要な公式商品の購入はありません。", inline: false }],
       components: [
@@ -3163,9 +3195,8 @@ class EconomyEngine {
           option(`#${task.id} ${task.itemName}`.slice(0, 90), `run:marketplace official-fulfillment ${task.id}`, `${task.buyerName} / ${officialFulfillmentStatusLabel(task.status)}`.slice(0, 100))
         ))] : []),
         buttons([
-          panelButton("ショップ管理", "market-admin"),
-          panelButton("公式ショップ確認", "official-shop"),
-          panelButton("ショップ", "marketplace")
+          panelButton("公式商品", "official-product-admin"),
+          panelButton("ショップ管理", "market-admin")
         ])
       ]
     };
@@ -3185,6 +3216,7 @@ class EconomyEngine {
         { name: "ロール", value: task.roleId ? `<@&${task.roleId}>` : "なし", inline: true },
         { name: "期限", value: task.roleDurationDays > 0 ? `${task.roleDurationDays}日` : "なし / 無期限", inline: true },
         { name: "チケット", value: task.ticketChannelId ? `<#${task.ticketChannelId}>` : task.roleId ? "不要（ロール自動付与）" : "未作成", inline: true },
+        ...(task.requestText ? [{ name: "希望内容", value: task.requestText, inline: false }] : []),
         { name: "メモ", value: task.note || "-", inline: false }
       ],
       components: [
@@ -3364,7 +3396,7 @@ class EconomyEngine {
       components.push(select("審査する商品を選ぶ", pending.map((listing) =>
         option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace review ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`))));
     }
-    components.push(buttons([panelButton("ショップ管理", "market-admin"), panelButton("運営パネル", "admin")]));
+    components.push(buttons([panelButton("ショップ管理", "market-admin")]));
     return {
       title: "出品審査",
       description: pending.length ? "審査待ちの商品です。1件を選んで承認/却下してください。" : "審査待ちの商品はありません。",
@@ -3423,7 +3455,7 @@ class EconomyEngine {
       components.push(select("この取引を管理", openOrders.map((order) =>
         option(`#${order.id} ${order.itemName}`.slice(0, 90), `run:marketplace order ${order.id}`, `${order.buyerName} <- ${order.sellerName}`))));
     }
-    components.push(buttons([panelButton("ショップ管理", "market-admin"), panelButton("運営パネル", "admin")]));
+    components.push(buttons([panelButton("ショップ管理", "market-admin")]));
     return {
       title: "取引対応",
       description: openOrders.length ? "手動対応中または報告中の取引です。1件を選んで対応してください。" : "対応待ちの取引はありません。",
@@ -3576,7 +3608,7 @@ class EconomyEngine {
       fields: [
         { name: "ログ", value: this.state.marketplace.logs.slice(-10).reverse().join("\n") || "まだログはありません。", inline: false }
       ],
-      components: [buttons([panelButton("ショップ管理", "market-admin"), panelButton("運営パネル", "admin")])]
+      components: [buttons([panelButton("ショップ管理", "market-admin")])]
     };
   }
 
@@ -4584,6 +4616,14 @@ class EconomyEngine {
     this.state.marketplace.logs = this.state.marketplace.logs.slice(-80);
   }
 
+  officialItemUsesRequest(item) {
+    return item?.source === "admin" && !item.roleId && normalizeOfficialFulfillmentMode(item.fulfillmentMode, "manual") === "on_use";
+  }
+
+  officialItemRequiresFulfillment(item) {
+    return item?.source === "admin" && (Boolean(item.roleId) || normalizeOfficialFulfillmentMode(item.fulfillmentMode, "manual") === "manual");
+  }
+
   buyItem(user, id) {
     const item = this.officialItem(id);
     if (!item) {
@@ -4620,7 +4660,7 @@ class EconomyEngine {
     user.inventory[id] = owned + 1;
     user.lifetimeLost += price;
     if (this.officialCustomItems()[id] === item && item.stock !== null) item.stock -= 1;
-    const fulfillment = this.officialCustomItems()[id] === item ? this.createOfficialFulfillment(user, item) : null;
+    const fulfillment = this.officialItemRequiresFulfillment(item) ? this.createOfficialFulfillment(user, item) : null;
     this.log(user, "buy", -price, item.name);
     if (fulfillment) this.marketLog(`${user.name} が公式商品 ${item.name} を購入 (#${fulfillment.id})。`);
 
@@ -4633,7 +4673,7 @@ class EconomyEngine {
         price,
         description: item.description,
         anotherCommand: "marketplace recommended",
-        useCommand: item.kind === "consumable" ? `use ${id}` : null
+        useCommand: item.kind === "consumable" || this.officialItemUsesRequest(item) ? `use ${id}` : null
       }),
       officialPurchase: {
         itemId: id,
@@ -4655,6 +4695,16 @@ class EconomyEngine {
 
     if (!user.inventory[id]) {
       return { ok: false, title: "持っていません", lines: [`${item.name} は在庫ゼロです。`] };
+    }
+
+    if (this.officialItemUsesRequest(item)) {
+      return {
+        ok: false,
+        title: "持ち物から申請してください",
+        lines: [`${item.name} は持ち物画面の「使う・申請する商品を選ぶ」から希望内容を送信できます。`],
+        panel: this.marketInventoryPanel(user),
+        requestUse: true
+      };
     }
 
     if (item.kind !== "consumable") {
@@ -4682,6 +4732,31 @@ class EconomyEngine {
     }
 
     return { ok: false, title: "何も起きない", lines: ["そのアイテムはまだ効果が実装されていません。"] };
+  }
+
+  beginOfficialItemUse(user, id, requestText) {
+    const item = this.officialItemDefinition(id);
+    if (!item || !this.officialItemUsesRequest(item)) {
+      return { ok: false, title: "申請できない商品です", lines: ["持ち物から申請できる公式商品を選んでください。"] };
+    }
+    if (!user.inventory[id]) return { ok: false, title: "持っていません", lines: [`${item.name} は在庫ゼロです。`] };
+    const request = cleanMarketText(requestText, 80);
+    if (!request) return { ok: false, title: "希望内容を入力してください", lines: ["空白だけの申請は送信できません。"] };
+
+    user.inventory[id] -= 1;
+    if (user.inventory[id] <= 0) delete user.inventory[id];
+    const fulfillment = this.createOfficialFulfillment(user, item, { requestText: request });
+    fulfillment.note = "利用申請を受け付けました";
+    this.log(user, "official_use", 0, `${item.name}: ${request}`);
+    this.marketLog(`${user.name} が ${item.name} を利用申請 (#${fulfillment.id})。`);
+    return {
+      ok: true,
+      title: "利用申請を受け付けました",
+      lines: [`${item.name} を1つ使用しました。`, `希望内容: ${request}`, "購入者との対応チケットを作成します。"],
+      panel: this.marketInventoryPanel(user),
+      officialFulfillment: { id: fulfillment.id, itemName: item.name, roleId: null, dmGuide: item.dmGuide },
+      officialUse: { id: fulfillment.id, itemId: item.id, itemName: item.name, requestText: request }
+    };
   }
 
   leaderboard(typeRaw = "net") {
@@ -5853,6 +5928,7 @@ function migrateOfficialItem(item = {}, id = "") {
     saleEndsAt: validDateIso(item.saleEndsAt),
     roleId: isDiscordSnowflake(item.roleId) ? String(item.roleId) : null,
     roleDurationDays: clamp(Math.floor(Number(item.roleDurationDays) || 0), 0, 3650),
+    fulfillmentMode: normalizeOfficialFulfillmentMode(item.fulfillmentMode, cleanId === "official:name-henkou" ? "on_use" : "manual"),
     dmGuide: cleanMarketText(item.dmGuide, 400) || "購入内容は持ち物と運営対応キューに記録されます。",
     source: item.source || "admin",
     createdAt: item.createdAt || null,
@@ -5878,7 +5954,9 @@ function migrateOfficialFulfillment(task = {}) {
     expiresAt: validDateIso(task.expiresAt),
     ticketChannelId: isDiscordSnowflake(task.ticketChannelId) ? String(task.ticketChannelId) : null,
     ticketCreatedAt: validDateIso(task.ticketCreatedAt),
-    ticketCreatedBy: task.ticketCreatedBy || null
+    ticketCreatedBy: task.ticketCreatedBy || null,
+    requestText: cleanMarketText(task.requestText, 80) || null,
+    requestedAt: validDateIso(task.requestedAt)
   };
 }
 
@@ -6094,6 +6172,19 @@ function orderStatusLabel(status) {
 
 function officialItemStatusLabel(status) {
   return status === "active" ? "販売中" : "停止中";
+}
+
+function normalizeOfficialFulfillmentMode(value, fallback = "manual") {
+  return OFFICIAL_FULFILLMENT_MODES.has(value) ? value : fallback;
+}
+
+function officialFulfillmentModeLabel(item) {
+  if (item?.roleId) return "購入時にロール自動付与（失敗時は運営対応）";
+  switch (normalizeOfficialFulfillmentMode(item?.fulfillmentMode, "manual")) {
+    case "instant": return "即時完了（所持のみ）";
+    case "on_use": return "持ち物から申請";
+    default: return "購入時に運営対応";
+  }
 }
 
 function officialFulfillmentStatusLabel(status) {
