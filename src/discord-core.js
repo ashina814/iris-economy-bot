@@ -611,6 +611,8 @@ client.on(Events.GuildMemberAdd, async (member) => {
   if (member.user.bot) return;
   syncGuildMember(member);
   await handleBoostMemberState(member, "member-add");
+  // 復帰した販売者の新規購入ブロックを解除する（出品自体は本人の再開操作まで停止のまま）
+  engine.recordSellerReturn(actorFromMember(member));
   const used = await detectUsedInvite(member.guild);
   const result = used?.inviter
     ? engine.recordInviteJoin(
@@ -642,6 +644,8 @@ client.on(Events.GuildMemberRemove, async (member) => {
   removeGuildMember(member);
   recordBoostMemberLeft(member);
   engine.recordInviteLeave(actorFromMember(member));
+  // 販売者の退出: 出品を新規購入不可にする（進行中の取引は運営対応可能なまま残す）
+  engine.pauseSellerListingsOnLeave(actorFromMember(member));
   store.save(engine.state);
 });
 
@@ -819,6 +823,9 @@ function canRunCommand(context, command) {
     normalized.startsWith("marketplace auction-end") ||
     normalized.startsWith("marketplace review") ||
     normalized.startsWith("marketplace order") ||
+    normalized.startsWith("marketplace report-queue") ||
+    normalized.startsWith("marketplace report-detail") ||
+    normalized.startsWith("marketplace report-resolve") ||
     normalized.startsWith("marketplace official-manage") ||
     normalized.startsWith("marketplace official-fulfillment") ||
     normalized === "panel market-admin" ||

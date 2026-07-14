@@ -2260,13 +2260,19 @@ class EconomyEngine {
     if (action === "trade-cancel") return this.cancelTrade(user, args[1]);
     if (action === "trade-decline") return this.declineTrade(user, args[1]);
     if (action === "trade-report") return this.reportTrade(user, args[1], args.slice(2).join(" "));
+    if (action === "report-queue") return this.panelResult(this.marketReportsPanel(args[1]));
+    if (action === "report-detail") return this.panelResult(this.marketReportDetailPanel(args[1]));
+    if (action === "report-resolve") return this.resolveListingReport(user, args[1], args[2]);
+    if (action === "search-page") return this.panelResult(this.searchResultsPanel(user, null, args[1]));
     if (action === "auction-history") return this.panelResult(this.auctionHistoryPanel(user, args[1]));
     if (action === "auction-end") return this.forceEndAuction(user, args[1]);
     if (action === "review") return this.panelResult(this.reviewListingPanel(user, args[1]));
     if (action === "order") return this.panelResult(this.adminOrderPanel(user, args[1]));
-    if (action === "shop-view") return this.panelResult(this.shopViewPanel(user, args[1]));
+    if (action === "shop-view") return this.panelResult(this.shopViewPanel(user, args[1], args[2]));
     if (action === "sale") return this.panelResult(this.saleDetailPanel(user, args[1]));
     if (action === "restart-listing") return this.restartListing(user, args[1]);
+    if (action === "my-listings") return this.panelResult(this.myListingsPanel(user, args[1]));
+    if (action === "my-listing") return this.panelResult(this.myListingDetailPanel(user, args[1]));
     if (action === "edit-listing") return this.panelResult(this.editListingPromptPanel(user, args[1]));
     if (action === "resubmit-listing") return this.panelResult(this.resubmitListingPromptPanel(user, args[1]));
     if (action === "open-shop") return this.openShop(user);
@@ -2716,43 +2722,51 @@ class EconomyEngine {
     };
   }
 
-  shopViewPanel(user, ownerId) {
+  shopViewPanel(user, ownerId, pageRaw = 1) {
     if (!ownerId) return this.userShopsPanel(user);
     const owner = this.state.users[ownerId];
     if (!owner || !owner.marketplace?.shopOpened) {
       return {
-        title: "店が見つかりません",
-        description: "指定された店は存在しないか、まだ開店していません。",
+        title: "販売者が見つかりません",
+        description: "指定された販売者ページは存在しないか、まだ出品がありません。",
         color: 0x64748b,
         fields: [],
-        components: [buttons([panelButton("民営ショップ", "user-shops"), panelButton("ショップ", "marketplace")])]
+        components: [buttons([panelButton("商店街", "user-shops"), panelButton("ショップ", "marketplace")])]
       };
     }
     const shop = owner.marketplace;
     const isClosed = (shop.shopStatus || "open") === "closed";
-    const listings = this.sellerListings(ownerId).filter((l) => l.status === "active" && this.listingCanAccept(l)).slice(0, 25);
+    const isAway = Boolean(shop.leftGuildAt);
+    const all = this.sellerListings(ownerId).filter((l) => l.status === "active" && this.listingCanAccept(l));
+    const { page, pageCount, slice, total } = paginate(all, pageRaw, 6);
     const components = [];
-    if (listings.length && !isClosed) {
-      components.push(select("商品を選ぶ", listings.map((listing) =>
+    if (slice.length && !isClosed && !isAway) {
+      components.push(select("出品を選ぶ", slice.map((listing) =>
         option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)}`)
       )));
     }
     components.push(buttons([
-      panelButton("民営ショップ", "user-shops"),
+      panelButton("商店街", "user-shops"),
       panelButton("ショップ", "marketplace"),
-      panelButton("持ち物", "market-inventory")
+      panelButton("自分の取引", "my-trades")
     ]));
+    if (pageCount > 1) {
+      components.push(buttons([
+        runButton("前へ", `marketplace shop-view ${ownerId} ${Math.max(1, page - 1)}`, "secondary", page <= 1),
+        runButton("次へ", `marketplace shop-view ${ownerId} ${Math.min(pageCount, page + 1)}`, "secondary", page >= pageCount)
+      ]));
+    }
     return {
-      title: `${shop.shopName || `${owner.name}の店`}${isClosed ? "（休業中）" : ""}`,
+      title: `${this.sellerPageName(ownerId, owner.name)}${isClosed ? "（受付休止中）" : ""}${isAway ? "（不在）" : ""}`,
       description: shop.shopDescription || "説明はまだありません。",
-      color: isClosed ? 0x64748b : 0x0f766e,
+      color: isClosed || isAway ? 0x64748b : 0x0f766e,
       fields: [
-        { name: "店主", value: owner.name, inline: true },
-        { name: "営業状況", value: isClosed ? "休業中（購入不可）" : "営業中", inline: true },
-        { name: "出品中", value: `${listings.length}件`, inline: true },
-        ...listings.slice(0, 6).map((listing) => ({
+        { name: "販売者", value: owner.name, inline: true },
+        { name: "受付状況", value: isAway ? "サーバー不在のため新規購入停止中" : isClosed ? "休止中（購入不可）" : "受付中", inline: true },
+        { name: "出品", value: `${total}件${pageCount > 1 ? ` / ページ ${page}/${pageCount}` : ""}`, inline: true },
+        ...slice.map((listing) => ({
           name: listing.name,
-          value: `${fmt(listing.price)} / ${saleModeLabel(listing.mode)} / 在庫 ${listing.stock}`,
+          value: this.listingSummaryLine(listing),
           inline: true
         }))
       ],
@@ -2760,35 +2774,54 @@ class EconomyEngine {
     };
   }
 
-  searchResultsPanel(user, filters = {}) {
-    const results = this.searchListings(filters);
+  searchResultsPanel(user, filters = null, pageRaw = 1) {
+    const shop = this.ensureShopShape(user);
+    // ページ送りのため、直近の検索条件をユーザーごとに保存する（filters=null なら保存済み条件を使う）
+    if (filters) {
+      shop.lastSearch = {
+        keyword: cleanMarketText(filters.keyword, 60) || "",
+        type: cleanMarketText(filters.type, 20) || "",
+        category: cleanMarketText(filters.category, 20) || "",
+        minPrice: cleanMarketText(filters.minPrice, 12) || "",
+        maxPrice: cleanMarketText(filters.maxPrice, 12) || "",
+        sort: cleanMarketText(filters.sort, 12) || "newest"
+      };
+    }
+    const active = shop.lastSearch || {};
+    const results = this.searchListings(active);
     const summary = [];
-    if (filters.keyword) summary.push(`キーワード: ${filters.keyword}`);
-    if (filters.type) summary.push(`種類: ${filters.type}`);
-    if (filters.minPrice) summary.push(`最低価格: ${filters.minPrice}`);
-    if (filters.maxPrice) summary.push(`最高価格: ${filters.maxPrice}`);
+    if (active.keyword) summary.push(`キーワード: ${active.keyword}`);
+    if (active.type) summary.push(`種類: ${active.type}`);
+    if (active.category) summary.push(`カテゴリ: ${MARKET_CATEGORIES[active.category] || active.category}`);
+    if (active.minPrice) summary.push(`最低価格: ${active.minPrice}`);
+    if (active.maxPrice) summary.push(`最高価格: ${active.maxPrice}`);
     const sortLabels = { newest: "新着順", oldest: "古い順", price_asc: "安い順", price_desc: "高い順" };
-    const sortKey = filters.sort || "newest";
-    const sortLabel = sortLabels[sortKey] || "新着順";
-    summary.push(`並び: ${sortLabel}`);
-    const summaryLine = summary.length ? summary.join(" / ") : "条件なし（全商品）";
+    summary.push(`並び: ${sortLabels[active.sort] || "新着順"}`);
+    const summaryLine = summary.length ? summary.join(" / ") : "条件なし（全出品）";
+    const { page, pageCount, slice, total } = paginate(results, pageRaw, 6);
     const components = [];
-    if (results.length) {
-      components.push(select("商品を選ぶ", results.slice(0, 25).map((listing) =>
-        option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`))));
+    if (slice.length) {
+      components.push(select("出品を選ぶ", slice.map((listing) =>
+        option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`.slice(0, 100)))));
     }
     components.push(buttons([
       customButton("再検索", "eco:shop:search-open", "primary"),
-      panelButton("民営ショップ", "user-shops"),
+      panelButton("商店街", "user-shops"),
       panelButton("ショップ", "marketplace")
     ]));
+    if (pageCount > 1) {
+      components.push(buttons([
+        runButton("前へ", `marketplace search-page ${Math.max(1, page - 1)}`, "secondary", page <= 1),
+        runButton("次へ", `marketplace search-page ${Math.min(pageCount, page + 1)}`, "secondary", page >= pageCount)
+      ]));
+    }
     return {
-      title: `絞り込み結果（${results.length}件）`,
-      description: `条件: ${summaryLine}\n上位25件までを表示します。`,
+      title: `絞り込み結果（${total}件）`,
+      description: `条件: ${summaryLine}${pageCount > 1 ? `\nページ ${page}/${pageCount}` : ""}`,
       color: 0x0f766e,
-      fields: results.slice(0, 6).map((listing) => ({
+      fields: slice.map((listing) => ({
         name: listing.name,
-        value: `${fmt(listing.price)} / ${productTypeLabel(listing.type)} / ${listing.sellerName}\n在庫 ${listing.stock}`,
+        value: this.listingSummaryLine(listing),
         inline: true
       })),
       components
@@ -3033,46 +3066,75 @@ class EconomyEngine {
     };
   }
 
-  myListingsPanel(user) {
-    const listings = this.sellerListings(user.id).slice(0, 10);
-    const editable = listings.filter((l) => !["rejected"].includes(l.status));
-    const stoppable = listings.filter((l) => !["stopped", "rejected"].includes(l.status));
-    const restartable = listings.filter((l) => l.status === "stopped" && this.listingCanAccept(l) && !l.resubmittedTo);
-    const rejected = listings.filter((l) => l.status === "rejected");
+  myListingLine(listing) {
+    return listing.kind === "service"
+      ? `${listingStatusLabel(listing.status)} / ${fmt(listing.price)} / 受付 ${this.listingLimitLine(listing)} / ${MARKET_CATEGORIES[listing.category] || "その他"}${listing.stoppedReason === "seller_left" ? "\n（退出により停止中。再開ボタンで公開できます）" : ""}${listing.reviewNote ? `\n却下理由: ${listing.reviewNote}` : ""}`
+      : `${listingStatusLabel(listing.status)} / ${fmt(listing.price)} / 在庫 ${listing.stock}\n${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}${listing.reviewNote ? `\n却下理由: ${listing.reviewNote}` : ""}`;
+  }
+
+  myListingsPanel(user, pageRaw = 1) {
+    const all = this.sellerListings(user.id).sort((a, b) => b.id - a.id);
+    const { page, pageCount, slice, total } = paginate(all, pageRaw, 6);
     const components = [];
-    if (editable.length) {
-      components.push(select("編集する商品を選ぶ", editable.map((listing) =>
-        option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace edit-listing ${listing.id}`, `${listingStatusLabel(listing.status)} / ${fmt(listing.price)}`))));
-    }
-    if (stoppable.length) {
-      components.push(select("停止する商品を選ぶ", stoppable.map((listing) =>
-        option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace stop-listing ${listing.id}`, "出品を停止する"))));
-    }
-    if (restartable.length) {
-      components.push(select("再開する商品を選ぶ（停止済み）", restartable.map((listing) =>
-        option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace restart-listing ${listing.id}`, "再公開する"))));
-    }
-    if (rejected.length) {
-      components.push(select("再提出する商品を選ぶ（却下済み）", rejected.map((listing) =>
-        option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace resubmit-listing ${listing.id}`, "修正モーダルを開く"))));
+    if (slice.length) {
+      components.push(select("出品を管理する", slice.map((listing) =>
+        option(`#${listing.id} ${listing.name}`.slice(0, 90), `run:marketplace my-listing ${listing.id}`, `${listingStatusLabel(listing.status)} / ${fmt(listing.price)}`.slice(0, 100)))));
     }
     components.push(buttons([
-      panelButton("商品を出す", "listing-new", "primary"),
+      panelButton("出品する", "listing-new", "primary"),
       panelButton("自分の店", "my-shop"),
-      panelButton("民営ショップ", "user-shops")
+      panelButton("商店街", "user-shops")
     ]));
+    if (pageCount > 1) {
+      components.push(buttons([
+        runButton("前へ", `marketplace my-listings ${Math.max(1, page - 1)}`, "secondary", page <= 1),
+        runButton("次へ", `marketplace my-listings ${Math.min(pageCount, page + 1)}`, "secondary", page >= pageCount)
+      ]));
+    }
     return {
       title: "出品管理",
-      description: listings.length ? "受付中/審査待ち/停止/却下の出品を確認・編集できます。1件を選んで詳細操作します。" : "まだ出品がありません。",
+      description: total ? `全${total}件${pageCount > 1 ? ` / ページ ${page}/${pageCount}` : ""}。1件を選んで編集・停止・再開・再提出ができます。` : "まだ出品がありません。",
       color: 0x14b8a6,
-      fields: listings.map((listing) => ({
+      fields: slice.map((listing) => ({
         name: `#${listing.id} ${listing.name}`,
-        value: listing.kind === "service"
-          ? `${listingStatusLabel(listing.status)} / ${fmt(listing.price)} / 受付 ${this.listingLimitLine(listing)} / ${MARKET_CATEGORIES[listing.category] || "その他"}${listing.reviewNote ? `\n却下理由: ${listing.reviewNote}` : ""}`
-          : `${listingStatusLabel(listing.status)} / ${fmt(listing.price)} / 在庫 ${listing.stock}\n${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}${listing.reviewNote ? `\n却下理由: ${listing.reviewNote}` : ""}`,
+        value: this.myListingLine(listing),
         inline: false
       })),
-      components: components.slice(0, 5)
+      components
+    };
+  }
+
+  myListingDetailPanel(user, id) {
+    const listing = this.findListing(id);
+    if (!listing || listing.sellerId !== user.id) return this.myListingsPanel(user);
+    const actions = [];
+    if (listing.status !== "rejected") {
+      actions.push(customButton("編集", `eco:shop:edit:${listing.id}`, "primary"));
+    }
+    if (["active", "pending", "soldout"].includes(listing.status)) {
+      actions.push(runButton("停止する", `marketplace stop-listing ${listing.id}`, "danger"));
+    }
+    if (listing.status === "stopped" && this.listingCanAccept(listing) && !listing.resubmittedTo) {
+      actions.push(runButton("再開する", `marketplace restart-listing ${listing.id}`, "success"));
+    }
+    if (listing.status === "rejected" && !listing.resubmittedTo) {
+      actions.push(customButton("修正して再提出", `eco:shop:resubmit:${listing.id}`, "primary"));
+    }
+    const components = [];
+    if (actions.length) components.push(buttons(actions));
+    components.push(buttons([
+      panelButton("出品管理へ戻る", "my-listings"),
+      panelButton("自分の店", "my-shop")
+    ]));
+    return {
+      title: `出品 #${listing.id} ${listing.name}`.slice(0, 256),
+      description: listing.description || "説明はありません。",
+      color: 0x14b8a6,
+      fields: [
+        { name: "状態", value: this.myListingLine(listing), inline: false },
+        { name: "受注実績", value: `${listing.sold || 0}件`, inline: true }
+      ],
+      components
     };
   }
 
@@ -3219,13 +3281,16 @@ class EconomyEngine {
     const openAuctions = this.state.marketplace.auctions.filter((auction) => auction.status === "open");
     const officialItems = Object.values(this.officialCustomItems());
     const pendingOfficialFulfillment = this.officialFulfillmentTasks().filter((task) => task.status === "pending").length;
+    const openReports = this.state.marketplace.reports.filter((report) => report.status === "open").length;
+    const reportedTrades = this.state.marketplace.orders.filter((order) => order.status === "reported").length;
     return {
       title: "ショップ管理",
       description: "公式商品、民営出品、取引対応を入口ごとに整理しています。詳細な設定は各画面から開けます。",
       color: 0x334155,
       fields: [
         { name: "民営出品", value: `公開 ${this.activeListings().length}件 / 審査待ち ${pending}件`, inline: true },
-        { name: "取引対応", value: `対応待ち ${openOrders}件`, inline: true },
+        { name: "取引対応", value: `対応待ち ${openOrders}件 / 問題報告 ${reportedTrades}件`, inline: true },
+        { name: "出品の通報", value: `未対応 ${openReports}件`, inline: true },
         { name: "公式商品", value: `販売中 ${officialItems.filter((item) => this.isOfficialItemOnSale(item)).length}件 / 停止・期間外 ${officialItems.length - officialItems.filter((item) => this.isOfficialItemOnSale(item)).length}件`, inline: true },
         { name: "公式対応キュー", value: `未完了 ${pendingOfficialFulfillment}件`, inline: true },
         { name: "公式オークション", value: `開催中 ${openAuctions.length}件`, inline: true },
@@ -3241,6 +3306,7 @@ class EconomyEngine {
         buttons([
           panelButton("出品審査", "market-review"),
           panelButton("取引対応", "market-trades"),
+          runButton("通報キュー", "marketplace report-queue", "danger"),
           customButton("ショップ設定", "eco:market:settings-edit", "secondary")
         ]),
         select("その他の管理画面", [
@@ -4269,6 +4335,34 @@ class EconomyEngine {
     };
   }
 
+  // ---- 販売者のサーバー退出/復帰（GuildMemberRemove の明示イベントから呼ぶ） ----
+
+  pauseSellerListingsOnLeave(actor) {
+    const user = this.state.users[actor?.id];
+    if (!user) return { paused: 0 };
+    const shop = this.ensureShopShape(user);
+    shop.leftGuildAt = new Date().toISOString();
+    let paused = 0;
+    for (const listing of this.state.marketplace.listings) {
+      if (listing.sellerId !== user.id || listing.status !== "active") continue;
+      listing.status = "stopped";
+      listing.stoppedReason = "seller_left";
+      listing.stoppedAt = shop.leftGuildAt;
+      paused += 1;
+    }
+    if (paused > 0) this.marketLog(`${user.name} の退出により出品 ${paused}件を一時停止しました（進行中の取引は残ります）。`);
+    return { paused };
+  }
+
+  // 再参加しても出品は自動再開しない。新規購入ブロック（leftGuildAt）だけ解除する。
+  recordSellerReturn(actor) {
+    const user = this.state.users[actor?.id];
+    if (!user?.marketplace?.leftGuildAt) return false;
+    user.marketplace.leftGuildAt = null;
+    this.marketLog(`${user.name} が復帰しました。停止中の出品は本人の再開操作で公開されます。`);
+    return true;
+  }
+
   // ---- 出品の通報（即削除はしない。運営キューに積む） ----
 
   reportListing(user, id, reason = "") {
@@ -4297,6 +4391,113 @@ class EconomyEngine {
       title: "運営に報告しました",
       lines: ["報告は運営が確認します。即座に出品が消えるわけではありません。", "同じ出品への重複報告は不要です。"]
     };
+  }
+
+  // ---- 通報キュー（運営）: 問題なし / 出品停止 / 販売者を要確認 ----
+
+  marketReportsPanel(pageRaw = 1) {
+    const open = this.state.marketplace.reports.filter((report) => report.status === "open").sort((a, b) => b.id - a.id);
+    const { page, pageCount, slice, total } = paginate(open, pageRaw, 6);
+    const components = [];
+    if (slice.length) {
+      components.push(select("通報を開く", slice.map((report) =>
+        option(`#${report.id} ${report.listingName}`.slice(0, 90), `run:marketplace report-detail ${report.id}`,
+          `販売者 ${report.sellerName} / 報告 ${report.reporterName}`.slice(0, 100)))));
+    }
+    components.push(buttons([panelButton("ショップ管理", "market-admin")]));
+    if (pageCount > 1) {
+      components.push(buttons([
+        runButton("前へ", `marketplace report-queue ${Math.max(1, page - 1)}`, "secondary", page <= 1),
+        runButton("次へ", `marketplace report-queue ${Math.min(pageCount, page + 1)}`, "secondary", page >= pageCount)
+      ]));
+    }
+    return {
+      title: "出品の通報キュー",
+      description: total ? `未対応 ${total}件${pageCount > 1 ? ` / ページ ${page}/${pageCount}` : ""}` : "未対応の通報はありません。",
+      color: total ? 0xef4444 : 0x475569,
+      fields: slice.map((report) => ({
+        name: `#${report.id} ${report.listingName}`,
+        value: `販売者 ${report.sellerName} / 報告者 ${report.reporterName}\n${shortDate(report.at)}: ${report.reason}`,
+        inline: false
+      })),
+      components
+    };
+  }
+
+  marketReportDetailPanel(id) {
+    const report = this.state.marketplace.reports.find((entry) => String(entry.id) === String(id));
+    if (!report) return this.marketReportsPanel();
+    const listing = this.findListing(report.listingId);
+    const seller = this.state.users[report.sellerId];
+    const resolved = report.status === "resolved";
+    return {
+      title: `通報 #${report.id} ${report.listingName}`,
+      description: resolved ? `対応済み: ${report.resolution || "-"}` : "未対応の通報です。報告があっても即有罪扱いにはしません。",
+      color: resolved ? 0x475569 : 0xef4444,
+      fields: [
+        { name: "出品", value: listing ? `#${listing.id} ${listing.name}（${listingStatusLabel(listing.status)} / ${fmt(listing.price)}）` : "（出品は見つかりません）", inline: false },
+        { name: "販売者", value: `${report.sellerName}${seller?.marketplace?.sellerFlagged ? "（要確認状態）" : ""}`, inline: true },
+        { name: "報告者", value: report.reporterName, inline: true },
+        { name: "報告日時", value: shortDate(report.at), inline: true },
+        { name: "理由", value: report.reason, inline: false }
+      ],
+      components: [
+        buttons([
+          runButton("問題なし", `marketplace report-resolve ${report.id} ok`, "success", resolved),
+          runButton("出品停止", `marketplace report-resolve ${report.id} stop`, "danger", resolved || !listing),
+          runButton("販売者を要確認にする", `marketplace report-resolve ${report.id} flag`, "danger", resolved),
+          runButton("要確認を解除", `marketplace report-resolve ${report.id} unflag`, "secondary", !seller?.marketplace?.sellerFlagged)
+        ]),
+        buttons([runButton("通報キューへ", "marketplace report-queue"), panelButton("ショップ管理", "market-admin")])
+      ]
+    };
+  }
+
+  resolveListingReport(adminUser, id, actionRaw = "ok") {
+    const report = this.state.marketplace.reports.find((entry) => String(entry.id) === String(id));
+    if (!report) return { ok: false, title: "通報が見つかりません", lines: [`#${id} はキューにありません。`] };
+    const action = String(actionRaw || "ok").toLowerCase();
+    const listing = this.findListing(report.listingId);
+    const seller = report.sellerId ? this.getUser(report.sellerId, report.sellerName) : null;
+    const lines = [];
+
+    if (action === "unflag") {
+      if (seller) {
+        this.ensureShopShape(seller).sellerFlagged = false;
+        lines.push(`${seller.name} の要確認状態を解除しました。`);
+        this.marketLog(`${adminUser.name} が ${seller.name} の要確認状態を解除しました。`);
+      }
+      return { ok: true, title: "要確認を解除しました", lines: lines.length ? lines : ["対象の販売者が見つかりません。"], panel: this.marketReportDetailPanel(report.id) };
+    }
+    if (report.status === "resolved") {
+      return { ok: false, title: "対応済み", lines: [`通報 #${report.id} はすでに対応済みです（${report.resolution || "-"}）。`], panel: this.marketReportDetailPanel(report.id) };
+    }
+
+    if (action === "stop") {
+      if (listing && ["active", "pending", "soldout"].includes(listing.status)) {
+        listing.status = "stopped";
+        listing.stoppedReason = "reported";
+        listing.stoppedAt = new Date().toISOString();
+        lines.push(`出品 #${listing.id} ${listing.name} を停止しました（再開時は再審査になります）。`);
+      } else {
+        lines.push("出品はすでに停止済みか、見つかりませんでした。");
+      }
+      report.resolution = "出品停止";
+    } else if (action === "flag") {
+      if (seller) {
+        this.ensureShopShape(seller).sellerFlagged = true;
+        lines.push(`${seller.name} を要確認状態にしました。以後の出品は審査待ちになります。`);
+      }
+      report.resolution = "販売者を要確認に設定";
+    } else {
+      report.resolution = "問題なし";
+      lines.push("問題なしとして通報をクローズしました。");
+    }
+    report.status = "resolved";
+    report.resolvedBy = adminUser.id;
+    report.resolvedAt = new Date().toISOString();
+    this.marketLog(`${adminUser.name} が通報 #${report.id} を処理: ${report.resolution}`);
+    return { ok: true, title: "通報を処理しました", lines, panel: this.marketReportsPanel() };
   }
 
   // ---- 取引画面（購入者/販売者で操作を出し分ける。legacy注文も閲覧できる） ----
