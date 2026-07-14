@@ -236,6 +236,18 @@ async function handleInteraction(interaction) {
       await handleBalanceRoleAmountModal(interaction);
       return;
     }
+    if (interaction.customId.startsWith("eco:modal:trade-buy:")) {
+      await handleTradeBuyModal(interaction);
+      return;
+    }
+    if (interaction.customId.startsWith("eco:modal:trade-report:")) {
+      await handleTradeReportModal(interaction);
+      return;
+    }
+    if (interaction.customId.startsWith("eco:modal:listing-report:")) {
+      await handleListingReportModal(interaction);
+      return;
+    }
     if (interaction.customId === "eco:modal:shop-search") {
       await handleShopSearchModal(interaction);
       return;
@@ -321,6 +333,18 @@ async function handleInteraction(interaction) {
     }
     if (interaction.isButton() && interaction.customId.startsWith("eco:market:auction-bid:")) {
       await showMarketAuctionBidModal(interaction, interaction.customId.split(":")[3]);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:trade-buy:")) {
+      await showTradeBuyModal(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:trade-report:")) {
+      await showTradeReportModal(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:listing-report:")) {
+      await showListingReportModal(interaction);
       return;
     }
     if (interaction.isButton() && interaction.customId === "eco:market:official-item-create") {
@@ -461,6 +485,9 @@ async function handleInteraction(interaction) {
     store.save(engine.state);
     await updateDiscord(interaction, result);
     void processOfficialPurchaseEffects(interaction, result);
+    if (result?.tradeUpdate) {
+      await postTradeThreadUpdate(result.tradeUpdate.orderId).catch((error) => console.warn(`取引スレッド更新に失敗しました: ${error.message}`));
+    }
     return;
   }
 
@@ -489,6 +516,9 @@ async function handleInteraction(interaction) {
 
   await replyDiscord(interaction, result, { ephemeral: slash.ephemeral });
   void processOfficialPurchaseEffects(interaction, result);
+  if (result?.tradeUpdate) {
+    await postTradeThreadUpdate(result.tradeUpdate.orderId).catch((error) => console.warn(`取引スレッド更新に失敗しました: ${error.message}`));
+  }
 }
 
 async function replyInteractionError(interaction) {
@@ -535,6 +565,9 @@ client.on(Events.MessageCreate, async (message) => {
   store.save(engine.state);
   await sendResult(message.channel, result);
   await notifyOfficialPurchase(result);
+  if (result?.tradeUpdate) {
+    await postTradeThreadUpdate(result.tradeUpdate.orderId).catch((error) => console.warn(`取引スレッド更新に失敗しました: ${error.message}`));
+  }
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
@@ -1003,11 +1036,13 @@ async function deliverNotifications(notifications) {
 async function deliverOne(note) {
   const userRec = engine.state.users?.[note.userId];
   const enabled = Boolean(userRec?.notifyEnabled);
-  const sellerSaleDm = note.event === "listing_sold" && userRec?.marketplace?.salesDmEnabled !== false;
+  const sellerSaleDm = ["listing_sold", "trade_ordered"].includes(note.event) && userRec?.marketplace?.salesDmEnabled !== false;
+  // 取引の進行通知は金銭が絡むため、通知設定OFFでもDMを試みる（拒否時はログチャンネルへ）
+  const transactional = String(note.event || "").startsWith("trade_") && note.event !== "trade_ordered";
   const embed = buildNotificationEmbed(note);
   if (!embed) return { stateChanged: false };
   let stateChanged = false;
-  if (enabled || sellerSaleDm) {
+  if (enabled || sellerSaleDm || transactional) {
     const discordId = extractDiscordUserId(note.userId);
     if (discordId) {
       try {
@@ -1090,6 +1125,67 @@ function buildNotificationEmbed(note) {
         .setTitle("◆ 落札しました")
         .setColor(0x22c55e)
         .setDescription(`#${data.auctionId} **${data.name}** を ${fmt(data.winningBid)} で落札しました。持ち物に付与済み。`);
+    case "trade_ordered":
+      return embed
+        .setTitle("◆ 出品が購入されました（受注待ち）")
+        .setColor(0x0ea5e9)
+        .setDescription(`**${data.itemName}** が購入されました。「自分の取引」または取引スレッドから受注してください。`)
+        .addFields(
+          { name: "取引ID", value: `#${data.orderId}`, inline: true },
+          { name: "購入者", value: extractDiscordUserId(data.buyerId) ? `<@${extractDiscordUserId(data.buyerId)}>` : data.buyerName || "-", inline: true },
+          { name: "金額", value: `${fmt(data.price || 0)}（手数料差引後 ${fmt(data.sellerReceive || 0)}）`, inline: true },
+          { name: "依頼内容", value: data.request || "（記入なし）", inline: false },
+          { name: "代金", value: "取引完了までIRISが預かります。", inline: false }
+        );
+    case "trade_purchased":
+      return embed
+        .setTitle("◆ 購入しました（販売者の受注待ち）")
+        .setColor(0x0ea5e9)
+        .setDescription(`**${data.itemName}** を ${data.sellerName} から購入しました。（${fmt(data.price || 0)} / 取引 #${data.orderId}）`)
+        .addFields({ name: "代金", value: "取引完了までIRISが預かります。進行状況は「自分の取引」から確認できます。", inline: false });
+    case "trade_accepted":
+      return embed
+        .setTitle("◆ 販売者が受注しました")
+        .setColor(0x0ea5e9)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** を ${data.sellerName} が受注し、対応中になりました。`);
+    case "trade_delivered":
+      return embed
+        .setTitle("◆ 販売者が対応完了を報告しました")
+        .setColor(0x22c55e)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** の対応完了が報告されました。内容を確認して「受取確認」を押してください。`)
+        .addFields({ name: "自動完了", value: data.autoCompleteAt ? `問題報告がなければ ${new Date(data.autoCompleteAt).toLocaleString("ja-JP")} に自動で完了します。` : "-", inline: false });
+    case "trade_autocomplete_warning":
+      return embed
+        .setTitle("◇ まもなく自動完了します")
+        .setColor(0xf59e0b)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** は ${data.autoCompleteAt ? new Date(data.autoCompleteAt).toLocaleString("ja-JP") : "まもなく"} に自動完了し、代金が販売者へ支払われます。`)
+        .addFields({ name: "問題がある場合", value: "「自分の取引」から問題を報告すると自動完了を止められます。", inline: false });
+    case "trade_completed":
+      return embed
+        .setTitle("◆ 取引が完了しました")
+        .setColor(0x22c55e)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** が完了しました。${data.role === "seller" ? `代金 ${fmt(data.paid || 0)} を受け取りました。` : ""}${data.auto ? "（自動完了）" : ""}`);
+    case "trade_auto_completed":
+      return embed
+        .setTitle("◆ 取引が自動完了しました")
+        .setColor(0x22c55e)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** は期限内に問題報告がなかったため自動完了し、代金を販売者へ支払いました。`);
+    case "trade_cancelled":
+      return embed
+        .setTitle("◇ 取引がキャンセルされました")
+        .setColor(0x64748b)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** が購入者によりキャンセルされました（受注前のため全額返金済み）。`);
+    case "trade_refunded":
+      return embed
+        .setTitle("◇ 取引が返金されました")
+        .setColor(0xf59e0b)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}**（${fmt(data.amount || 0)}）が返金されました。${data.by === "seller" ? "販売者が対応できないため辞退しました。" : ""}`);
+    case "trade_reported":
+      return embed
+        .setTitle("◇ 取引に問題報告が入りました")
+        .setColor(0xef4444)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** に ${data.byName} さんから問題報告が入りました。運営が確認します。`)
+        .addFields({ name: "内容", value: data.reason || "（記入なし）", inline: false });
     case "order_admin_completed":
       return embed
         .setTitle("◆ 取引が完了扱いになりました")
@@ -1305,6 +1401,160 @@ async function createMarketListingFromModal(interaction) {
   });
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+// 取引スレッド: 作成失敗しても台帳（注文・Ris）は既に確定済みで、DMと「自分の取引」から継続できる
+async function ensureTradeThread(order) {
+  if (!order || order.flow !== "trade" || order.threadId) return null;
+  const channelId = engine.state.marketplace.settings.tradeChannelId;
+  if (!channelId) return null;
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel || typeof channel.threads?.create !== "function") {
+    console.warn(`取引チャンネル ${channelId} が見つからないため、取引スレッドを作成できませんでした。`);
+    return null;
+  }
+  const thread = await channel.threads.create({
+    name: `取引-${order.id}-${order.itemName}`.slice(0, 90),
+    type: ChannelType.PrivateThread,
+    invitable: false,
+    reason: `IRIS取引 #${order.id}`
+  });
+  const changed = engine.recordTradeThread(order.id, thread.id);
+  if (changed) store.save(engine.state);
+  for (const internalId of [order.buyerId, order.sellerId]) {
+    const uid = extractDiscordUserId(internalId);
+    if (uid) await thread.members.add(uid).catch(() => null);
+  }
+  await postTradeThreadStatus(thread, order.id).catch(() => null);
+  return thread;
+}
+
+async function postTradeThreadStatus(thread, orderId) {
+  const panel = engine.tradeThreadPanel(orderId);
+  if (!panel || !thread) return;
+  const result = { ok: true, title: panel.title, lines: [], panel };
+  const embed = buildEmbed(result);
+  const components = buildComponents(result);
+  await thread.send({ embeds: embed ? [embed] : [], components });
+}
+
+// 取引の状態が変わったら、取引スレッドに新しい状態パネルを投稿し、終了状態ならアーカイブする
+async function postTradeThreadUpdate(orderId) {
+  const order = engine.findTradeOrder(orderId);
+  if (!order?.threadId) return;
+  const thread = await client.channels.fetch(order.threadId).catch(() => null);
+  if (!thread?.isThread?.()) return;
+  await postTradeThreadStatus(thread, order.id).catch(() => null);
+  if (["completed", "refunded", "cancelled"].includes(order.status)) {
+    const changed = !order.threadArchivedAt;
+    order.threadArchivedAt = order.threadArchivedAt || new Date().toISOString();
+    if (changed) store.save(engine.state);
+    await thread.setArchived(true, "取引終了").catch(() => null);
+  }
+}
+
+async function showTradeBuyModal(interaction) {
+  const listingId = interaction.customId.split(":")[3];
+  const listing = engine.findListing(listingId);
+  if (!listing || listing.status !== "active") {
+    await interaction.reply({ content: "この出品は現在受付していません。", ephemeral: true });
+    return;
+  }
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:trade-buy:${listingId}`)
+    .setTitle(`購入: ${listing.name}`.slice(0, 45));
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("request")
+        .setLabel("依頼内容・希望・備考（任意）")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setMaxLength(300)
+        .setPlaceholder("例: 初心者です。平日22時以降希望です。")
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleTradeBuyModal(interaction) {
+  const listingId = interaction.customId.split(":")[3];
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.buyServiceListing(user, listingId, {
+    request: interaction.fields.getTextInputValue("request")
+  });
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  // 台帳とRisの状態を確定・保存してから、Discord側の副作用（取引スレッド作成）を試す
+  if (result.ok && result.order) {
+    await ensureTradeThread(result.order).catch((error) => {
+      console.warn(`取引スレッド作成に失敗しました (#${result.order.id}): ${error.message}`);
+    });
+  }
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function showTradeReportModal(interaction) {
+  const orderId = interaction.customId.split(":")[3];
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:trade-report:${orderId}`)
+    .setTitle(`問題を報告 取引#${orderId}`.slice(0, 45));
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("何が起きたか（運営に伝わります）")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(200)
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleTradeReportModal(interaction) {
+  const orderId = interaction.customId.split(":")[3];
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.reportTrade(user, orderId, interaction.fields.getTextInputValue("reason"));
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  if (result.ok) {
+    await sendLog({ ok: true, title: `⚠ 取引 #${orderId} に問題報告`, lines: [`${user.name}: ${interaction.fields.getTextInputValue("reason") || "（理由なし）"}`] });
+  }
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function showListingReportModal(interaction) {
+  const listingId = interaction.customId.split(":")[3];
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:listing-report:${listingId}`)
+    .setTitle(`出品を報告 #${listingId}`.slice(0, 45));
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("報告理由（運営に伝わります）")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(200)
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleListingReportModal(interaction) {
+  const listingId = interaction.customId.split(":")[3];
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.reportListing(user, listingId, interaction.fields.getTextInputValue("reason"));
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  if (result.ok) {
+    await sendLog({ ok: true, title: "⚠ 出品への通報", lines: [`#${listingId} を ${user.name} が報告: ${interaction.fields.getTextInputValue("reason") || "（理由なし）"}`] });
+  }
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 

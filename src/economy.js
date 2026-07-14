@@ -2235,7 +2235,7 @@ class EconomyEngine {
     const action = String(args[0] || "top").toLowerCase();
     if (["top", "home"].includes(action)) return this.marketplace(user);
     if (["official", "official-shop"].includes(action)) return this.panelResult(this.officialShopPanel(user));
-    if (["shops", "user-shops"].includes(action)) return this.panelResult(this.userShopsPanel(user));
+    if (["shops", "user-shops", "street"].includes(action)) return this.panelResult(this.userShopsPanel(user, args[1]));
     if (["recommended", "recommend", "today"].includes(action)) return this.panelResult(this.recommendedShelfPanel(user));
     if (["affordable", "can-buy", "available"].includes(action)) return this.panelResult(this.affordableItemsPanel(user));
     if (["campaign-shop", "campaign"].includes(action)) return this.panelResult(this.campaignShopPanel(user));
@@ -2249,7 +2249,7 @@ class EconomyEngine {
     if (action === "confirm") return this.panelResult(this.officialConfirmPanel(user, args[1]));
     if (action === "buy") return this.buyItem(user, args[1]);
     if (action === "listing") return this.panelResult(this.userListingPanel(user, args[1]));
-    if (["listing-shelf", "listing-category", "category"].includes(action)) return this.panelResult(this.userListingShelfPanel(user, args[1]));
+    if (["listing-shelf", "category"].includes(action)) return this.panelResult(this.userListingShelfPanel(user, args[1], args[2]));
     if (action === "listing-confirm") return this.panelResult(this.userListingConfirmPanel(user, args[1]));
     if (action === "listing-buy") return this.buyUserListing(user, args[1]);
     if (action === "my-trades") return this.panelResult(this.myTradesPanel(user, args[1], args[2]));
@@ -2603,101 +2603,113 @@ class EconomyEngine {
     };
   }
 
-  userShopsPanel(user) {
-    const listings = this.activeListings().slice(0, 25);
-    const openShops = this.openShopSellerIds();
-    const shopEntries = Array.from(openShops)
-      .map((ownerId) => ({ ownerId, shop: this.state.marketplace.shops[ownerId] }))
-      .filter(({ shop }) => Boolean(shop))
-      .slice(0, 25);
+  listingSummaryLine(listing) {
+    if (listing.kind === "service") {
+      return `${fmt(listing.price)} / ${MARKET_CATEGORIES[listing.category] || "その他"} / 受付 ${this.listingLimitLine(listing)}\n販売者 ${this.sellerPageName(listing.sellerId, listing.sellerName)}`;
+    }
+    return `${fmt(listing.price)} / ${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}\n販売者 ${listing.sellerName}`;
+  }
+
+  userShopsPanel(user, pageRaw = 1) {
+    const all = this.activeListings().sort((a, b) => b.id - a.id);
+    const { page, pageCount, slice, total } = paginate(all, pageRaw, 6);
+    const sellerCount = new Set(all.map((listing) => listing.sellerId)).size;
     const components = [
       select("カテゴリで探す", [
-        option("称号", "run:marketplace listing-shelf title", "肩書き・表示用"),
-        option("アイテム", "run:marketplace listing-shelf item", "通常アイテム"),
-        option("チケット", "run:marketplace listing-shelf ticket", "利用券・入場券"),
-        option("権利", "run:marketplace listing-shelf right", "権利系の商品"),
-        option("サービス", "run:marketplace listing-shelf service", "手動対応の商品"),
+        ...Object.entries(MARKET_CATEGORIES).map(([id, label]) =>
+          option(label, `run:marketplace listing-shelf ${id}`, `${label}カテゴリの出品`)),
         option("新着", "run:marketplace listing-shelf new", "最近の出品"),
-        option("安い順", "run:marketplace listing-shelf cheap", "価格の安い商品")
-      ]),
-      buttons([
-        customButton("絞り込みで探す", "eco:shop:search-open", "primary"),
-        panelButton("ショップ", "marketplace"),
-        panelButton("自分の店", "my-shop", "success"),
-        panelButton("持ち物", "market-inventory")
+        option("安い順", "run:marketplace listing-shelf cheap", "価格の安い出品")
       ])
     ];
-    if (listings.length) {
-      components.push(select("商品を選ぶ", listings.map((listing) =>
-        option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`))));
+    if (slice.length) {
+      components.push(select("出品を選ぶ", slice.map((listing) =>
+        option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`.slice(0, 100)))));
     }
-    if (shopEntries.length) {
-      components.push(select("店を選ぶ", shopEntries.map(({ ownerId, shop }) =>
-        option(`${shop.name || `${shop.ownerName}の店`}`.slice(0, 90), `run:marketplace shop-view ${ownerId}`, `${shop.ownerName || ""}`.slice(0, 100) || "店主"))));
+    components.push(buttons([
+      customButton("商品を探す", "eco:shop:search-open", "primary"),
+      panelButton("出品する", "listing-new", "success"),
+      panelButton("自分の取引", "my-trades"),
+      panelButton("ショップ", "marketplace")
+    ]));
+    if (pageCount > 1) {
+      components.push(buttons([
+        runButton("前へ", `marketplace user-shops ${Math.max(1, page - 1)}`, "secondary", page <= 1),
+        runButton("次へ", `marketplace user-shops ${Math.min(pageCount, page + 1)}`, "secondary", page >= pageCount)
+      ]));
     }
     return {
-      title: "民営ショップ",
-      description: listings.length ? "ユーザーが出品している商品です。絞り込みや店ごとの一覧も見られます。" : "出品中の商品はまだありません。",
+      title: "IRIS商店街",
+      description: total
+        ? `${total}件の出品が受付中（販売者 ${sellerCount}人）${pageCount > 1 ? ` / ページ ${page}/${pageCount}` : ""}`
+        : "受付中の出品はまだありません。「出品する」から最初の出品をどうぞ。",
       color: 0x0f766e,
-      fields: listings.slice(0, 6).map((listing) => ({
-        name: listing.name,
-        value: `${fmt(listing.price)} / ${saleModeLabel(listing.mode)} / 在庫 ${listing.stock}\n販売者 ${listing.sellerName}`,
+      fields: slice.map((listing) => ({
+        name: listing.name.slice(0, 256),
+        value: this.listingSummaryLine(listing),
         inline: true
       })),
       components
     };
   }
 
-  userListingShelfPanel(user, shelfRaw = "new") {
+  userListingShelfPanel(user, shelfRaw = "new", pageRaw = 1) {
     const shelf = String(shelfRaw || "new").toLowerCase();
-    const typeAliases = {
-      role: "role",
-      "ロール": "role",
-      title: "title",
-      "称号": "title",
-      item: "item",
-      "アイテム": "item",
-      ticket: "ticket",
-      "チケット": "ticket",
-      right: "right",
-      "権利": "right",
-      service: "service",
-      "サービス": "service"
+    const legacyTypeAliases = {
+      title: "title", "称号": "title",
+      item: "item", "アイテム": "item",
+      ticket: "ticket", "チケット": "ticket",
+      right: "right", "権利": "right",
+      service: "service", "サービス": "service"
     };
-    const typeKey = typeAliases[shelf] || null;
+    const categoryAliases = Object.fromEntries(Object.entries(MARKET_CATEGORIES).map(([id, label]) => [label, id]));
+    const categoryKey = MARKET_CATEGORIES[shelf] ? shelf : (categoryAliases[shelfRaw] || null);
     let listings = this.activeListings().filter((listing) => listing.sellerId !== user.id);
-    let title = "民営ショップ 新着";
-    let description = "最近出品された商品です。";
-    if (typeKey) {
+    let title = "商店街 新着";
+    let description = "最近の出品です。";
+    if (categoryKey) {
+      listings = listings.filter((listing) => listing.category === categoryKey);
+      title = `商店街 ${MARKET_CATEGORIES[categoryKey]}`;
+      description = `${MARKET_CATEGORIES[categoryKey]}カテゴリの出品です。`;
+      listings.sort((a, b) => b.id - a.id);
+    } else if (legacyTypeAliases[shelf]) {
+      const typeKey = legacyTypeAliases[shelf];
       listings = listings.filter((listing) => listing.type === typeKey);
-      title = `民営ショップ ${productTypeLabel(typeKey)}`;
-      description = `${productTypeLabel(typeKey)}カテゴリの商品です。`;
+      title = `商店街 ${productTypeLabel(typeKey)}（旧分類）`;
+      description = `${productTypeLabel(typeKey)}タイプの旧出品です。`;
+      listings.sort((a, b) => b.id - a.id);
     } else if (["cheap", "price", "安い順"].includes(shelf)) {
-      title = "民営ショップ 安い順";
-      description = "価格の安い商品から表示します。";
+      title = "商店街 安い順";
+      description = "価格の安い出品から表示します。";
       listings.sort((a, b) => a.price - b.price);
     } else {
       listings.sort((a, b) => b.id - a.id);
     }
-    listings = listings.slice(0, 10);
+    const { page, pageCount, slice, total } = paginate(listings, pageRaw, 6);
     const components = [];
-    if (listings.length) {
-      components.push(select("商品を選ぶ", listings.map((listing, index) =>
-        option(`${index + 1}. ${listing.name}`.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`.slice(0, 100))
+    if (slice.length) {
+      components.push(select("出品を選ぶ", slice.map((listing, index) =>
+        option(`${(page - 1) * 6 + index + 1}. ${listing.name}`.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`.slice(0, 100))
       )));
     }
     components.push(buttons([
-      panelButton("民営ショップ", "user-shops", "primary"),
-      customButton("絞り込みで探す", "eco:shop:search-open"),
+      panelButton("商店街", "user-shops", "primary"),
+      customButton("商品を探す", "eco:shop:search-open"),
       panelButton("ショップ", "marketplace")
     ]));
+    if (pageCount > 1) {
+      components.push(buttons([
+        runButton("前へ", `marketplace listing-shelf ${shelf} ${Math.max(1, page - 1)}`, "secondary", page <= 1),
+        runButton("次へ", `marketplace listing-shelf ${shelf} ${Math.min(pageCount, page + 1)}`, "secondary", page >= pageCount)
+      ]));
+    }
     return {
       title,
-      description: listings.length ? `${description} 上位10件までを表示します。` : "この棚に表示できる商品はまだありません。",
+      description: total ? `${description} 全${total}件${pageCount > 1 ? ` / ページ ${page}/${pageCount}` : ""}` : "この棚に表示できる出品はまだありません。",
       color: 0x0f766e,
-      fields: listings.map((listing) => ({
+      fields: slice.map((listing) => ({
         name: listing.name.slice(0, 256),
-        value: `${fmt(listing.price)} / ${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}\n販売者 ${listing.sellerName}`,
+        value: this.listingSummaryLine(listing),
         inline: true
       })),
       components
@@ -2786,23 +2798,34 @@ class EconomyEngine {
   userListingPanel(user, id) {
     const listing = this.findListing(id);
     if (!listing || listing.status !== "active") return this.userShopsPanel(user);
+    const isService = listing.kind === "service";
+    const fields = isService
+      ? [
+          { name: "価格", value: fmt(listing.price), inline: true },
+          { name: "カテゴリ", value: MARKET_CATEGORIES[listing.category] || "その他", inline: true },
+          { name: "受付", value: this.listingLimitLine(listing), inline: true },
+          { name: "販売者", value: this.sellerPageName(listing.sellerId, listing.sellerName), inline: true },
+          { name: "支払い", value: "代金は取引完了までIRISが預かります。受取確認後に販売者へ支払われます。", inline: false }
+        ]
+      : [
+          { name: "価格", value: fmt(listing.price), inline: true },
+          { name: "方式", value: saleModeLabel(listing.mode), inline: true },
+          { name: "種類", value: productTypeLabel(listing.type), inline: true },
+          { name: "在庫", value: `${listing.stock}`, inline: true },
+          { name: "販売者", value: listing.sellerName, inline: true },
+          { name: "注意", value: listing.manual ? "この商品は手動対応です。購入後、取引中に入ります。" : "購入後、自動で持ち物に記録されます。", inline: false }
+        ];
     return {
       title: listing.name,
       description: listing.description || "説明はありません。",
       color: 0x0f766e,
-      fields: [
-        { name: "価格", value: fmt(listing.price), inline: true },
-        { name: "方式", value: saleModeLabel(listing.mode), inline: true },
-        { name: "種類", value: productTypeLabel(listing.type), inline: true },
-        { name: "在庫", value: `${listing.stock}`, inline: true },
-        { name: "販売者", value: listing.sellerName, inline: true },
-        { name: "注意", value: listing.manual ? "この商品は手動対応です。購入後、取引中に入ります。" : "購入後、自動で持ち物に記録されます。", inline: false }
-      ],
+      fields,
       components: [
         buttons([
-          runButton("購入確認", `marketplace listing-confirm ${listing.id}`, "primary", listing.sellerId === user.id),
-          runButton("この店の他の商品を見る", `marketplace shop-view ${listing.sellerId}`),
-          panelButton("民営ショップ", "user-shops"),
+          runButton("購入する", `marketplace listing-confirm ${listing.id}`, "primary", listing.sellerId === user.id),
+          runButton("販売者の他の出品", `marketplace shop-view ${listing.sellerId}`),
+          customButton("運営に報告", `eco:market:listing-report:${listing.id}`, "secondary"),
+          panelButton("商店街", "user-shops"),
           panelButton("ショップ", "marketplace")
         ])
       ]
@@ -2812,10 +2835,15 @@ class EconomyEngine {
   userListingConfirmPanel(user, id) {
     const listing = this.findListing(id);
     if (!listing || listing.status !== "active") return this.userShopsPanel(user);
+    const isService = listing.kind === "service";
     const shortage = Math.max(0, listing.price - user.wallet);
+    const fee = Math.floor(listing.price * this.state.marketplace.settings.feeBps / 10000);
+    const buyControl = isService
+      ? customButton("依頼内容を書いて購入", `eco:market:trade-buy:${listing.id}`, "success", shortage > 0 || listing.sellerId === user.id)
+      : runButton("購入する", `marketplace listing-buy ${listing.id}`, "success", shortage > 0 || listing.sellerId === user.id);
     const components = [
       buttons([
-        runButton("購入する", `marketplace listing-buy ${listing.id}`, "success", shortage > 0 || listing.sellerId === user.id),
+        buyControl,
         panelButton("やめる", "user-shops"),
         panelButton("ショップ", "marketplace")
       ])
@@ -2823,16 +2851,18 @@ class EconomyEngine {
     if (shortage > 0) components.push(...this.insufficientBalanceComponents());
     return {
       title: "購入確認",
-      description: "民営商品です。内容と販売者を確認してください。",
+      description: isService
+        ? "個人間取引です。購入すると代金はIRISが預かり、受取確認（または自動完了）後に販売者へ支払われます。"
+        : "民営商品です。内容と販売者を確認してください。",
       color: 0xf59e0b,
       fields: [
-        { name: "商品", value: listing.name, inline: true },
-        { name: "価格", value: fmt(listing.price), inline: true },
-        { name: "販売者", value: listing.sellerName, inline: true },
-        { name: "方式", value: saleModeLabel(listing.mode), inline: true },
-        { name: "必要額", value: fmt(listing.price), inline: true },
+        { name: "商品・サービス", value: listing.name, inline: true },
+        { name: "販売者", value: isService ? this.sellerPageName(listing.sellerId, listing.sellerName) : listing.sellerName, inline: true },
+        { name: "金額", value: fmt(listing.price), inline: true },
+        { name: "手数料の扱い", value: `手数料 ${fmt(fee)}（${(this.state.marketplace.settings.feeBps / 100).toFixed(1)}%）を差し引いた ${fmt(listing.price - fee)} が販売者に支払われます。`, inline: false },
         { name: "現在残高", value: fmt(user.wallet), inline: true },
-        { name: "不足額", value: shortage ? fmt(shortage) : "なし", inline: true }
+        { name: "不足額", value: shortage ? fmt(shortage) : "なし", inline: true },
+        ...(isService ? [{ name: "購入後", value: "代金はIRIS預かりになります。販売者の対応後、受取確認をしてください。問題があれば返金対応できます。", inline: false }] : [])
       ],
       components
     };
@@ -2850,12 +2880,11 @@ class EconomyEngine {
       const kindLabel = item?.kind === "consumable" ? "使い切り" : this.officialItemUsesRequest(item) ? "申請型" : item?.source === "admin" ? "所持型" : "常時発動";
       return `${item?.name || id} x${count} [${kindLabel}]`;
     });
-    const marketItems = (user.marketplace.inventory || []).slice(-8).reverse().map((item) => {
+    const legacyMarketItems = (user.marketplace.inventory || []).slice(-5).reverse().map((item) => {
       const suffix = item.status === "expired" ? "（期限切れ）" : item.status === "refunded" ? "（返金済み）" : "";
       const expiry = item.expiresAt ? `期限 ${shortDate(item.expiresAt)}` : "買い切り";
       return `${item.name} / ${expiry}${suffix}`;
     });
-    const orders = this.userOrders(user.id).slice(0, 5).map((order) => `#${order.id} ${order.itemName} / ${orderStatusLabel(order.status)}`);
     const components = [];
     if (usableItems.length) {
       components.push(select("使う・申請する商品を選ぶ", usableItems.map(([id, count]) => {
@@ -2865,30 +2894,22 @@ class EconomyEngine {
         return option(`${item.name}（${label} ${count}）`.slice(0, 90), `run:use ${id}`, description);
       })));
     }
-    const awaitingOrders = this.userOrders(user.id).filter((order) => ["open", "reported"].includes(order.status)).slice(0, 25);
-    const reportableOrders = awaitingOrders.filter((order) => order.status === "open");
-    if (awaitingOrders.length) {
-      components.push(select("受け取り確認（取引を完了にする）", awaitingOrders.map((order) =>
-        option(`#${order.id} ${order.itemName}`.slice(0, 90), `run:marketplace complete-order ${order.id}`, "商品を受け取ったら完了報告"))));
-    }
-    if (reportableOrders.length) {
-      components.push(select("問題を報告する", reportableOrders.map((order) =>
-        option(`#${order.id} ${order.itemName}`.slice(0, 90), `run:marketplace report-order ${order.id}`, "対応がない場合は運営に残す"))));
-    }
     components.push(buttons([
-      panelButton("ショップ", "marketplace"),
       panelButton("公式ショップ", "official-shop", "primary"),
-      panelButton("民営ショップ", "user-shops", "primary")
+      panelButton("自分の取引", "my-trades", "primary"),
+      panelButton("ショップ", "marketplace")
     ]));
+    const fields = [
+      { name: "公式持ち物", value: officialLines.join("\n") || "まだありません。", inline: false }
+    ];
+    if (legacyMarketItems.length) {
+      fields.push({ name: "過去の民営購入（旧方式の記録）", value: legacyMarketItems.join("\n"), inline: false });
+    }
     return {
-      title: "購入履歴・持ち物",
-      description: "公式商品、民営商品、手動対応中の取引を確認できます。使い切り商品はここから使用できます。",
+      title: "持ち物",
+      description: "公式商品の所持・使用・申請はここから行えます。民営の取引は「自分の取引」で確認してください。",
       color: 0x475569,
-      fields: [
-        { name: "公式持ち物", value: officialLines.join("\n") || "まだありません。", inline: false },
-        { name: "民営持ち物", value: marketItems.join("\n") || "まだありません。", inline: false },
-        { name: "取引中", value: orders.join("\n") || "対応待ちの取引はありません。", inline: false }
-      ],
+      fields,
       components
     };
   }
@@ -4062,6 +4083,7 @@ class EconomyEngine {
       ok: true,
       title: "受注しました",
       lines: [`取引 #${order.id} ${order.itemName} を受注しました。対応が終わったら「対応完了」を押してください。`],
+      tradeUpdate: { orderId: order.id },
       panel: this.tradeDetailPanel(user, order.id),
       notifications: [
         { userId: order.buyerId, event: "trade_accepted", data: { orderId: order.id, itemName: order.itemName, sellerName: order.sellerName } }
@@ -4086,6 +4108,7 @@ class EconomyEngine {
         `取引 #${order.id} ${order.itemName}`,
         `購入者の受取確認をお待ちください。問題報告がなければ ${hours}時間後に自動で完了し、代金が支払われます。`
       ],
+      tradeUpdate: { orderId: order.id },
       panel: this.tradeDetailPanel(user, order.id),
       notifications: [
         { userId: order.buyerId, event: "trade_delivered", data: { orderId: order.id, itemName: order.itemName, sellerName: order.sellerName, autoCompleteAt: order.autoCompleteAt } }
@@ -4108,6 +4131,7 @@ class EconomyEngine {
         `取引 #${order.id} ${order.itemName} を完了にしました。`,
         paid > 0 ? `預かっていた代金 ${fmt(paid)} を ${order.sellerName} に支払いました。` : null
       ].filter(Boolean),
+      tradeUpdate: { orderId: order.id },
       panel: this.tradeDetailPanel(user, order.id),
       notifications: [
         { userId: order.sellerId, event: "trade_completed", data: { orderId: order.id, itemName: order.itemName, buyerName: order.buyerName, paid, role: "seller" } }
@@ -4129,6 +4153,7 @@ class EconomyEngine {
       ok: true,
       title: "キャンセルしました",
       lines: [`取引 #${order.id} ${order.itemName} をキャンセルし、${fmt(order.price)} を返金しました。`],
+      tradeUpdate: { orderId: order.id },
       panel: this.tradeDetailPanel(user, order.id),
       notifications: [
         { userId: order.sellerId, event: "trade_cancelled", data: { orderId: order.id, itemName: order.itemName, buyerName: order.buyerName } }
@@ -4150,6 +4175,7 @@ class EconomyEngine {
       ok: true,
       title: "辞退・返金しました",
       lines: [`取引 #${order.id} ${order.itemName} を辞退し、購入者に ${fmt(order.price)} を全額返金しました。`],
+      tradeUpdate: { orderId: order.id },
       panel: this.tradeDetailPanel(user, order.id),
       notifications: [
         { userId: order.buyerId, event: "trade_refunded", data: { orderId: order.id, itemName: order.itemName, amount: order.price, by: "seller" } }
@@ -4171,6 +4197,7 @@ class EconomyEngine {
       ok: true,
       title: "問題を報告しました",
       lines: [`取引 #${order.id} を運営対応待ちにしました。自動完了は停止します。`],
+      tradeUpdate: { orderId: order.id },
       panel: this.tradeDetailPanel(user, order.id),
       notifications: [
         {
@@ -4191,6 +4218,85 @@ class EconomyEngine {
     order.payout = "cancelled";
     this.restoreListingSlot(this.findListing(order.listingId));
     return order.price;
+  }
+
+  // 取引スレッドのIDを一度だけ記録する（二重作成防止）。Discord側の作成成功後に呼ぶ。
+  recordTradeThread(orderId, threadId) {
+    const order = this.findTradeOrder(orderId);
+    if (!order || order.threadId || !isDiscordSnowflake(threadId)) return false;
+    order.threadId = String(threadId);
+    order.threadCreatedAt = new Date().toISOString();
+    return true;
+  }
+
+  // 取引スレッドに貼る共有パネル。両者に同じボタンを見せ、押した人の権限はエンジン側で検証する。
+  tradeThreadPanel(orderId) {
+    const order = this.findTradeOrder(orderId);
+    if (!order) return null;
+    const actions = [];
+    if (order.status === "ordered") {
+      actions.push(runButton("受注する（販売者）", `marketplace trade-accept ${order.id}`, "success"));
+      actions.push(runButton("対応できない・返金（販売者）", `marketplace trade-decline ${order.id}`, "danger"));
+      actions.push(runButton("キャンセル（購入者）", `marketplace trade-cancel ${order.id}`, "secondary"));
+    }
+    if (order.status === "accepted") {
+      actions.push(runButton("対応完了（販売者）", `marketplace trade-deliver ${order.id}`, "primary"));
+      actions.push(runButton("対応できない・返金（販売者）", `marketplace trade-decline ${order.id}`, "danger"));
+    }
+    if (order.status === "delivered") {
+      actions.push(runButton("受取確認（購入者）", `marketplace trade-confirm ${order.id}`, "success"));
+    }
+    if (["ordered", "accepted", "delivered"].includes(order.status)) {
+      actions.push(customButton("問題を報告", `eco:market:trade-report:${order.id}`, "secondary"));
+    }
+    const components = [];
+    if (actions.length) components.push(buttons(actions.slice(0, 5)));
+    components.push(buttons([panelButton("自分の取引", "my-trades"), panelButton("ショップ", "marketplace")]));
+    return {
+      title: `取引 #${order.id} ${order.itemName}`.slice(0, 256),
+      description: "この取引の専用スペースです。やり取りと操作はここで完結できます。",
+      color: order.status === "reported" ? 0xef4444 : TRADE_ACTIVE_STATUSES.has(order.status) ? 0x0ea5e9 : 0x475569,
+      fields: [
+        { name: "商品・サービス", value: order.itemName, inline: true },
+        { name: "金額", value: fmt(order.price), inline: true },
+        { name: "状態", value: orderStatusLabel(order.status), inline: true },
+        { name: "販売者", value: order.sellerName, inline: true },
+        { name: "購入者", value: order.buyerName, inline: true },
+        { name: "代金", value: order.payout === "held" ? "IRIS預かり中" : order.payout === "cancelled" ? "返金済み" : "販売者へ支払い済み", inline: true },
+        ...(order.request ? [{ name: "依頼内容", value: order.request, inline: false }] : [])
+      ],
+      components
+    };
+  }
+
+  // ---- 出品の通報（即削除はしない。運営キューに積む） ----
+
+  reportListing(user, id, reason = "") {
+    const listing = this.findListing(id);
+    if (!listing) return { ok: false, title: "出品が見つかりません", lines: [`#${id} は台帳にありません。`] };
+    if (listing.sellerId === user.id) return { ok: false, title: "報告できません", lines: ["自分の出品は報告できません。"] };
+    const report = {
+      id: this.state.marketplace.nextReportId++,
+      listingId: listing.id,
+      listingName: listing.name,
+      sellerId: listing.sellerId,
+      sellerName: listing.sellerName,
+      reporterId: user.id,
+      reporterName: user.name,
+      reason: cleanMarketText(reason, 200) || "（理由記入なし）",
+      at: new Date().toISOString(),
+      status: "open",
+      resolution: null,
+      resolvedBy: null,
+      resolvedAt: null
+    };
+    this.state.marketplace.reports.push(report);
+    this.marketLog(`出品 #${listing.id} ${listing.name} に通報（${user.name}）。`);
+    return {
+      ok: true,
+      title: "運営に報告しました",
+      lines: ["報告は運営が確認します。即座に出品が消えるわけではありません。", "同じ出品への重複報告は不要です。"]
+    };
   }
 
   // ---- 取引画面（購入者/販売者で操作を出し分ける。legacy注文も閲覧できる） ----
@@ -4749,6 +4855,7 @@ class EconomyEngine {
         `販売者: ${order.sellerName} / 購入者: ${order.buyerName}`,
         paid > 0 ? `預かっていた代金 ${fmt(paid)} を販売者に支払いました。` : null
       ].filter(Boolean),
+      ...(order.flow === "trade" ? { tradeUpdate: { orderId: order.id } } : {}),
       panel: this.marketTradesPanel(),
       notifications: [
         {
@@ -4821,9 +4928,10 @@ class EconomyEngine {
         order.sellerId === "official"
           ? "販売者は公式のため、売上調整は不要です。"
           : wasHeld
-            ? "代金はエスクロー保留中だったため、販売者の残高調整はありません（在庫のみ戻しました）。"
+            ? "代金はエスクロー保留中だったため、販売者の残高調整はありません（受付枠のみ戻しました）。"
             : `販売者 ${order.sellerName} の売上と在庫を巻き戻しました。`
       ],
+      ...(order.flow === "trade" ? { tradeUpdate: { orderId: order.id } } : {}),
       panel: this.marketTradesPanel(),
       notifications
     };
@@ -5124,22 +5232,26 @@ class EconomyEngine {
 
   activeListings() {
     return this.state.marketplace.listings.filter((listing) => {
-      if (listing.status !== "active" || listing.stock <= 0) return false;
+      if (listing.status !== "active" || !this.listingCanAccept(listing)) return false;
       const seller = this.state.users[listing.sellerId];
+      if (seller?.marketplace?.leftGuildAt) return false;
       const status = seller?.marketplace?.shopStatus || "open";
       return status === "open";
     });
   }
 
-  searchListings({ keyword = "", minPrice = "", maxPrice = "", type = "", sort = "newest" } = {}) {
+  searchListings({ keyword = "", minPrice = "", maxPrice = "", type = "", category = "", sort = "newest" } = {}) {
     const kw = String(keyword || "").toLowerCase().trim();
     const min = parsePositiveInt(minPrice);
     const max = parsePositiveInt(maxPrice);
     const typeMap = { "ロール": "role", "称号": "title", "アイテム": "item", "チケット": "ticket", "権利": "right", "サービス": "service", "セット": "bundle", "セット商品": "bundle" };
     const typeKey = MARKET_PRODUCT_TYPES[type] ? type : (typeMap[String(type || "").trim()] || null);
+    const categoryAliases = Object.fromEntries(Object.entries(MARKET_CATEGORIES).map(([id, label]) => [label, id]));
+    const categoryKey = MARKET_CATEGORIES[category] ? category : (categoryAliases[String(category || "").trim()] || null);
     const filtered = this.activeListings().filter((listing) => {
       if (kw && !String(listing.name).toLowerCase().includes(kw) && !String(listing.description || "").toLowerCase().includes(kw)) return false;
       if (typeKey && listing.type !== typeKey) return false;
+      if (categoryKey && listing.category !== categoryKey) return false;
       if (Number.isFinite(min) && listing.price < min) return false;
       if (Number.isFinite(max) && listing.price > max) return false;
       return true;
