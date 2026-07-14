@@ -222,6 +222,13 @@ legacyNameChangeState.marketplace.officialItems["official:name-henkou"] = {
 };
 const migratedNameChangeEngine = new EconomyEngine(legacyNameChangeState, { rng });
 assert.strictEqual(migratedNameChangeEngine.state.marketplace.officialItems["official:name-henkou"].fulfillmentMode, "on_use", "既存の名前変更権は持ち物から申請する方式へ移行する必要があります");
+const migratedNameChangeItem = migratedNameChangeEngine.state.marketplace.officialItems["official:name-henkou"];
+const nicknameRequestTask = migratedNameChangeEngine.createOfficialFulfillment({ id: "test:nickname", name: "名前変更希望者" }, migratedNameChangeItem, { requestText: "tama_dane." });
+assert(migratedNameChangeEngine.isOfficialNicknameChangeTask(nicknameRequestTask), "希望名付きの名前変更権は自動変更対象として識別する必要があります");
+const nicknameRequestPanel = migratedNameChangeEngine.officialFulfillmentTaskPanel({ id: "test:admin", name: "運営" }, nicknameRequestTask.id);
+assert(JSON.stringify(nicknameRequestPanel.components).includes("名前変更して完了"), "希望名付きの名前変更権には自動完了ボタンを表示する必要があります");
+const legacyNicknameTask = migratedNameChangeEngine.createOfficialFulfillment({ id: "test:legacy", name: "旧方式" }, migratedNameChangeItem);
+assert(!migratedNameChangeEngine.isOfficialNicknameChangeTask(legacyNicknameTask), "希望名のない旧対応は自動変更対象にしてはいけません");
 
 const migratedCampaignEngine = new EconomyEngine({ version: 4, users: {} }, { rng });
 assert(migratedCampaignEngine.state.inviteCampaign, "inactive campaign state が安全に補完される必要があります");

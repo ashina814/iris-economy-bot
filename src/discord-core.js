@@ -85,6 +85,7 @@ const yadoTimers = new Map();
 const rankPanelRefreshTimers = new Map();
 const salarySessions = new Map();
 const officialFulfillmentTicketLocks = new Set();
+const officialFulfillmentCompletionLocks = new Set();
 const SALARY_SESSION_TTL_MS = 10 * 60 * 1000;
 const DISBOARD_BOT_ID = "302050872383242240";
 const boostRewardSweepMs = Math.max(60, parsePositiveIntEnv("IRIS_BOOST_REWARD_SWEEP_SECONDS", 6 * 60 * 60)) * 1000;
@@ -617,7 +618,7 @@ client.on(Events.GuildMemberUpdate, async (_oldMember, member) => {
 });
 
 if (process.env.IRIS_ENTRYPOINT_TEST === "1") {
-  module.exports = { applyOfficialPurchaseUsername, assertUniquePanelComponentIds, buildComponents, client, engine, officialPurchaseBuyerName, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult };
+  module.exports = { applyOfficialPurchaseUsername, assertUniquePanelComponentIds, buildComponents, client, completeOfficialNicknameFulfillment, engine, officialPurchaseBuyerName, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult };
 } else {
   client.login(token);
 }
@@ -955,17 +956,20 @@ async function replyDiscord(interaction, result, options = {}) {
 }
 
 async function updateDiscord(interaction, result) {
+  const update = interaction.deferred || interaction.replied
+    ? interaction.editReply.bind(interaction)
+    : interaction.update.bind(interaction);
   const cardImage = await buildProfileCardAttachment(result);
   if (cardImage) {
-    await interaction.update({ content: "", embeds: [], components: [], files: [cardImage.attachment] });
+    await update({ content: "", embeds: [], components: [], files: [cardImage.attachment] });
   } else {
     const embed = buildEmbed(result, cardImage?.name);
     const components = buildComponents(result, { fallback: true });
     if (embed) {
-      await interaction.update({ content: "", embeds: [embed], components, files: cardImage ? [cardImage.attachment] : [] });
+      await update({ content: "", embeds: [embed], components, files: cardImage ? [cardImage.attachment] : [] });
     } else {
       const chunks = chunkDiscord(formatDiscord(result));
-      await interaction.update({ content: chunks[0], embeds: [], components });
+      await update({ content: chunks[0], embeds: [], components });
       for (const chunk of chunks.slice(1)) {
         await interaction.followUp({ content: chunk, ephemeral: true });
       }
@@ -1579,7 +1583,11 @@ async function handleOfficialFulfillmentControl(interaction) {
   const actor = actorFromInteraction(interaction);
   const admin = engine.getUser(actor.id, actor.name);
   if (action === "complete") {
-    const result = engine.completeOfficialFulfillment(admin, taskId);
+    const task = engine.officialFulfillmentTask(taskId);
+    if (engine.isOfficialNicknameChangeTask(task)) await interaction.deferUpdate();
+    const result = engine.isOfficialNicknameChangeTask(task)
+      ? await completeOfficialNicknameFulfillment(interaction.guild, task, admin)
+      : engine.completeOfficialFulfillment(admin, taskId);
     decorateResultForDiscord(result, interaction);
     store.save(engine.state);
     await updateDiscord(interaction, result);
@@ -1609,6 +1617,80 @@ function parseOfficialFulfillmentControlId(customId) {
   const action = actionToken.slice("official-fulfillment-".length);
   if (!["complete", "retry", "ticket"].includes(action)) return null;
   return { action, taskId };
+}
+
+function nicknameFulfillmentFailure(admin, task, title, detail) {
+  return {
+    ok: false,
+    title,
+    lines: [detail, "対応キューとチケットは残しました。確認後にもう一度実行できます。"],
+    panel: engine.officialFulfillmentTaskPanel(admin, task.id)
+  };
+}
+
+async function deleteOfficialFulfillmentTicket(guild, task) {
+  if (!task.ticketChannelId) return { ok: true, deleted: false };
+  let channel;
+  try {
+    channel = await guild.channels.fetch(task.ticketChannelId);
+  } catch (error) {
+    if (Number(error?.code) === 10003) return { ok: true, deleted: false };
+    return { ok: false, message: String(error?.message || error).slice(0, 160) };
+  }
+  if (!channel) return { ok: true, deleted: false };
+  if (channel.deletable === false) return { ok: false, message: "Botにこのチケットを削除する権限がありません。" };
+  try {
+    await channel.delete(`公式商品対応 #${task.id}: 名前変更完了`);
+    return { ok: true, deleted: true };
+  } catch (error) {
+    return { ok: false, message: String(error?.message || error).slice(0, 160) };
+  }
+}
+
+async function completeOfficialNicknameFulfillment(guild, task, admin) {
+  if (!task || task.status !== "pending") return engine.completeOfficialFulfillment(admin, task?.id);
+  if (!guild) return nicknameFulfillmentFailure(admin, task, "名前変更に失敗しました", "サーバー内でこの操作を実行してください。");
+  const requestedNickname = String(task.requestText || "").trim();
+  if (!requestedNickname || requestedNickname.length > 32) {
+    return nicknameFulfillmentFailure(admin, task, "希望ニックネームを確認してください", "Discordのニックネームは1〜32文字で指定してください。");
+  }
+  const discordUserId = extractDiscordUserId(task.buyerId);
+  if (!discordUserId || task.buyerId !== `${guild.id}:${discordUserId}`) {
+    return nicknameFulfillmentFailure(admin, task, "名前変更に失敗しました", "購入者のサーバー情報を確認できませんでした。");
+  }
+
+  const lockKey = `${guild.id}:${task.id}`;
+  if (officialFulfillmentCompletionLocks.has(lockKey)) {
+    return nicknameFulfillmentFailure(admin, task, "名前変更を実行中です", "この申請は現在処理中です。少し待ってから対応キューを開き直してください。");
+  }
+
+  officialFulfillmentCompletionLocks.add(lockKey);
+  try {
+    const member = await guild.members.fetch(discordUserId).catch(() => null);
+    const botMember = guild.members.me;
+    if (!member) return nicknameFulfillmentFailure(admin, task, "名前変更に失敗しました", "購入者がサーバー内で見つかりません。");
+    if (!botMember?.permissions?.has?.(PermissionFlagsBits.ManageNicknames) || !member.manageable) {
+      return nicknameFulfillmentFailure(admin, task, "名前変更に失敗しました", "Botにニックネーム管理権限がないか、購入者を変更できるロール位置ではありません。");
+    }
+
+    try {
+      await member.setNickname(requestedNickname, `公式商品対応 #${task.id}`);
+    } catch (error) {
+      return nicknameFulfillmentFailure(admin, task, "名前変更に失敗しました", `Discordでニックネームを変更できませんでした: ${String(error?.message || error).slice(0, 160)}`);
+    }
+
+    const ticket = await deleteOfficialFulfillmentTicket(guild, task);
+    if (!ticket.ok) {
+      return nicknameFulfillmentFailure(admin, task, "チケット削除に失敗しました", `ニックネームは変更済みです。チケットを削除できませんでした: ${ticket.message}`);
+    }
+
+    const result = engine.completeOfficialFulfillment(admin, task.id, `ニックネームを ${requestedNickname} に変更しました。`);
+    result.title = "名前変更を完了しました";
+    result.lines.push(ticket.deleted ? "対応チケットを削除しました。" : "対応チケットはすでに存在しません。", `変更後: ${requestedNickname}`);
+    return result;
+  } finally {
+    officialFulfillmentCompletionLocks.delete(lockKey);
+  }
 }
 
 async function createOfficialFulfillmentTicket(interaction, admin, taskId) {
@@ -1698,6 +1780,7 @@ async function showOfficialItemUseModal(interaction, itemId) {
   const user = engine.getUser(actor.id, actor.name);
   const item = engine.officialItemDefinition(itemId);
   if (!engine.officialItemUsesRequest(item) || !user.inventory[itemId]) return false;
+  const isNicknameChange = engine.isOfficialNicknameChangeItem(item);
   const modal = new ModalBuilder()
     .setCustomId(`eco:modal:official-use:${itemId}`)
     .setTitle(`${item.name} を使用`);
@@ -1705,11 +1788,11 @@ async function showOfficialItemUseModal(interaction, itemId) {
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
         .setCustomId("requestText")
-        .setLabel("希望する名前・内容")
+        .setLabel(isNicknameChange ? "新しいニックネーム" : "希望する名前・内容")
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
-        .setMaxLength(80)
-        .setPlaceholder("例: tama_dane.")
+        .setMaxLength(isNicknameChange ? 32 : 80)
+        .setPlaceholder(isNicknameChange ? "例: tama_dane." : "希望する名前・内容を入力")
     )
   );
   await interaction.showModal(modal);

@@ -8,7 +8,7 @@ process.env.DISCORD_CLIENT_ID = "000000000000000000";
 
 const originalLoader = Module._extensions[".js"];
 require("./discord-entry-operations");
-const { applyOfficialPurchaseUsername, buildComponents, engine, officialPurchaseBuyerName, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult } = require("./discord-core");
+const { applyOfficialPurchaseUsername, buildComponents, completeOfficialNicknameFulfillment, engine, officialPurchaseBuyerName, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult } = require("./discord-core");
 
 assert.strictEqual(Module._extensions[".js"], originalLoader, "起動経路でModule._extensionsを上書きしてはいけません");
 assert(!require.cache[require.resolve("./discord-entry-manual-join")], "通常起動でmanual-joinラッパーを経由してはいけません");
@@ -74,4 +74,51 @@ assert(partialCacheRank.lines.some((line) => line.includes(missingFromCache.name
 assert(partialCacheRank.lines.some((line) => line.includes(unjoinedActivity.name)), "実績を持つ未加入ユーザーをDiscordランキングから除外してはいけません");
 assert(engine.run("rank vc", actor).lines.some((line) => line.includes(unjoinedActivity.name)), "VC実績を持つ未加入ユーザーをDiscordランキングから除外してはいけません");
 
-console.log("entrypoint-test: passed");
+async function verifyOfficialNicknameCompletion() {
+  const admin = engine.getUser(actor.id, actor.name);
+  const task = engine.createOfficialFulfillment(engine.getUser(actor.id, actor.name), {
+    id: "official:name-henkou",
+    name: "名前変更権",
+    roleId: null,
+    roleDurationDays: 0
+  }, { requestText: "tama_dane." });
+  task.ticketChannelId = "123456789012345678";
+  let nickname = null;
+  let ticketDeleted = false;
+  const guild = {
+    id: "entrypoint-test",
+    members: {
+      me: { permissions: { has: () => true } },
+      fetch: async () => ({ manageable: true, setNickname: async (value) => { nickname = value; } })
+    },
+    channels: {
+      fetch: async () => ({ deletable: true, delete: async () => { ticketDeleted = true; } })
+    }
+  };
+  const result = await completeOfficialNicknameFulfillment(guild, task, admin);
+  assert(result.ok, "名前変更権の完了時にDiscordニックネームを自動変更できる必要があります");
+  assert.strictEqual(nickname, "tama_dane.", "申請したニックネームを設定する必要があります");
+  assert(ticketDeleted, "名前変更完了後に対応チケットを削除する必要があります");
+  assert.strictEqual(task.status, "completed", "名前変更とチケット削除の後に対応を完了する必要があります");
+
+  const failedTask = engine.createOfficialFulfillment(engine.getUser(actor.id, actor.name), {
+    id: "official:name-henkou",
+    name: "名前変更権",
+    roleId: null,
+    roleDurationDays: 0
+  }, { requestText: "retry-name" });
+  failedTask.ticketChannelId = "234567890123456789";
+  const failedResult = await completeOfficialNicknameFulfillment({
+    ...guild,
+    channels: { fetch: async () => ({ deletable: true, delete: async () => { throw new Error("delete denied"); } }) }
+  }, failedTask, admin);
+  assert(!failedResult.ok, "チケット削除失敗時は名前変更対応を完了にしてはいけません");
+  assert.strictEqual(failedTask.status, "pending", "チケット削除失敗時は再試行できるよう対応キューを残す必要があります");
+}
+
+verifyOfficialNicknameCompletion()
+  .then(() => console.log("entrypoint-test: passed"))
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
