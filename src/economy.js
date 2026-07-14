@@ -2272,6 +2272,7 @@ class EconomyEngine {
     if (action === "open-shop") return this.openShop(user);
     if (action === "listing-type") return this.setListingDraft(user, { type: args[1] });
     if (action === "listing-mode") return this.setListingDraft(user, { mode: args[1] });
+    if (action === "listing-category") return this.setListingDraft(user, { category: args[1] });
     if (action === "stop-listing") return this.stopListing(user, args[1]);
     if (action === "complete-order") return this.completeOrder(user, args[1]);
     if (action === "report-order") return this.reportOrder(user, args[1]);
@@ -2717,7 +2718,7 @@ class EconomyEngine {
     }
     const shop = owner.marketplace;
     const isClosed = (shop.shopStatus || "open") === "closed";
-    const listings = this.sellerListings(ownerId).filter((l) => l.status === "active" && l.stock > 0).slice(0, 25);
+    const listings = this.sellerListings(ownerId).filter((l) => l.status === "active" && this.listingCanAccept(l)).slice(0, 25);
     const components = [];
     if (listings.length && !isClosed) {
       components.push(select("商品を選ぶ", listings.map((listing) =>
@@ -2900,33 +2901,31 @@ class EconomyEngine {
     const shop = this.ensureShopShape(user);
     const active = this.sellerListings(user.id).filter((listing) => listing.status === "active").length;
     const pending = this.sellerListings(user.id).filter((listing) => listing.status === "pending").length;
-    const openOrders = this.sellerOrders(user.id).filter((order) => order.status === "open").length;
-    const unreadSales = this.sellerOrders(user.id).filter((order) => !order.sellerSeenAt).length;
+    const openTrades = this.sellerOrders(user.id).filter((order) => TRADE_ACTIVE_STATUSES.has(order.status) || order.status === "open").length;
     const isClosed = (shop.shopStatus || "open") === "closed";
     return {
-      title: `自分の店${isClosed ? "（休業中）" : ""}`,
-      description: shop.shopOpened ? `${shop.shopName}\n${shop.shopDescription || "説明はまだありません。"}` : "店を開くと、商品を出品できるようになります。",
+      title: `${this.sellerPageName(user.id, user.name)}${isClosed ? "（受付休止中）" : ""}`,
+      description: shop.shopDescription || "販売者ページです。店名や説明は任意で設定できます（未設定でも出品できます）。",
       color: isClosed ? 0x64748b : 0x14b8a6,
       fields: [
-        { name: "営業", value: isClosed ? "休業中（購入不可）" : "営業中", inline: true },
-        { name: "売上", value: fmt(shop.sales || 0), inline: true },
+        { name: "受付", value: isClosed ? "休止中（新規購入不可）" : "受付中", inline: true },
+        { name: "累計売上", value: fmt(shop.sales || 0), inline: true },
         { name: "出品中", value: `${active}件`, inline: true },
         { name: "審査待ち", value: `${pending}件`, inline: true },
-        { name: "取引中", value: `${openOrders}件`, inline: true },
-        { name: "販売通知", value: `${shop.salesDmEnabled === false ? "DM OFF" : "DM ON"} / 未確認 ${unreadSales}件`, inline: true }
+        { name: "対応中の取引", value: `${openTrades}件`, inline: true },
+        { name: "販売通知", value: shop.salesDmEnabled === false ? "DM OFF" : "DM ON", inline: true }
       ],
       components: [
         buttons([
-          runButton(shop.shopOpened ? "店を確認" : "店を開く", "marketplace open-shop", "success"),
-          customButton("店名・説明を編集", "eco:market:shop-settings", "primary"),
-          customButton(isClosed ? "営業を再開する" : "休業中にする", "eco:shop:status-toggle", isClosed ? "success" : "danger", !shop.shopOpened),
-          panelButton("商品を出す", "listing-new", "primary", !shop.shopOpened),
-          panelButton("商品を管理", "my-listings")
+          panelButton("出品する", "listing-new", "primary"),
+          panelButton("出品を管理", "my-listings"),
+          panelButton("自分の取引", "my-trades", "primary"),
+          customButton("店名・説明を編集", "eco:market:shop-settings")
         ]),
         buttons([
-          panelButton("売上を見る", "my-sales"),
+          customButton(isClosed ? "受付を再開する" : "受付を休止する", "eco:shop:status-toggle", isClosed ? "success" : "danger"),
           customButton(shop.salesDmEnabled === false ? "販売DMをON" : "販売DMをOFF", "eco:shop:sales-dm-toggle", shop.salesDmEnabled === false ? "success" : "secondary"),
-          panelButton("民営ショップ", "user-shops"),
+          panelButton("商店街", "user-shops"),
           panelButton("ショップ", "marketplace")
         ])
       ]
@@ -2935,25 +2934,30 @@ class EconomyEngine {
 
   listingNewPanel(user) {
     const shop = this.ensureShopShape(user);
-    const draft = shop.listingDraft || { type: "item", mode: "permanent" };
+    const draft = shop.listingDraft || {};
+    const category = MARKET_CATEGORIES[draft.category] ? draft.category : "other";
     return {
-      title: "商品を出す",
-      description: "種類と販売方式を選んでから、内容入力に進んでください。",
+      title: "出品する",
+      description: "カテゴリを選んで「内容入力」に進むだけで出品できます。店舗の開設操作は不要です（初出品時に販売者ページを自動作成します）。",
       color: 0x14b8a6,
       fields: [
-        { name: "商品タイプ", value: productTypeLabel(draft.type), inline: true },
-        { name: "販売方式", value: saleModeLabel(draft.mode), inline: true },
-        { name: "審査", value: "高額商品、称号、権利、サービス、セット商品は審査待ちになります。ロールは公式のみの取り扱いです。", inline: false }
+        { name: "カテゴリ", value: MARKET_CATEGORIES[category], inline: true },
+        { name: "入力項目", value: "商品・サービス名 / 説明 / 価格 / 受付上限（空欄で無制限）", inline: false },
+        { name: "支払いの流れ", value: "購入者の代金は取引完了までIRISが預かり、受取確認（または自動完了）後にあなたへ支払われます。", inline: false },
+        {
+          name: "審査",
+          value: shop.firstListingPublished
+            ? `高額出品（${fmt(this.state.marketplace.settings.reviewPrice)}以上）などは運営確認後に公開されます。`
+            : "初回出品は運営確認後に公開されます。次回からは通常すぐ公開されます。",
+          inline: false
+        }
       ],
       components: [
-        select("商品タイプ", Object.entries(MARKET_PRODUCT_TYPES).filter(([id]) => id !== "role").map(([id, label]) =>
-          option(label, `run:marketplace listing-type ${id}`, `${label}として出品`)
-        )),
-        select("販売方式", Object.entries(MARKET_SALE_MODES).map(([id, label]) =>
-          option(label, `run:marketplace listing-mode ${id}`, id === "timed" ? "期限付き商品" : "永続所持")
+        select("カテゴリを選ぶ", Object.entries(MARKET_CATEGORIES).map(([id, label]) =>
+          option(label, `run:marketplace listing-category ${id}`, `${label}カテゴリで出品`)
         )),
         buttons([
-          customButton("内容入力", "eco:market:listing-create", "primary", !shop.shopOpened),
+          customButton("内容入力", "eco:market:listing-create", "primary"),
           panelButton("自分の店", "my-shop"),
           panelButton("ショップ", "marketplace")
         ])
@@ -2971,7 +2975,7 @@ class EconomyEngine {
       fields: [
         { name: "元の商品名", value: listing.name, inline: true },
         { name: "元の価格", value: fmt(listing.price), inline: true },
-        { name: "元の在庫", value: `${listing.stock}`, inline: true },
+        { name: "元の受付上限", value: this.listingLimitLine(listing), inline: true },
         { name: "却下理由", value: listing.reviewNote || "（記入なし）", inline: false }
       ],
       components: [
@@ -2994,7 +2998,7 @@ class EconomyEngine {
       fields: [
         { name: "現在の商品名", value: listing.name, inline: true },
         { name: "現在の価格", value: fmt(listing.price), inline: true },
-        { name: "現在の在庫", value: `${listing.stock}`, inline: true },
+        { name: "現在の受付上限", value: this.listingLimitLine(listing), inline: true },
         { name: "現在のステータス", value: listingStatusLabel(listing.status), inline: true },
         { name: "現在の説明", value: listing.description || "説明なし", inline: false }
       ],
@@ -3012,7 +3016,7 @@ class EconomyEngine {
     const listings = this.sellerListings(user.id).slice(0, 10);
     const editable = listings.filter((l) => !["rejected"].includes(l.status));
     const stoppable = listings.filter((l) => !["stopped", "rejected"].includes(l.status));
-    const restartable = listings.filter((l) => l.status === "stopped" && l.stock > 0 && !l.resubmittedTo);
+    const restartable = listings.filter((l) => l.status === "stopped" && this.listingCanAccept(l) && !l.resubmittedTo);
     const rejected = listings.filter((l) => l.status === "rejected");
     const components = [];
     if (editable.length) {
@@ -3037,12 +3041,14 @@ class EconomyEngine {
       panelButton("民営ショップ", "user-shops")
     ]));
     return {
-      title: "商品管理",
-      description: listings.length ? "出品中/審査待ち/停止/却下の商品を確認・編集できます。1件を選んで詳細操作します。" : "まだ出品がありません。",
+      title: "出品管理",
+      description: listings.length ? "受付中/審査待ち/停止/却下の出品を確認・編集できます。1件を選んで詳細操作します。" : "まだ出品がありません。",
       color: 0x14b8a6,
       fields: listings.map((listing) => ({
         name: `#${listing.id} ${listing.name}`,
-        value: `${listingStatusLabel(listing.status)} / ${fmt(listing.price)} / 在庫 ${listing.stock}\n${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}${listing.reviewNote ? `\n却下理由: ${listing.reviewNote}` : ""}`,
+        value: listing.kind === "service"
+          ? `${listingStatusLabel(listing.status)} / ${fmt(listing.price)} / 受付 ${this.listingLimitLine(listing)} / ${MARKET_CATEGORIES[listing.category] || "その他"}${listing.reviewNote ? `\n却下理由: ${listing.reviewNote}` : ""}`
+          : `${listingStatusLabel(listing.status)} / ${fmt(listing.price)} / 在庫 ${listing.stock}\n${productTypeLabel(listing.type)} / ${saleModeLabel(listing.mode)}${listing.reviewNote ? `\n却下理由: ${listing.reviewNote}` : ""}`,
         inline: false
       })),
       components: components.slice(0, 5)
@@ -3522,18 +3528,28 @@ class EconomyEngine {
       return { ok: false, title: "出品上限", lines: [`同時に出せる商品は ${this.state.marketplace.settings.maxActiveListings}件までです。`] };
     }
     const name = cleanMarketText(patch.name, 48) || listing.name;
-    const description = cleanMarketText(patch.description, 240) || listing.description;
+    const description = cleanMarketText(patch.description, 400) || listing.description;
     const price = parsePositiveInt(patch.price);
-    const stock = clamp(parsePositiveInt(patch.stock) || listing.stock, 1, 99);
+    const isService = listing.kind === "service";
+    let stock;
+    if (isService) {
+      const limit = patch.stock != null && String(patch.stock).trim() !== "" ? normalizeListingLimit(patch.stock) : listing.stock;
+      if (limit === false) return { ok: false, title: "受付上限が変です", lines: [`受付上限は「無制限」か 1〜${MARKETPLACE_CONFIG.listingLimitMax} の数字で入力してください。`] };
+      stock = limit;
+    } else {
+      stock = clamp(parsePositiveInt(patch.stock) || listing.stock, 1, 99);
+    }
     if (patch.name != null && !name) return { ok: false, title: "商品名が空です", lines: ["商品名を入力してください。"] };
     const newListing = {
       id: this.state.marketplace.nextListingId++,
+      kind: listing.kind || null,
       sellerId: user.id,
       sellerName: user.name,
       shopName: shop.shopName || `${user.name}の店`,
       name,
       type: listing.type,
       mode: listing.mode,
+      category: listing.category || (isService ? "other" : null),
       price: Number.isFinite(price) ? price : listing.price,
       stock,
       sold: 0,
@@ -3541,6 +3557,9 @@ class EconomyEngine {
       durationDays: listing.durationDays || null,
       manual: listing.manual,
       status: "pending",
+      stoppedReason: null,
+      forumThreadId: listing.forumThreadId || null,
+      forumPanelMessageId: null,
       createdAt: new Date().toISOString(),
       resubmittedFrom: listing.id
     };
@@ -4400,6 +4419,7 @@ class EconomyEngine {
     if (patch.type === "role") {
       return { ok: false, title: "ロールは民営で出品できません", lines: ["Discordロールの付与は運営にしかできないため、民営ショップでは扱えません。"], panel: this.listingNewPanel(user) };
     }
+    if (patch.category && MARKET_CATEGORIES[patch.category]) shop.listingDraft.category = patch.category;
     if (patch.type && MARKET_PRODUCT_TYPES[patch.type]) shop.listingDraft.type = patch.type;
     if (patch.mode && MARKET_SALE_MODES[patch.mode]) shop.listingDraft.mode = patch.mode;
     return this.panelResult(this.listingNewPanel(user));
@@ -5152,23 +5172,33 @@ class EconomyEngine {
       if (Number.isFinite(price) && price !== listing.price) { changes.push(`価格: ${fmt(listing.price)} → ${fmt(price)}`); listing.price = price; }
     }
     if (patch.stock != null && String(patch.stock).trim() !== "") {
-      const stock = clamp(parsePositiveInt(patch.stock) || 1, 1, 99);
-      if (Number.isFinite(stock) && stock !== listing.stock) { changes.push(`在庫: ${listing.stock} → ${stock}`); listing.stock = stock; }
+      if (listing.kind === "service") {
+        const limit = normalizeListingLimit(patch.stock);
+        if (limit === false) return { ok: false, title: "受付上限が変です", lines: [`受付上限は「無制限」か 1〜${MARKETPLACE_CONFIG.listingLimitMax} の数字で入力してください。`] };
+        if (limit !== listing.stock) {
+          changes.push(`受付上限: ${listing.stock === null ? "無制限" : listing.stock} → ${limit === null ? "無制限" : limit}`);
+          listing.stock = limit;
+        }
+      } else {
+        const stock = clamp(parsePositiveInt(patch.stock) || 1, 1, 99);
+        if (Number.isFinite(stock) && stock !== listing.stock) { changes.push(`在庫: ${listing.stock} → ${stock}`); listing.stock = stock; }
+      }
     }
     if (patch.description != null && String(patch.description).trim() !== "") {
-      const desc = cleanMarketText(patch.description, 240);
+      const desc = cleanMarketText(patch.description, 400);
       if (desc && desc !== listing.description) { changes.push("説明を更新"); listing.description = desc; }
     }
     if (changes.length === 0) return { ok: false, title: "変更がありません", lines: ["少なくとも1つのフィールドを変更してください。"] };
     listing.updatedAt = new Date().toISOString();
-    if (listing.status === "soldout" && listing.stock > 0) listing.status = "active";
+    if (listing.status === "soldout" && this.listingCanAccept(listing)) listing.status = "active";
     // 承認後に価格や内容を差し替えて審査を迂回できないよう、内容変更は再審査に回す
-    const contentChanged = changes.some((change) => !change.startsWith("在庫:"));
+    const contentChanged = changes.some((change) => !change.startsWith("在庫:") && !change.startsWith("受付上限:"));
     const needsReview =
       contentChanged &&
       listing.status === "active" &&
       (listing.price >= this.state.marketplace.settings.reviewPrice ||
-        ["role", "title", "right", "service", "bundle"].includes(listing.type));
+        ["role", "title", "right", "service", "bundle"].includes(listing.type) ||
+        Boolean(this.state.users[listing.sellerId]?.marketplace?.sellerFlagged));
     if (needsReview) {
       listing.status = "pending";
       changes.push("内容が変わったため再審査に回りました");
@@ -5188,10 +5218,14 @@ class EconomyEngine {
     if (listing.sellerId !== user.id) return { ok: false, title: "自分の商品ではありません", lines: ["自分の出品だけ再開できます。"] };
     if (listing.status !== "stopped") return { ok: false, title: "再開できません", lines: [`#${listing.id} は現在 ${listingStatusLabel(listing.status)} です。停止済みの商品だけ再開できます。`] };
     if (listing.type === "role") return { ok: false, title: "ロールは民営で出品できません", lines: ["ロール商品は公式のみの取り扱いになりました。再開できません。"] };
-    if (listing.stock <= 0) return { ok: false, title: "在庫切れ", lines: ["在庫が0の商品は再開できません。編集で在庫を増やしてください。"] };
-    const needsReview = listing.price >= this.state.marketplace.settings.reviewPrice || ["role", "title", "right", "service", "bundle"].includes(listing.type);
+    if (listing.stock !== null && listing.stock <= 0) return { ok: false, title: "受付枠がありません", lines: ["受付数が0の出品は再開できません。編集で受付上限を増やしてください。"] };
+    const stoppedByReport = listing.stoppedReason === "reported";
+    const needsReview = listing.kind === "service"
+      ? this.listingNeedsReview(user, listing.price, { resubmittedAfterReport: stoppedByReport })
+      : (listing.price >= this.state.marketplace.settings.reviewPrice || ["role", "title", "right", "service", "bundle"].includes(listing.type));
     listing.status = needsReview ? "pending" : "active";
     listing.updatedAt = new Date().toISOString();
+    listing.stoppedReason = null;
     delete listing.stoppedAt;
     this.marketLog(`${user.name} が #${listing.id} ${listing.name} を再開しました。${needsReview ? "審査待ち。" : ""}`);
     return {
@@ -5247,11 +5281,10 @@ class EconomyEngine {
   }
 
   setShopStatus(user, statusRaw) {
-    const shop = this.ensureShopShape(user);
-    if (!shop.shopOpened) return { ok: false, title: "店がありません", lines: ["先に「店を開く」を押してください。"] };
+    const shop = this.ensureSellerPage(user);
     const target = statusRaw === "closed" ? "closed" : "open";
     if (shop.shopStatus === target) {
-      return { ok: false, title: "変化なし", lines: [`すでに${target === "open" ? "営業中" : "休業中"}です。`], panel: this.myShopPanel(user) };
+      return { ok: false, title: "変化なし", lines: [`すでに${target === "open" ? "受付中" : "休止中"}です。`], panel: this.myShopPanel(user) };
     }
     shop.shopStatus = target;
     shop.shopStatusChangedAt = new Date().toISOString();

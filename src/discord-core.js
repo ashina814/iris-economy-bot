@@ -1250,21 +1250,14 @@ async function updateMarketShopFromModal(interaction) {
 }
 
 async function showMarketListingModal(interaction) {
-  const actor = actorFromInteraction(interaction);
-  const user = engine.getUser(actor.id, actor.name);
-  if (!user.marketplace?.shopOpened) {
-    await interaction.reply({ content: "先に「店を開く」を押してください。", ephemeral: true });
-    return;
-  }
-  const draft = user.marketplace?.listingDraft || {};
   const modal = new ModalBuilder()
     .setCustomId("eco:modal:market-listing-create")
-    .setTitle(`出品内容 ${draft.mode === "timed" ? "期間制" : "買い切り"}`);
+    .setTitle("出品内容");
   modal.addComponents(
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
         .setCustomId("name")
-        .setLabel("商品名")
+        .setLabel("商品・サービス名")
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
         .setMaxLength(48)
@@ -1279,20 +1272,12 @@ async function showMarketListingModal(interaction) {
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
-        .setCustomId("stock")
-        .setLabel("在庫")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(3)
-        .setValue("1")
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId("duration")
-        .setLabel("期間（日数、買い切りなら空欄）")
+        .setCustomId("limit")
+        .setLabel("受付上限（空欄で無制限）")
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
-        .setMaxLength(4)
+        .setMaxLength(3)
+        .setPlaceholder("例: 3")
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
@@ -1300,7 +1285,8 @@ async function showMarketListingModal(interaction) {
         .setLabel("説明")
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(false)
-        .setMaxLength(240)
+        .setMaxLength(400)
+        .setPlaceholder("内容、対応できる時間帯、注意事項など")
     )
   );
   await interaction.showModal(modal);
@@ -1310,14 +1296,12 @@ async function createMarketListingFromModal(interaction) {
   const actor = actorFromInteraction(interaction);
   const user = engine.getUser(actor.id, actor.name);
   const draft = user.marketplace?.listingDraft || {};
-  const result = engine.createUserListing(user, {
+  const result = engine.createServiceListing(user, {
     name: interaction.fields.getTextInputValue("name"),
     price: interaction.fields.getTextInputValue("price"),
-    stock: interaction.fields.getTextInputValue("stock"),
-    durationDays: interaction.fields.getTextInputValue("duration"),
+    limit: interaction.fields.getTextInputValue("limit"),
     description: interaction.fields.getTextInputValue("description"),
-    type: draft.type,
-    mode: draft.mode
+    category: draft.category
   });
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
@@ -2579,11 +2563,11 @@ async function showShopEditModal(interaction, listingId) {
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
         .setCustomId("stock")
-        .setLabel("在庫（1〜99、空欄で変更なし）")
+        .setLabel(listing.kind === "service" ? "受付上限（数字か「無制限」、空欄で変更なし）" : "在庫（1〜99、空欄で変更なし）")
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
-        .setMaxLength(3)
-        .setValue(String(listing.stock || ""))
+        .setMaxLength(5)
+        .setValue(listing.stock === null ? "無制限" : String(listing.stock || ""))
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
@@ -2591,7 +2575,7 @@ async function showShopEditModal(interaction, listingId) {
         .setLabel("説明（空欄で変更なし）")
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(false)
-        .setMaxLength(240)
+        .setMaxLength(400)
         .setValue(listing.description || "")
     )
   );
@@ -2656,11 +2640,11 @@ async function showShopResubmitModal(interaction, listingId) {
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
         .setCustomId("stock")
-        .setLabel("在庫（1〜99、空欄で元のまま）")
+        .setLabel(listing.kind === "service" ? "受付上限（数字か「無制限」、空欄で元のまま）" : "在庫（1〜99、空欄で元のまま）")
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
-        .setMaxLength(3)
-        .setValue(String(listing.stock || ""))
+        .setMaxLength(5)
+        .setValue(listing.stock === null ? "無制限" : String(listing.stock || ""))
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
@@ -2668,7 +2652,7 @@ async function showShopResubmitModal(interaction, listingId) {
         .setLabel("説明（空欄で元のまま）")
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(false)
-        .setMaxLength(240)
+        .setMaxLength(400)
         .setValue(listing.description || "")
     )
   );

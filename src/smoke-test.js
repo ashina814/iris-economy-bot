@@ -1109,6 +1109,20 @@ assert.strictEqual(reportedOrder.payout, "held", "reported 中は支払いを保
 const adminRefundRes = tradeEngine.adminRefundOrder(tradeEngine.getUser(tAdmin.id, tAdmin.name), reportedOrder.id);
 assert(adminRefundRes.ok && reportedOrder.status === "refunded", "運営が報告済み取引を返金できる必要があります");
 
+// --- 出品UI: 商品タイプ・販売方式を選ばせない / 受付上限の編集 ---
+const newListingPanel = tradeEngine.listingNewPanel(tradeEngine.getUser(tSeller.id, tSeller.name));
+const newListingPanelJson = JSON.stringify(newListingPanel);
+assert(!newListingPanelJson.includes("listing-type") && !newListingPanelJson.includes("listing-mode"), "新規出品UIに商品タイプ・販売方式を出してはいけません");
+assert(newListingPanelJson.includes("listing-category"), "新規出品UIにカテゴリ選択が必要です");
+assert(!newListingPanelJson.includes("在庫"), "新規出品UIに「在庫」という言葉を使ってはいけません");
+
+const limitEditRes = tradeEngine.editListing(tradeEngine.getUser(tSeller.id, tSeller.name), finiteListing.id, { stock: "無制限" });
+assert(limitEditRes.ok && finiteListing.stock === null, "受付上限を無制限に編集できる必要があります");
+const limitEditBack = tradeEngine.editListing(tradeEngine.getUser(tSeller.id, tSeller.name), finiteListing.id, { stock: "5" });
+assert(limitEditBack.ok && finiteListing.stock === 5, "受付上限を数量指定に戻せる必要があります");
+const limitEditBad = tradeEngine.editListing(tradeEngine.getUser(tSeller.id, tSeller.name), finiteListing.id, { stock: "abc" });
+assert(!limitEditBad.ok, "不正な受付上限は拒否される必要があります");
+
 // --- migration: 旧type/mode付き出品・旧注文があっても起動できる ---
 const legacyState = JSON.parse(JSON.stringify(tradeEngine.state));
 legacyState.marketplace.listings.push({
