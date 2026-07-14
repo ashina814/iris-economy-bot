@@ -140,10 +140,35 @@ const resumeOfficialItem = engine.adminToggleOfficialItem(officialAdmin, "offici
 assert(resumeOfficialItem.ok && engine.officialItem("official:vip-pass"), "停止した公式商品の販売を再開できる必要があります");
 const officialShopWithItem = engine.run("panel official-shop", actor);
 assert(JSON.stringify(officialShopWithItem.panel).includes("VIPパス30日"), "追加公式商品が公式ショップに表示される必要があります");
+const officialPanelTargets = officialShopWithItem.panel.components
+  .filter((component) => component.type === "buttons")
+  .flatMap((component) => component.items)
+  .filter((item) => item.kind === "panel")
+  .map((item) => item.panel);
+assert(!officialPanelTargets.includes("marketplace"), "公式ショップ入口から総合ショップへ遷移させてはいけません");
 const officialProduct = engine.run("marketplace product official:vip-pass", actor);
 assert(JSON.stringify(officialProduct.panel).includes("marketplace confirm official:vip-pass"), "追加公式商品の購入確認導線が必要です");
+const officialProductTargets = officialProduct.panel.components
+  .filter((component) => component.type === "buttons")
+  .flatMap((component) => component.items)
+  .filter((item) => item.kind === "panel")
+  .map((item) => item.panel);
+assert(!officialProductTargets.includes("marketplace"), "公式商品の詳細から総合ショップへ遷移させてはいけません");
 const officialConfirm = engine.run("marketplace confirm official:vip-pass", actor);
 assert(JSON.stringify(officialConfirm.panel).includes("VIPパス30日"), "追加公式商品の確認画面が必要です");
+const officialConfirmTargets = officialConfirm.panel.components
+  .filter((component) => component.type === "buttons")
+  .flatMap((component) => component.items)
+  .filter((item) => item.kind === "panel")
+  .map((item) => item.panel);
+assert(!officialConfirmTargets.includes("marketplace"), "公式商品の購入確認から総合ショップへ遷移させてはいけません");
+const officialAuctions = engine.run("panel official-auctions", actor);
+const officialAuctionTargets = officialAuctions.panel.components
+  .filter((component) => component.type === "buttons")
+  .flatMap((component) => component.items)
+  .filter((item) => item.kind === "panel")
+  .map((item) => item.panel);
+assert(!officialAuctionTargets.includes("marketplace") && !officialAuctionTargets.includes("user-shops"), "公式オークションから総合・民営ショップへ遷移させてはいけません");
 const beforeOfficialBuyWallet = engine.getUser(actor.id, actor.name).wallet;
 const officialBuy = engine.run("marketplace buy official:vip-pass", actor);
 assert(officialBuy.ok, "追加公式商品を購入できる必要があります");

@@ -2477,9 +2477,8 @@ class EconomyEngine {
         ],
         components: [
           buttons([
-            panelButton("ショップ", "marketplace"),
             panelButton("持ち物", "market-inventory", "primary"),
-            panelButton("自分の店", "my-shop", "success")
+            panelButton("公式オークション", "official-auctions")
           ])
         ]
       };
@@ -2499,9 +2498,8 @@ class EconomyEngine {
           option(item.name, `run:marketplace product ${id}`, `${fmt(this.itemPrice(id))} / ${item.type} / ${item.effect}`.slice(0, 100))
         )),
         buttons([
-          panelButton("ショップ", "marketplace"),
           panelButton("持ち物", "market-inventory"),
-          panelButton("自分の店", "my-shop", "success")
+          panelButton("公式オークション", "official-auctions")
         ])
       ]
     };
@@ -2509,7 +2507,7 @@ class EconomyEngine {
 
   officialProductPanel(user, id) {
     const item = this.officialItem(id);
-    if (!item) return this.marketplacePanel(user);
+    if (!item) return this.officialShopPanel(user);
     const owned = user.inventory[id] || 0;
     const soldOut = owned >= item.max;
     return {
@@ -2531,7 +2529,7 @@ class EconomyEngine {
         buttons([
           runButton("購入確認", `marketplace confirm ${id}`, "primary", soldOut),
           panelButton("公式ショップ", "official-shop"),
-          panelButton("ショップ", "marketplace")
+          panelButton("公式オークション", "official-auctions")
         ])
       ]
     };
@@ -2539,14 +2537,14 @@ class EconomyEngine {
 
   officialConfirmPanel(user, id) {
     const item = this.officialItem(id);
-    if (!item) return this.marketplacePanel(user);
+    if (!item) return this.officialShopPanel(user);
     const price = this.itemPrice(id);
     const shortage = Math.max(0, price - user.wallet);
     const components = [
       buttons([
         runButton("購入する", `marketplace buy ${id}`, "success", shortage > 0),
         panelButton("やめる", "official-shop"),
-        panelButton("ショップ", "marketplace")
+        panelButton("公式オークション", "official-auctions")
       ])
     ];
     if (shortage > 0) components.push(...this.insufficientBalanceComponents());
@@ -2570,8 +2568,8 @@ class EconomyEngine {
     const listings = this.activeListings().slice(0, 25);
     const openShops = this.openShopSellerIds();
     const shopEntries = Array.from(openShops)
-      .map((ownerId) => this.state.marketplace.shops[ownerId])
-      .filter(Boolean)
+      .map((ownerId) => ({ ownerId, shop: this.state.marketplace.shops[ownerId] }))
+      .filter(({ shop }) => Boolean(shop))
       .slice(0, 25);
     const components = [
       select("カテゴリで探す", [
@@ -2595,8 +2593,8 @@ class EconomyEngine {
         option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${listing.sellerName}`))));
     }
     if (shopEntries.length) {
-      components.push(select("店を選ぶ", shopEntries.map((shop) =>
-        option(`${shop.name || `${shop.ownerName}の店`}`.slice(0, 90), `run:marketplace shop-view ${shop.ownerId}`, `${shop.ownerName || ""}`.slice(0, 100) || "店主"))));
+      components.push(select("店を選ぶ", shopEntries.map(({ ownerId, shop }) =>
+        option(`${shop.name || `${shop.ownerName}の店`}`.slice(0, 90), `run:marketplace shop-view ${ownerId}`, `${shop.ownerName || ""}`.slice(0, 100) || "店主"))));
     }
     return {
       title: "民営ショップ",
@@ -2682,6 +2680,17 @@ class EconomyEngine {
     const shop = owner.marketplace;
     const isClosed = (shop.shopStatus || "open") === "closed";
     const listings = this.sellerListings(ownerId).filter((l) => l.status === "active" && l.stock > 0).slice(0, 25);
+    const components = [];
+    if (listings.length && !isClosed) {
+      components.push(select("商品を選ぶ", listings.map((listing) =>
+        option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)}`)
+      )));
+    }
+    components.push(buttons([
+      panelButton("民営ショップ", "user-shops"),
+      panelButton("ショップ", "marketplace"),
+      panelButton("持ち物", "market-inventory")
+    ]));
     return {
       title: `${shop.shopName || `${owner.name}の店`}${isClosed ? "（休業中）" : ""}`,
       description: shop.shopDescription || "説明はまだありません。",
@@ -2696,18 +2705,7 @@ class EconomyEngine {
           inline: true
         }))
       ],
-      components: [
-        listings.length && !isClosed
-          ? select("商品を選ぶ", listings.map((listing) =>
-              option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)}`)
-            ))
-          : buttons([panelButton("民営ショップ", "user-shops")]),
-        buttons([
-          panelButton("民営ショップ", "user-shops"),
-          panelButton("ショップ", "marketplace"),
-          panelButton("持ち物", "market-inventory")
-        ])
-      ]
+      components
     };
   }
 
@@ -3073,9 +3071,8 @@ class EconomyEngine {
         option(`#${auction.id} ${auction.name}`.slice(0, 90), `run:marketplace auction ${auction.id}`, `${fmt(auction.currentBid || auction.startPrice)} / 最低 ${fmt(this.minimumAuctionBid(auction))}`))));
     }
     components.push(buttons([
-      panelButton("ショップ", "marketplace"),
       panelButton("公式ショップ", "official-shop", "primary"),
-      panelButton("民営ショップ", "user-shops")
+      panelButton("持ち物", "market-inventory")
     ]));
     return {
       title: "公式オークション",
@@ -3117,7 +3114,7 @@ class EconomyEngine {
           customButton("入札する", `eco:market:auction-bid:${auction.id}`, "primary", !isOpen),
           runButton("入札履歴", `marketplace auction-history ${auction.id}`),
           panelButton("公式オークション", "official-auctions"),
-          panelButton("ショップ", "marketplace")
+          panelButton("公式ショップ", "official-shop")
         ])
       ]
     };
@@ -3144,7 +3141,7 @@ class EconomyEngine {
         buttons([
           runButton("詳細へ戻る", `marketplace auction ${auction.id}`, "primary"),
           panelButton("公式オークション", "official-auctions"),
-          panelButton("ショップ", "marketplace")
+          panelButton("公式ショップ", "official-shop")
         ])
       ]
     };
@@ -3721,12 +3718,12 @@ class EconomyEngine {
       description: "常設メッセージの送信と、サーバー運用向けの保守操作です。影響範囲を確認してから実行してください。",
       color: 0x475569,
       fields: [
-        { name: "ショップ入口", value: "このチャンネルに、利用者向けのショップ入口パネルを送信します。", inline: true },
+        { name: "公式ショップ入口", value: "このチャンネルに、公式商品専用の入口パネルを送信します。", inline: true },
         { name: "ニックネーム整理", value: "対象人数を確認してから、変更可能なカスタムニックネームだけを一括削除します。", inline: true }
       ],
       components: [
         buttons([
-          customButton("ショップ入口を送信", "eco:market:post-panel", "primary"),
+          customButton("公式ショップ入口を送信", "eco:market:post-panel", "primary"),
           customButton("ニックネーム整理", "eco:admin:nickname-clear-preview", "danger"),
           panelButton("運営パネル", "admin")
         ])
