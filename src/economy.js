@@ -3862,14 +3862,23 @@ class EconomyEngine {
       description: "常設メッセージの送信と、サーバー運用向けの保守操作です。影響範囲を確認してから実行してください。",
       color: 0x475569,
       fields: [
-        { name: "公式ショップ入口", value: "このチャンネルに、公式商品専用の入口パネルを送信します。", inline: true },
-        { name: "ニックネーム整理", value: "対象人数を確認してから、変更可能なカスタムニックネームだけを一括削除します。", inline: true }
+        { name: "入口パネル", value: "このチャンネルに、公式ショップ入口またはIRIS商店街入口を送信します。", inline: false },
+        { name: "商店街フォーラム", value: this.state.marketplace.settings.marketForumChannelId ? `<#${this.state.marketplace.settings.marketForumChannelId}>（投稿に販売設定の案内が付きます）` : "未設定", inline: true },
+        { name: "取引スペース作成先", value: this.state.marketplace.settings.tradeChannelId ? `<#${this.state.marketplace.settings.tradeChannelId}>（購入ごとにprivate threadを作成）` : "未設定（取引スレッドなしで運用）", inline: true },
+        { name: "ニックネーム整理", value: "対象人数を確認してから、変更可能なカスタムニックネームだけを一括削除します。", inline: false }
       ],
       components: [
         buttons([
+          customButton("商店街入口を送信", "eco:market:post-street-panel", "primary"),
           customButton("公式ショップ入口を送信", "eco:market:post-panel", "primary"),
           customButton("ニックネーム整理", "eco:admin:nickname-clear-preview", "danger"),
           panelButton("運営パネル", "admin")
+        ]),
+        { type: "channel-select", customId: "eco:channel:market-forum", placeholder: "商店街フォーラムを設定（ForumChannel）", channelTypes: ["forum"] },
+        { type: "channel-select", customId: "eco:channel:trade-channel", placeholder: "取引スペース作成先を設定（テキストチャンネル）", channelTypes: ["text"] },
+        buttons([
+          customButton("フォーラム設定を解除", "eco:market:forum-clear", "secondary", !this.state.marketplace.settings.marketForumChannelId),
+          customButton("取引スペース設定を解除", "eco:market:trade-channel-clear", "secondary", !this.state.marketplace.settings.tradeChannelId)
         ])
       ]
     };
@@ -4390,6 +4399,147 @@ class EconomyEngine {
       ok: true,
       title: "運営に報告しました",
       lines: ["報告は運営が確認します。即座に出品が消えるわけではありません。", "同じ出品への重複報告は不要です。"]
+    };
+  }
+
+  // ---- 商店街Forum連携: Forum=売り場 / Bot=決済・取引・エスクロー ----
+
+  setMarketForumChannel(adminUser, channelId) {
+    const settings = this.state.marketplace.settings;
+    settings.marketForumChannelId = isDiscordSnowflake(channelId) ? String(channelId) : null;
+    this.marketLog(`${adminUser.name} が商店街フォーラムを${settings.marketForumChannelId ? `<#${settings.marketForumChannelId}> に設定` : "解除"}しました。`);
+    return {
+      ok: true,
+      title: settings.marketForumChannelId ? "商店街フォーラムを設定しました" : "商店街フォーラム設定を解除しました",
+      lines: [
+        settings.marketForumChannelId
+          ? `<#${settings.marketForumChannelId}> をIRIS商店街フォーラムとして使います。新しい投稿に販売設定の案内が付きます。`
+          : "フォーラム連携を停止しました。既存の出品はショップからそのまま購入できます。"
+      ],
+      panel: this.adminMaintenancePanel(adminUser)
+    };
+  }
+
+  setTradeChannel(adminUser, channelId) {
+    const settings = this.state.marketplace.settings;
+    settings.tradeChannelId = isDiscordSnowflake(channelId) ? String(channelId) : null;
+    this.marketLog(`${adminUser.name} が取引スペース作成先を${settings.tradeChannelId ? `<#${settings.tradeChannelId}> に設定` : "解除"}しました。`);
+    return {
+      ok: true,
+      title: settings.tradeChannelId ? "取引スペース作成先を設定しました" : "取引スペース設定を解除しました",
+      lines: [
+        settings.tradeChannelId
+          ? `<#${settings.tradeChannelId}> の下に、購入ごとの取引用private threadを作成します。`
+          : "取引スレッドの自動作成を停止しました。取引はDMと「自分の取引」から進められます。"
+      ],
+      panel: this.adminMaintenancePanel(adminUser)
+    };
+  }
+
+  // フォーラム投稿からの販売登録。指定フォーラム外・投稿作成者以外・二重登録はここで拒否する。
+  createForumListing(user, data = {}, context = {}) {
+    const settings = this.state.marketplace.settings;
+    if (!settings.marketForumChannelId || String(context.parentChannelId || "") !== settings.marketForumChannelId) {
+      return { ok: false, title: "このフォーラムでは販売できません", lines: ["運営が設定したIRIS商店街フォーラムの投稿だけ販売登録できます。"] };
+    }
+    const actorDiscordId = String(user.id).includes(":") ? String(user.id).split(":").pop() : String(user.id);
+    if (!context.threadOwnerId || String(context.threadOwnerId) !== actorDiscordId) {
+      return { ok: false, title: "販売設定できません", lines: ["フォーラム投稿の作成者だけが販売設定できます。"] };
+    }
+    if (!isDiscordSnowflake(context.threadId)) {
+      return { ok: false, title: "販売設定できません", lines: ["対象の投稿を特定できませんでした。"] };
+    }
+    const existing = this.state.marketplace.listings.find(
+      (listing) => listing.forumThreadId === String(context.threadId) && ["active", "pending"].includes(listing.status)
+    );
+    if (existing) {
+      return { ok: false, title: "すでに販売登録されています", lines: [`この投稿は #${existing.id} ${existing.name} として登録済みです。`] };
+    }
+    return this.createServiceListing(user, data, { forumThreadId: context.threadId });
+  }
+
+  recordForumPanelMessage(listingId, messageId) {
+    const listing = this.findListing(listingId);
+    if (!listing || listing.forumPanelMessageId || !isDiscordSnowflake(messageId)) return false;
+    listing.forumPanelMessageId = String(messageId);
+    return true;
+  }
+
+  // フォーラム投稿が削除されたら新規購入を止める（取引・Risには触らない）
+  pauseForumListingByThread(threadId) {
+    const listing = this.state.marketplace.listings.find(
+      (entry) => entry.forumThreadId === String(threadId) && ["active", "pending"].includes(entry.status)
+    );
+    if (!listing) return null;
+    listing.status = "stopped";
+    listing.stoppedReason = "forum_post_deleted";
+    listing.stoppedAt = new Date().toISOString();
+    this.marketLog(`フォーラム投稿の削除により出品 #${listing.id} ${listing.name} を停止しました。`);
+    return listing;
+  }
+
+  // フォーラム投稿内に貼る販売パネル
+  forumSalesPanel(listingId) {
+    const listing = this.findListing(listingId);
+    if (!listing) return null;
+    const seller = this.state.users[listing.sellerId];
+    const accepting = listing.status === "active"
+      && this.listingCanAccept(listing)
+      && !seller?.marketplace?.leftGuildAt
+      && (seller?.marketplace?.shopStatus || "open") === "open";
+    const statusLine = accepting
+      ? "受付中"
+      : listing.status === "pending"
+        ? "審査待ち（公開までお待ちください）"
+        : "受付停止中";
+    return {
+      title: `${fmt(listing.price)} ${listing.name}`.slice(0, 256),
+      description: "この投稿はIRISで販売中です。購入するとRisはIRIS預かりになり、受取確認後に販売者へ支払われます。",
+      color: accepting ? 0x0f766e : 0x64748b,
+      fields: [
+        { name: "価格", value: fmt(listing.price), inline: true },
+        { name: "販売者", value: this.sellerPageName(listing.sellerId, listing.sellerName), inline: true },
+        { name: "状態", value: `${statusLine} / 受付 ${this.listingLimitLine(listing)}`, inline: true }
+      ],
+      components: [
+        buttons([
+          customButton("購入する", `eco:market:trade-buy:${listing.id}`, "success", !accepting),
+          runButton("販売者の他の出品", `marketplace shop-view ${listing.sellerId}`),
+          panelButton("自分の取引", "my-trades")
+        ])
+      ]
+    };
+  }
+
+  // 商店街入口パネル（運営が任意のテキストチャンネルに常設する）
+  marketEntrancePanel() {
+    const active = this.activeListings().sort((a, b) => b.id - a.id);
+    const sellerCount = new Set(active.map((listing) => listing.sellerId)).size;
+    const newest = active.slice(0, 3);
+    return {
+      title: "🏪 IRIS商店街",
+      description: "ユーザー同士のサービス売買はここから。代金は取引完了までIRISが預かるので安心です。",
+      color: 0x0f766e,
+      fields: [
+        { name: "受付中の出品", value: `${active.length}件`, inline: true },
+        { name: "活動中の販売者", value: `${sellerCount}人`, inline: true },
+        {
+          name: "新着",
+          value: newest.length
+            ? newest.map((listing) => `・${listing.name}　${fmt(listing.price)}`).join("\n")
+            : "まだ出品がありません。最初の出品者になりましょう。",
+          inline: false
+        }
+      ],
+      components: [
+        buttons([
+          panelButton("商店街を見る", "user-shops", "primary"),
+          customButton("商品を探す", "eco:shop:search-open"),
+          panelButton("出品する", "listing-new", "success"),
+          panelButton("自分の取引", "my-trades")
+        ]),
+        buttons([panelButton("公式ショップ", "official-shop")])
+      ]
     };
   }
 

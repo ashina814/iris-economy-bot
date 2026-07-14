@@ -241,6 +241,10 @@ async function handleInteraction(interaction) {
       await handleTradeBuyModal(interaction);
       return;
     }
+    if (interaction.customId.startsWith("eco:modal:forum-sell:")) {
+      await handleForumSellModal(interaction);
+      return;
+    }
     if (interaction.customId.startsWith("eco:modal:trade-report:")) {
       await handleTradeReportModal(interaction);
       return;
@@ -308,6 +312,10 @@ async function handleInteraction(interaction) {
       await handleVcXpLocationChannelSelect(interaction);
       return;
     }
+    if (["eco:channel:market-forum", "eco:channel:trade-channel"].includes(interaction.customId)) {
+      await handleMarketChannelSelect(interaction);
+      return;
+    }
     return;
   }
 
@@ -346,6 +354,18 @@ async function handleInteraction(interaction) {
     }
     if (interaction.isButton() && interaction.customId.startsWith("eco:market:listing-report:")) {
       await showListingReportModal(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:forum-sell:")) {
+      await showForumSellModal(interaction);
+      return;
+    }
+    if (interaction.isButton() && ["eco:market:forum-clear", "eco:market:trade-channel-clear"].includes(interaction.customId)) {
+      await handleMarketChannelClear(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId === "eco:market:post-street-panel") {
+      await postStreetPanel(interaction);
       return;
     }
     if (interaction.isButton() && interaction.customId === "eco:market:official-item-create") {
@@ -1411,6 +1431,189 @@ async function createMarketListingFromModal(interaction) {
   store.save(engine.state);
   await replyDiscord(interaction, result, { ephemeral: true });
 }
+
+async function handleMarketChannelSelect(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const channelId = interaction.values?.[0];
+  const actor = actorFromInteraction(interaction);
+  const adminUser = engine.getUser(actor.id, actor.name);
+  const result = interaction.customId === "eco:channel:market-forum"
+    ? engine.setMarketForumChannel(adminUser, channelId)
+    : engine.setTradeChannel(adminUser, channelId);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleMarketChannelClear(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const actor = actorFromInteraction(interaction);
+  const adminUser = engine.getUser(actor.id, actor.name);
+  const result = interaction.customId === "eco:market:forum-clear"
+    ? engine.setMarketForumChannel(adminUser, null)
+    : engine.setTradeChannel(adminUser, null);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function postStreetPanel(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (!interaction.channel?.isTextBased?.()) {
+    await interaction.reply({ content: "テキストチャンネルで使ってください。", ephemeral: true });
+    return;
+  }
+  const panel = engine.marketEntrancePanel();
+  const result = { ok: true, title: panel.title, lines: [], panel };
+  const embed = buildEmbed(result);
+  const components = buildComponents(result);
+  await interaction.channel.send({ embeds: embed ? [embed] : [], components });
+  await interaction.reply({ content: "このチャンネルにIRIS商店街入口を送信しました。", ephemeral: true });
+}
+
+// ---- 商店街フォーラム連携 ----
+
+function marketForumChannelId() {
+  return engine.state.marketplace.settings.marketForumChannelId || null;
+}
+
+async function showForumSellModal(interaction) {
+  const threadId = interaction.customId.split(":")[3];
+  const thread = interaction.channel;
+  if (!thread?.isThread?.() || thread.id !== threadId || thread.parentId !== marketForumChannelId()) {
+    await interaction.reply({ content: "この投稿では販売設定できません。", ephemeral: true });
+    return;
+  }
+  if (thread.ownerId && thread.ownerId !== interaction.user.id && !isAdmin(interaction)) {
+    await interaction.reply({ content: "販売設定ができるのは投稿の作成者だけです。", ephemeral: true });
+    return;
+  }
+  const categoryList = "voice=通話 / game=ゲーム / creative=制作 / consultation=相談 / fun=ネタ / other=その他";
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:forum-sell:${threadId}`)
+    .setTitle("この投稿をIRISで販売する");
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("price")
+        .setLabel("価格（Ris）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(12)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("limit")
+        .setLabel("受付上限（空欄で無制限）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(3)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("category")
+        .setLabel(`カテゴリ（${categoryList}）`.slice(0, 45))
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(20)
+        .setPlaceholder("voice / game / creative / consultation / fun / other")
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+function normalizeForumCategoryInput(raw) {
+  const text = String(raw || "").trim().toLowerCase();
+  if (!text) return "other";
+  const byLabel = { "通話": "voice", "ゲーム": "game", "制作": "creative", "相談": "consultation", "ネタ": "fun", "その他": "other" };
+  return byLabel[String(raw || "").trim()] || (["voice", "game", "creative", "consultation", "fun", "other"].includes(text) ? text : "other");
+}
+
+async function handleForumSellModal(interaction) {
+  const threadId = interaction.customId.split(":")[3];
+  const thread = interaction.channel;
+  if (!thread?.isThread?.() || thread.id !== threadId) {
+    await interaction.reply({ content: "対象の投稿を特定できませんでした。", ephemeral: true });
+    return;
+  }
+  const starter = await thread.fetchStarterMessage().catch(() => null);
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.createForumListing(user, {
+    name: thread.name,
+    description: starter?.content || "",
+    price: interaction.fields.getTextInputValue("price"),
+    limit: interaction.fields.getTextInputValue("limit"),
+    category: normalizeForumCategoryInput(interaction.fields.getTextInputValue("category"))
+  }, {
+    threadId: thread.id,
+    parentChannelId: thread.parentId,
+    threadOwnerId: thread.ownerId || interaction.user.id
+  });
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  // 台帳の登録が確定してから、投稿内の販売パネル送信（失敗しても出品はショップから購入できる）
+  if (result.ok && result.listing) {
+    try {
+      await postForumSalesPanel(thread, result.listing.id);
+    } catch (error) {
+      console.warn(`フォーラム販売パネルの送信に失敗しました (#${result.listing.id}): ${error.message}`);
+    }
+  }
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function postForumSalesPanel(thread, listingId) {
+  const panel = engine.forumSalesPanel(listingId);
+  if (!panel || !thread) return;
+  const result = { ok: true, title: panel.title, lines: [], panel };
+  const embed = buildEmbed(result);
+  const components = buildComponents(result);
+  const message = await thread.send({ embeds: embed ? [embed] : [], components });
+  const changed = engine.recordForumPanelMessage(listingId, message.id);
+  if (changed) store.save(engine.state);
+  await message.pin().catch(() => null);
+}
+
+client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
+  try {
+    if (!newlyCreated || !thread?.parentId || thread.parentId !== marketForumChannelId()) return;
+    await thread.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("この投稿をIRISで販売しますか？")
+          .setColor(0x0f766e)
+          .setDescription("価格・カテゴリ・受付上限を設定すると、この投稿から直接購入できるようになります。\n代金は取引完了までIRISが預かります。設定できるのは投稿の作成者だけです。")
+      ],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`eco:market:forum-sell:${thread.id}`).setLabel("販売設定をする").setStyle(ButtonStyle.Primary)
+        )
+      ]
+    });
+  } catch (error) {
+    console.warn(`商店街フォーラム案内の送信に失敗しました: ${error.message}`);
+  }
+});
+
+client.on(Events.ThreadDelete, async (thread) => {
+  try {
+    if (!thread?.parentId || thread.parentId !== marketForumChannelId()) return;
+    const listing = engine.pauseForumListingByThread(thread.id);
+    if (listing) store.save(engine.state);
+  } catch (error) {
+    console.warn(`フォーラム投稿削除の処理に失敗しました: ${error.message}`);
+  }
+});
 
 // 取引スレッド: 作成失敗しても台帳（注文・Ris）は既に確定済みで、DMと「自分の取引」から継続できる
 async function ensureTradeThread(order) {
@@ -4930,7 +5133,9 @@ function buildComponents(result, options = {}) {
     if (component.type === "channel-select") {
       const typeMap = {
         category: ChannelType.GuildCategory,
-        voice: ChannelType.GuildVoice
+        voice: ChannelType.GuildVoice,
+        text: ChannelType.GuildText,
+        forum: ChannelType.GuildForum
       };
       const channelTypes = (component.channelTypes || [])
         .map((type) => typeMap[type])

@@ -1223,6 +1223,52 @@ assert(flaggedListingRes.ok && flaggedListingRes.listing.status === "pending", "
 assert(tradeEngine.resolveListingReport(tradeEngine.getUser(tAdmin.id, tAdmin.name), flagReport.id, "unflag").ok, "要確認を解除できる必要があります");
 assert(!tradeEngine.state.users[tSeller.id].marketplace.sellerFlagged, "要確認フラグが解除される必要があります");
 
+// --- 商店街Forum連携（engine側の検証） ---
+const FORUM_ID = "111111111111111111";
+const THREAD_ID = "222222222222222222";
+const sellerDiscordId = tSeller.id.split(":").pop();
+// フォーラム未設定では登録できない
+assert(!tradeEngine.createForumListing(tradeEngine.getUser(tSeller.id, tSeller.name), { name: "x", price: "100" }, { threadId: THREAD_ID, parentChannelId: FORUM_ID, threadOwnerId: sellerDiscordId }).ok,
+  "フォーラム未設定時は販売登録できてはいけません");
+tradeEngine.setMarketForumChannel(tradeEngine.getUser(tAdmin.id, tAdmin.name), FORUM_ID);
+assert.strictEqual(tradeEngine.state.marketplace.settings.marketForumChannelId, FORUM_ID, "商店街フォーラムを設定できる必要があります");
+// 指定Forum以外では登録しない
+assert(!tradeEngine.createForumListing(tradeEngine.getUser(tSeller.id, tSeller.name), { name: "x", price: "100" }, { threadId: THREAD_ID, parentChannelId: "999999999999999999", threadOwnerId: sellerDiscordId }).ok,
+  "指定Forum以外では販売登録できてはいけません");
+// 投稿作成者以外は販売設定できない
+assert(!tradeEngine.createForumListing(tradeEngine.getUser(tBuyer.id, tBuyer.name), { name: "x", price: "100" }, { threadId: THREAD_ID, parentChannelId: FORUM_ID, threadOwnerId: sellerDiscordId }).ok,
+  "投稿作成者以外は販売設定できてはいけません");
+// 投稿から登録できる
+const forumListingRes = tradeEngine.createForumListing(tradeEngine.getUser(tSeller.id, tSeller.name), {
+  name: "30分くらい雑談します",
+  description: "相談でも雑談でも何でも。基本夜に対応できます。",
+  price: "1000",
+  category: "voice",
+  limit: ""
+}, { threadId: THREAD_ID, parentChannelId: FORUM_ID, threadOwnerId: sellerDiscordId });
+assert(forumListingRes.ok, "フォーラム投稿から商品登録できる必要があります");
+const forumListing = forumListingRes.listing;
+assert.strictEqual(forumListing.forumThreadId, THREAD_ID, "出品にフォーラム投稿IDが記録される必要があります");
+// 二重登録防止
+assert(!tradeEngine.createForumListing(tradeEngine.getUser(tSeller.id, tSeller.name), { name: "x", price: "100" }, { threadId: THREAD_ID, parentChannelId: FORUM_ID, threadOwnerId: sellerDiscordId }).ok,
+  "同じ投稿を二重に販売登録できてはいけません");
+// /ショップ から同じ商品を購入できる
+const forumBuy = tradeEngine.buyServiceListing(tradeEngine.getUser(tBuyer.id, tBuyer.name), forumListing.id, { request: "夜おねがいします" });
+assert(forumBuy.ok && forumBuy.order.payout === "held", "フォーラム登録商品もショップから購入でき、エスクローになる必要があります");
+// 販売パネルメッセージIDは一度だけ記録
+assert(tradeEngine.recordForumPanelMessage(forumListing.id, "333333333333333333"), "販売パネルIDを記録できる必要があります");
+assert(!tradeEngine.recordForumPanelMessage(forumListing.id, "444444444444444444"), "販売パネルIDを二重記録できてはいけません");
+// 投稿削除で新規購入停止（進行中取引・Risには触らない）
+const buyerWalletBeforeThreadDelete = tradeEngine.state.users[tBuyer.id].wallet;
+const paused = tradeEngine.pauseForumListingByThread(THREAD_ID);
+assert(paused && forumListing.status === "stopped" && forumListing.stoppedReason === "forum_post_deleted", "投稿削除で出品が停止される必要があります");
+assert(!tradeEngine.buyServiceListing(tradeEngine.getUser(tBuyer.id, tBuyer.name), forumListing.id, {}).ok, "投稿削除後は新規購入できてはいけません");
+assert.strictEqual(tradeEngine.state.users[tBuyer.id].wallet, buyerWalletBeforeThreadDelete, "投稿削除処理で金銭データが変わってはいけません");
+assert.strictEqual(tradeEngine.findTradeOrder(forumBuy.order.id).status, "ordered", "投稿削除後も進行中取引は残る必要があります");
+// 取引スレッドIDの二重記録防止
+assert(tradeEngine.recordTradeThread(forumBuy.order.id, "555555555555555555"), "取引スレッドIDを記録できる必要があります");
+assert(!tradeEngine.recordTradeThread(forumBuy.order.id, "666666666666666666"), "取引スレッドを二重作成扱いにしてはいけません");
+
 // --- migration: 旧type/mode付き出品・旧注文があっても起動できる ---
 const legacyState = JSON.parse(JSON.stringify(tradeEngine.state));
 legacyState.marketplace.listings.push({
