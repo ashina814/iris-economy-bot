@@ -1334,13 +1334,13 @@ async function postMarketPanel(interaction) {
     return;
   }
   const actor = actorFromInteraction(interaction);
-  const result = engine.run("panel marketplace", actor);
+  const result = engine.run("panel official-shop", actor);
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
   const embed = buildEmbed(result);
   const components = buildComponents(result);
   await interaction.channel.send({ embeds: embed ? [embed] : [], components });
-  await interaction.reply({ content: "このチャンネルに常設ショップを送信しました。", ephemeral: true });
+  await interaction.reply({ content: "このチャンネルに常設公式ショップを送信しました。", ephemeral: true });
 }
 
 async function showMarketAuctionCreateModal(interaction) {

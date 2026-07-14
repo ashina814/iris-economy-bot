@@ -53,6 +53,13 @@ for (const command of [
   if (result.panel) buildComponents(result);
 }
 
+const emptyShopOwner = { id: "entrypoint-test:empty-shop", name: "empty shop owner" };
+engine.run("join", emptyShopOwner);
+engine.openShop(engine.getUser(emptyShopOwner.id, emptyShopOwner.name));
+const emptyShopPanel = engine.run(`marketplace shop-view ${emptyShopOwner.id}`, actor);
+assert(emptyShopPanel.panel, "出品のない民営ショップも表示できる必要があります");
+buildComponents(emptyShopPanel);
+
 const missingFromCache = { id: "entrypoint-test:missing", name: "cache-missing member" };
 engine.run("join", missingFromCache);
 const unjoinedActivity = { id: "entrypoint-test:activity-only", name: "activity-only member" };
