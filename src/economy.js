@@ -2369,29 +2369,33 @@ class EconomyEngine {
   }
 
   marketplacePanel(user) {
-    const shop = user.marketplace || {};
-    const recommended = this.recommendedOfficialItems()[0];
-    const shopStatus = shop.shopOpened
-      ? `${shop.shopName || "未設定"} / ${(shop.shopStatus || "open") === "open" ? "営業中" : "休業中"}`
-      : "未開店";
+    const activeTrades = [...this.userOrders(user.id), ...this.sellerOrders(user.id)]
+      .filter((order) => TRADE_ACTIVE_STATUSES.has(order.status) || ["open", "reported"].includes(order.status)).length;
+    const street = this.activeListings().sort((a, b) => b.id - a.id);
+    const sellerCount = new Set(street.map((listing) => listing.sellerId)).size;
+    const newest = street.slice(0, 3);
     const fields = [
       { name: "残高", value: this.moneyLine(user), inline: true },
-      { name: "今日のおすすめ", value: recommended ? `${recommended.item.name}\n${recommended.reason} / ${fmt(this.itemPrice(recommended.id))}` : "公式商品を準備中です。", inline: true },
-      { name: "民営出品", value: `${this.activeListings().length}件（${this.openShopSellerIds().size}店）`, inline: true },
-      { name: "自分の店", value: shopStatus, inline: false }
+      { name: "民営商店街", value: street.length ? `${street.length}件の出品が受付中（販売者 ${sellerCount}人）` : "出品を待っています", inline: true },
+      { name: "自分の取引", value: activeTrades ? `対応中 ${activeTrades}件` : "対応中の取引はありません", inline: true },
+      {
+        name: "新着",
+        value: newest.length ? newest.map((listing) => `・${listing.name}　${fmt(listing.price)}`).join("\n") : "まだ出品がありません。",
+        inline: false
+      }
     ];
     const components = [
       buttons([
-        panelButton("公式商品を見る", "official-shop", "primary"),
-        panelButton("ユーザー商品を見る", "user-shops", "primary"),
-        runButton("今日のおすすめ", "marketplace recommended", "primary"),
-        runButton("今買えるもの", "marketplace affordable"),
-        panelButton("持ち物を見る", "market-inventory")
+        panelButton("商店街を見る", "user-shops", "primary"),
+        customButton("商品を探す", "eco:shop:search-open"),
+        panelButton("出品する", "listing-new", "success"),
+        panelButton("自分の取引", "my-trades")
       ]),
       buttons([
-        panelButton("自分の店", "my-shop"),
-        customButton("絞り込みで探す", "eco:shop:search-open"),
-        panelButton("公式オークション", "official-auctions")
+        panelButton("公式ショップ", "official-shop", "primary"),
+        panelButton("公式オークション", "official-auctions"),
+        panelButton("持ち物", "market-inventory"),
+        panelButton("自分の店", "my-shop")
       ])
     ];
     if (this.state.inviteCampaign.active) {
@@ -2423,11 +2427,11 @@ class EconomyEngine {
         description: "公式商品は現在準備中です。運営が追加するまでお待ちください。",
         color: 0x8b5cf6,
         fields: [
-          { name: "民営ショップ", value: "ユーザー出品の商品はこちらから見られます。", inline: false }
+          { name: "IRIS商店街", value: "ユーザー同士の出品はこちらから見られます。", inline: false }
         ],
         components: [
           buttons([
-            panelButton("民営ショップ", "user-shops", "primary"),
+            panelButton("商店街を見る", "user-shops", "primary"),
             panelButton("ショップへ戻る", "marketplace")
           ])
         ]
@@ -3147,13 +3151,14 @@ class EconomyEngine {
       )));
     }
     components.push(buttons([
+      panelButton("自分の取引", "my-trades", "primary"),
       panelButton("自分の店", "my-shop"),
-      panelButton("商品管理", "my-listings"),
+      panelButton("出品管理", "my-listings"),
       panelButton("ショップ", "marketplace")
     ]));
     return {
-      title: "売上・取引",
-      description: "売上と手動対応中の商品を確認できます。手動対応商品の代金は、購入者が受け取り確認をした時点で支払われます。",
+      title: "売上・販売履歴",
+      description: "累計売上と販売履歴の一覧です。対応が必要な取引は「自分の取引」から操作してください。代金は購入者の受取確認（または自動完了）後に支払われます。",
       color: 0x14b8a6,
       fields: [
         { name: "売上", value: fmt(user.marketplace.sales || 0), inline: true },
@@ -5694,7 +5699,7 @@ class EconomyEngine {
     return {
       ok: true,
       title: needsReview ? "再開しました（審査待ち）" : "再開しました",
-      lines: [`#${listing.id} ${listing.name}`, needsReview ? "高額または要注意タイプのため、運営確認後に再公開されます。" : "民営ショップに再公開されました。"],
+      lines: [`#${listing.id} ${listing.name}`, needsReview ? "審査対象のため、運営確認後に再公開されます。" : "商店街に再公開されました。"],
       panel: this.myListingsPanel(user)
     };
   }
@@ -5766,8 +5771,8 @@ class EconomyEngine {
       title: target === "open" ? "営業を再開しました" : "休業中にしました",
       lines: [
         target === "closed"
-          ? "商品は民営ショップと検索から除外され、購入できなくなります。停止しなくてもOKです。"
-          : "商品が民営ショップと検索に再表示されます。"
+          ? "出品は商店街と検索から除外され、購入できなくなります。個別に停止しなくてもOKです。"
+          : "出品が商店街と検索に再表示されます。"
       ],
       panel: this.myShopPanel(user)
     };
