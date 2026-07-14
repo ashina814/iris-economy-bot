@@ -157,6 +157,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   await ensureRankPanel();
   startVoiceRewardSweeper();
   startMarketSweeper();
+  startTradeSweeper();
   startOfficialRoleExpirySweeper();
   startBoostRewardSweeper();
   startYadoSweeper();
@@ -4537,6 +4538,27 @@ function startVoiceRewardSweeper() {
     }
 
     if (changed) store.save(engine.state);
+  }, intervalMs).unref?.();
+}
+
+// delivered から一定時間で自動完了（絶対時刻judge・冪等）。警告通知もここから出す。
+function startTradeSweeper() {
+  const intervalMs = 5 * 60 * 1000;
+  setInterval(async () => {
+    let result;
+    try {
+      result = engine.sweepTradeAutoCompletion();
+      if (!result.changed && !result.notifications.length) return;
+      store.save(engine.state);
+    } catch (error) {
+      console.warn(`取引自動完了スイープに失敗しました: ${error.message}`);
+      return;
+    }
+    await deliverNotifications(result.notifications);
+    for (const order of result.completed) {
+      await postTradeThreadUpdate(order.id).catch(() => null);
+    }
+    if (result.completed.length) console.log(`民営取引を ${result.completed.length}件自動完了しました。`);
   }, intervalMs).unref?.();
 }
 
