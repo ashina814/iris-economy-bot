@@ -89,12 +89,33 @@ const MARKET_SALE_MODES = {
   timed: "期間制"
 };
 
+// 民営商店街の検索・発見用カテゴリ。処理分岐（エスクロー有無・審査方式・支払い方式）には一切使わない。
+const MARKET_CATEGORIES = {
+  voice: "通話",
+  game: "ゲーム",
+  creative: "制作",
+  consultation: "相談",
+  fun: "ネタ",
+  other: "その他"
+};
+
+// 新方式の民営取引（flow: "trade"）の状態。
+// ordered: 販売者の受注待ち / accepted: 対応中 / delivered: 購入者の受取確認待ち /
+// completed: 完了・支払い済み / reported: 運営対応待ち（自動完了停止） / refunded: 返金済み / cancelled: キャンセル
+const TRADE_STATUSES = new Set(["ordered", "accepted", "delivered", "completed", "reported", "refunded", "cancelled"]);
+const TRADE_ACTIVE_STATUSES = new Set(["ordered", "accepted", "delivered", "reported"]);
+
 const MARKETPLACE_CONFIG = {
   feeBps: 500,
   reviewPrice: 50000,
   maxActiveListings: 8,
   defaultDurationDays: 7,
-  auctionExtendMinutes: 5
+  auctionExtendMinutes: 5,
+  // delivered 後に問題報告がなければ自動完了するまでの時間と、その事前通知
+  tradeAutoCompleteHours: 72,
+  tradeAutoCompleteWarnHours: 24,
+  tradeRequestMaxLength: 300,
+  listingLimitMax: 999
 };
 
 const OFFICIAL_FULFILLMENT_MODES = new Set(["instant", "manual", "on_use"]);
@@ -284,13 +305,19 @@ function createInitialState() {
       officialFulfillment: [],
       officialRoleGrants: [],
       nextOfficialFulfillmentId: 1,
+      reports: [],
+      nextReportId: 1,
       logs: [],
       settings: {
         feeBps: MARKETPLACE_CONFIG.feeBps,
         reviewPrice: MARKETPLACE_CONFIG.reviewPrice,
         maxActiveListings: MARKETPLACE_CONFIG.maxActiveListings,
         auctionExtendMinutes: MARKETPLACE_CONFIG.auctionExtendMinutes,
-        officialPurchaseLogChannelId: null
+        officialPurchaseLogChannelId: null,
+        tradeAutoCompleteHours: MARKETPLACE_CONFIG.tradeAutoCompleteHours,
+        tradeAutoCompleteWarnHours: MARKETPLACE_CONFIG.tradeAutoCompleteWarnHours,
+        marketForumChannelId: null,
+        tradeChannelId: null
       }
     },
     invites: {
@@ -474,6 +501,8 @@ class EconomyEngine {
       "公式オークション": "official-auctions",
       "購入履歴": "market-inventory",
       "持ち物": "market-inventory",
+      "自分の取引": "my-trades",
+      "取引": "my-trades",
       "自分の店": "my-shop",
       "出品": "my-listings",
       "売上": "my-sales",
@@ -530,6 +559,7 @@ class EconomyEngine {
       marketplace: () => this.marketplacePanel(user),
       "official-shop": () => this.officialShopPanel(user),
       "user-shops": () => this.userShopsPanel(user),
+      "my-trades": () => this.myTradesPanel(user),
       "official-auctions": () => this.officialAuctionsPanel(user),
       "market-inventory": () => this.marketInventoryPanel(user),
       "my-shop": () => this.myShopPanel(user),
@@ -2222,6 +2252,14 @@ class EconomyEngine {
     if (["listing-shelf", "listing-category", "category"].includes(action)) return this.panelResult(this.userListingShelfPanel(user, args[1]));
     if (action === "listing-confirm") return this.panelResult(this.userListingConfirmPanel(user, args[1]));
     if (action === "listing-buy") return this.buyUserListing(user, args[1]);
+    if (action === "my-trades") return this.panelResult(this.myTradesPanel(user, args[1], args[2]));
+    if (action === "trade") return this.panelResult(this.tradeDetailPanel(user, args[1]));
+    if (action === "trade-accept") return this.acceptTrade(user, args[1]);
+    if (action === "trade-deliver") return this.deliverTrade(user, args[1]);
+    if (action === "trade-confirm") return this.confirmTrade(user, args[1]);
+    if (action === "trade-cancel") return this.cancelTrade(user, args[1]);
+    if (action === "trade-decline") return this.declineTrade(user, args[1]);
+    if (action === "trade-report") return this.reportTrade(user, args[1], args.slice(2).join(" "));
     if (action === "auction-history") return this.panelResult(this.auctionHistoryPanel(user, args[1]));
     if (action === "auction-end") return this.forceEndAuction(user, args[1]);
     if (action === "review") return this.panelResult(this.reviewListingPanel(user, args[1]));
@@ -3757,13 +3795,541 @@ class EconomyEngine {
       sales: 0,
       inventory: [],
       listingDraft: { type: "item", mode: "permanent" },
+      sellerFlagged: false,
+      firstListingPublished: false,
+      leftGuildAt: null,
       ...(user.marketplace || {})
     };
     if (!["open", "closed"].includes(user.marketplace.shopStatus)) user.marketplace.shopStatus = "open";
     user.marketplace.salesDmEnabled = user.marketplace.salesDmEnabled !== false;
     user.marketplace.inventory = Array.isArray(user.marketplace.inventory) ? user.marketplace.inventory : [];
-    user.marketplace.listingDraft = { type: "item", mode: "permanent", ...(user.marketplace.listingDraft || {}) };
+    user.marketplace.listingDraft = { type: "item", mode: "permanent", category: "other", ...(user.marketplace.listingDraft || {}) };
     return user.marketplace;
+  }
+
+  // 販売者ページの表示名。店名を設定していなければ「〇〇の出品」で表示する。
+  sellerPageName(sellerId, fallbackName = "") {
+    const seller = this.state.users[sellerId];
+    const shopName = seller?.marketplace?.shopName;
+    if (shopName) return shopName;
+    const name = seller?.name || fallbackName || "誰か";
+    return `${name}の出品`;
+  }
+
+  // 初出品時に販売者ページを自動作成する（店舗開設操作は出品の前提条件にしない）
+  ensureSellerPage(user) {
+    const shop = this.ensureShopShape(user);
+    if (!shop.shopOpened) {
+      shop.shopOpened = true;
+      this.state.marketplace.shops[user.id] = {
+        ownerId: user.id,
+        ownerName: user.name,
+        name: shop.shopName || "",
+        description: shop.shopDescription || "",
+        openedAt: new Date().toISOString()
+      };
+      this.marketLog(`${user.name} の販売者ページを作成しました。`);
+    }
+    return shop;
+  }
+
+  // ---- 受付枠（stock: null = 無制限 / 正整数 = 残り受付数） ----
+
+  listingCanAccept(listing) {
+    return listing.stock === null || (Number(listing.stock) || 0) > 0;
+  }
+
+  listingLimitLine(listing) {
+    if (listing.stock === null) return "無制限";
+    return `残り ${listing.stock}件`;
+  }
+
+  consumeListingSlot(listing) {
+    if (listing.stock === null) return;
+    listing.stock = Math.max(0, (Number(listing.stock) || 0) - 1);
+    if (listing.stock <= 0) listing.status = "soldout";
+  }
+
+  restoreListingSlot(listing) {
+    if (!listing || listing.stock === null) return;
+    listing.stock = (Number(listing.stock) || 0) + 1;
+    if (listing.status === "soldout" && listing.stock > 0) listing.status = "active";
+  }
+
+  // ---- リスク型審査: カテゴリではなく販売者・価格ベースで審査対象を決める ----
+
+  listingNeedsReview(user, price, { resubmittedAfterReport = false } = {}) {
+    const shop = this.ensureShopShape(user);
+    if (Number(price) >= this.state.marketplace.settings.reviewPrice) return true;
+    if (shop.sellerFlagged) return true;
+    if (resubmittedAfterReport) return true;
+    if (!shop.firstListingPublished) return true;
+    return false;
+  }
+
+  markListingPublished(listing) {
+    if (listing.status !== "active") return;
+    const seller = this.state.users[listing.sellerId];
+    if (seller) this.ensureShopShape(seller).firstListingPublished = true;
+  }
+
+  // ---- 新方式の民営出品（kind: "service"） ----
+
+  createServiceListing(user, data = {}, options = {}) {
+    const shop = this.ensureShopShape(user);
+    const activeCount = this.sellerListings(user.id).filter((listing) => ["active", "pending"].includes(listing.status)).length;
+    const maxActive = this.state.marketplace.settings.maxActiveListings;
+    if (activeCount >= maxActive) {
+      return { ok: false, title: "出品上限", lines: [`同時に出せる出品は ${maxActive}件までです。`] };
+    }
+    const name = cleanMarketText(data.name, 48);
+    const description = cleanMarketText(data.description, 400);
+    const price = parsePositiveInt(data.price);
+    const category = MARKET_CATEGORIES[data.category] ? data.category : "other";
+    const limit = normalizeListingLimit(data.limit);
+    if (!name) return { ok: false, title: "出品名が空です", lines: ["商品・サービス名を入力してください。"] };
+    if (!Number.isFinite(price) || price <= 0) return { ok: false, title: "価格が変です", lines: ["価格は1以上の数字で入力してください。"] };
+    if (limit === false) return { ok: false, title: "受付上限が変です", lines: [`受付上限は空欄（無制限）か 1〜${MARKETPLACE_CONFIG.listingLimitMax} の数字で入力してください。`] };
+
+    this.ensureSellerPage(user);
+    const needsReview = this.listingNeedsReview(user, price, options);
+    const listing = {
+      id: this.state.marketplace.nextListingId++,
+      kind: "service",
+      sellerId: user.id,
+      sellerName: user.name,
+      name,
+      description: description || "説明はありません。",
+      price,
+      category,
+      stock: limit,
+      sold: 0,
+      status: needsReview ? "pending" : "active",
+      stoppedReason: null,
+      forumThreadId: isDiscordSnowflake(options.forumThreadId) ? String(options.forumThreadId) : null,
+      forumPanelMessageId: null,
+      createdAt: new Date().toISOString()
+    };
+    this.state.marketplace.listings.push(listing);
+    if (!needsReview) this.markListingPublished(listing);
+    this.marketLog(`${user.name} が「${listing.name}」を出品しました。${needsReview ? "審査待ち。" : ""}`);
+    return {
+      ok: true,
+      title: needsReview ? "出品しました（審査待ち）" : "出品しました",
+      lines: [
+        `${listing.name} / ${fmt(price)} / 受付上限 ${this.listingLimitLine(listing)}`,
+        needsReview
+          ? (shop.firstListingPublished ? "運営確認後に公開されます。" : "初回出品のため、運営確認後に公開されます。次回からは条件に当たらない限り即公開です。")
+          : "商店街に公開されました。"
+      ],
+      listing,
+      panel: this.myListingsPanel(user)
+    };
+  }
+
+  // ---- 新方式の民営取引（flow: "trade"、全件エスクロー） ----
+
+  findTradeOrder(id) {
+    const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
+    return order && order.flow === "trade" ? order : null;
+  }
+
+  buyServiceListing(user, id, data = {}) {
+    const listing = this.findListing(id);
+    if (!listing || listing.kind !== "service" || listing.status !== "active") {
+      return { ok: false, title: "買えません", lines: ["この出品は現在受付していません。"] };
+    }
+    if (listing.sellerId === user.id) return { ok: false, title: "自分の出品です", lines: ["自分の出品は購入できません。"] };
+    if (!this.listingCanAccept(listing)) return { ok: false, title: "受付上限", lines: ["この出品は受付上限に達しています。"] };
+    const sellerRef = this.state.users[listing.sellerId];
+    if ((sellerRef?.marketplace?.shopStatus || "open") === "closed") {
+      return { ok: false, title: "現在休止中", lines: ["この販売者は現在受付を休止しています。時間をおいてください。"] };
+    }
+    if (sellerRef?.marketplace?.leftGuildAt) {
+      return { ok: false, title: "買えません", lines: ["この販売者は現在サーバーにいないため、新規購入を停止しています。"] };
+    }
+    if (user.wallet < listing.price) {
+      const panel = this.insufficientBalancePanel({
+        itemName: listing.name,
+        needed: listing.price,
+        current: user.wallet,
+        backCommand: `marketplace listing ${listing.id}`
+      });
+      return {
+        ok: false,
+        title: panel.title,
+        lines: [`必要: ${fmt(listing.price)}`, `現在: ${fmt(user.wallet)}`, `不足: ${fmt(listing.price - user.wallet)}`],
+        panel
+      };
+    }
+
+    const seller = this.getUser(listing.sellerId, listing.sellerName);
+    const fee = Math.floor(listing.price * this.state.marketplace.settings.feeBps / 10000);
+    const request = cleanMarketText(data.request, MARKETPLACE_CONFIG.tradeRequestMaxLength) || null;
+
+    user.wallet -= listing.price;
+    user.lifetimeLost += listing.price;
+    this.consumeListingSlot(listing);
+    listing.sold += 1;
+
+    const order = {
+      id: this.state.marketplace.nextOrderId++,
+      flow: "trade",
+      listingId: listing.id,
+      itemName: listing.name,
+      buyerId: user.id,
+      buyerName: user.name,
+      sellerId: seller.id,
+      sellerName: seller.name,
+      price: listing.price,
+      fee,
+      payout: "held",
+      status: "ordered",
+      request,
+      createdAt: new Date().toISOString(),
+      acceptedAt: null,
+      deliveredAt: null,
+      completedAt: null,
+      reportedAt: null,
+      refundedAt: null,
+      cancelledAt: null,
+      autoCompleteAt: null,
+      autoCompleteWarnedAt: null,
+      reportReason: null,
+      threadId: null,
+      threadArchivedAt: null,
+      sellerDmNotifiedAt: null,
+      sellerDmFailedAt: null,
+      sellerSeenAt: null
+    };
+    this.state.marketplace.orders.push(order);
+    this.marketLog(`${user.name} が ${seller.name} の「${listing.name}」を購入しました（取引 #${order.id} / 代金 ${fmt(listing.price)} はIRIS預かり）。`);
+    return {
+      ok: true,
+      title: "購入しました（販売者の受注待ち）",
+      lines: [
+        `取引 #${order.id} ${listing.name}`,
+        `支払い ${fmt(listing.price)} / 残高 ${fmt(user.wallet)}`,
+        "代金は取引完了までIRISが預かります。",
+        request ? `依頼内容: ${request}` : null,
+        "進行状況は「自分の取引」から確認できます。"
+      ].filter(Boolean),
+      order,
+      trade: { orderId: order.id },
+      panel: this.tradeDetailPanel(user, order.id),
+      notifications: [
+        {
+          userId: seller.id,
+          event: "trade_ordered",
+          data: { orderId: order.id, listingId: listing.id, itemName: listing.name, buyerId: user.id, buyerName: user.name, price: listing.price, sellerReceive: listing.price - fee, request }
+        },
+        {
+          userId: user.id,
+          event: "trade_purchased",
+          data: { orderId: order.id, itemName: listing.name, sellerName: seller.name, price: listing.price }
+        }
+      ]
+    };
+  }
+
+  acceptTrade(user, id) {
+    const order = this.findTradeOrder(id);
+    if (!order || order.sellerId !== user.id) return { ok: false, title: "取引が見つかりません", lines: ["受注は販売者だけができます。"] };
+    if (order.status !== "ordered") return this.tradeTransitionError(user, order, "受注");
+    order.status = "accepted";
+    order.acceptedAt = new Date().toISOString();
+    this.marketLog(`取引 #${order.id} ${order.itemName} を ${user.name} が受注しました。`);
+    return {
+      ok: true,
+      title: "受注しました",
+      lines: [`取引 #${order.id} ${order.itemName} を受注しました。対応が終わったら「対応完了」を押してください。`],
+      panel: this.tradeDetailPanel(user, order.id),
+      notifications: [
+        { userId: order.buyerId, event: "trade_accepted", data: { orderId: order.id, itemName: order.itemName, sellerName: order.sellerName } }
+      ]
+    };
+  }
+
+  deliverTrade(user, id) {
+    const order = this.findTradeOrder(id);
+    if (!order || order.sellerId !== user.id) return { ok: false, title: "取引が見つかりません", lines: ["対応完了の報告は販売者だけができます。"] };
+    if (!["ordered", "accepted"].includes(order.status)) return this.tradeTransitionError(user, order, "対応完了");
+    const hours = this.state.marketplace.settings.tradeAutoCompleteHours;
+    order.status = "delivered";
+    order.deliveredAt = new Date().toISOString();
+    order.autoCompleteAt = new Date(this.now().getTime() + hours * 3600000).toISOString();
+    order.autoCompleteWarnedAt = null;
+    this.marketLog(`取引 #${order.id} ${order.itemName} の対応完了が報告されました。`);
+    return {
+      ok: true,
+      title: "対応完了を報告しました",
+      lines: [
+        `取引 #${order.id} ${order.itemName}`,
+        `購入者の受取確認をお待ちください。問題報告がなければ ${hours}時間後に自動で完了し、代金が支払われます。`
+      ],
+      panel: this.tradeDetailPanel(user, order.id),
+      notifications: [
+        { userId: order.buyerId, event: "trade_delivered", data: { orderId: order.id, itemName: order.itemName, sellerName: order.sellerName, autoCompleteAt: order.autoCompleteAt } }
+      ]
+    };
+  }
+
+  confirmTrade(user, id) {
+    const order = this.findTradeOrder(id);
+    if (!order || order.buyerId !== user.id) return { ok: false, title: "取引が見つかりません", lines: ["受取確認は購入者だけができます。"] };
+    if (!["ordered", "accepted", "delivered"].includes(order.status)) return this.tradeTransitionError(user, order, "受取確認");
+    order.status = "completed";
+    order.completedAt = new Date().toISOString();
+    const paid = this.releaseOrderPayout(order);
+    this.marketLog(`${user.name} が取引 #${order.id} ${order.itemName} の受取を確認しました。`);
+    return {
+      ok: true,
+      title: "受取確認",
+      lines: [
+        `取引 #${order.id} ${order.itemName} を完了にしました。`,
+        paid > 0 ? `預かっていた代金 ${fmt(paid)} を ${order.sellerName} に支払いました。` : null
+      ].filter(Boolean),
+      panel: this.tradeDetailPanel(user, order.id),
+      notifications: [
+        { userId: order.sellerId, event: "trade_completed", data: { orderId: order.id, itemName: order.itemName, buyerName: order.buyerName, paid, role: "seller" } }
+      ]
+    };
+  }
+
+  cancelTrade(user, id) {
+    const order = this.findTradeOrder(id);
+    if (!order || order.buyerId !== user.id) return { ok: false, title: "取引が見つかりません", lines: ["キャンセルは購入者だけができます。"] };
+    if (order.status !== "ordered") {
+      return { ok: false, title: "キャンセルできません", lines: ["販売者が受注する前の取引だけキャンセルできます。対応が始まっている場合は販売者か運営に相談してください。"], panel: this.tradeDetailPanel(user, order.id) };
+    }
+    this.refundTradeEscrow(order);
+    order.status = "cancelled";
+    order.cancelledAt = new Date().toISOString();
+    this.marketLog(`取引 #${order.id} ${order.itemName} が購入者によりキャンセルされました。`);
+    return {
+      ok: true,
+      title: "キャンセルしました",
+      lines: [`取引 #${order.id} ${order.itemName} をキャンセルし、${fmt(order.price)} を返金しました。`],
+      panel: this.tradeDetailPanel(user, order.id),
+      notifications: [
+        { userId: order.sellerId, event: "trade_cancelled", data: { orderId: order.id, itemName: order.itemName, buyerName: order.buyerName } }
+      ]
+    };
+  }
+
+  declineTrade(user, id) {
+    const order = this.findTradeOrder(id);
+    if (!order || order.sellerId !== user.id) return { ok: false, title: "取引が見つかりません", lines: ["辞退は販売者だけができます。"] };
+    if (!["ordered", "accepted", "reported"].includes(order.status)) return this.tradeTransitionError(user, order, "辞退・返金");
+    this.refundTradeEscrow(order);
+    order.status = "refunded";
+    order.refundedAt = new Date().toISOString();
+    order.refundedBy = user.id;
+    order.refundedByName = user.name;
+    this.marketLog(`取引 #${order.id} ${order.itemName} を販売者が辞退し、全額返金しました。`);
+    return {
+      ok: true,
+      title: "辞退・返金しました",
+      lines: [`取引 #${order.id} ${order.itemName} を辞退し、購入者に ${fmt(order.price)} を全額返金しました。`],
+      panel: this.tradeDetailPanel(user, order.id),
+      notifications: [
+        { userId: order.buyerId, event: "trade_refunded", data: { orderId: order.id, itemName: order.itemName, amount: order.price, by: "seller" } }
+      ]
+    };
+  }
+
+  reportTrade(user, id, reason = "") {
+    const order = this.findTradeOrder(id);
+    if (!order || (order.buyerId !== user.id && order.sellerId !== user.id)) {
+      return { ok: false, title: "取引が見つかりません", lines: ["関係者だけが報告できます。"] };
+    }
+    if (!["ordered", "accepted", "delivered"].includes(order.status)) return this.tradeTransitionError(user, order, "問題報告");
+    order.status = "reported";
+    order.reportedAt = new Date().toISOString();
+    order.reportReason = cleanMarketText(reason, 200) || order.reportReason || null;
+    this.marketLog(`取引 #${order.id} ${order.itemName} に問題報告（${user.name}）。自動完了を停止しました。`);
+    return {
+      ok: true,
+      title: "問題を報告しました",
+      lines: [`取引 #${order.id} を運営対応待ちにしました。自動完了は停止します。`],
+      panel: this.tradeDetailPanel(user, order.id),
+      notifications: [
+        {
+          userId: order.buyerId === user.id ? order.sellerId : order.buyerId,
+          event: "trade_reported",
+          data: { orderId: order.id, itemName: order.itemName, byName: user.name, reason: order.reportReason }
+        }
+      ]
+    };
+  }
+
+  // 二重返金を防ぐ: payout が held の時だけ購入者へ戻し、受付枠も一度だけ復元する
+  refundTradeEscrow(order) {
+    if (order.payout !== "held") return 0;
+    const buyer = this.getUser(order.buyerId, order.buyerName);
+    buyer.wallet += order.price;
+    buyer.lifetimeEarned += order.price;
+    order.payout = "cancelled";
+    this.restoreListingSlot(this.findListing(order.listingId));
+    return order.price;
+  }
+
+  // ---- 取引画面（購入者/販売者で操作を出し分ける。legacy注文も閲覧できる） ----
+
+  tradeDetailPanel(user, id) {
+    const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
+    if (!order) return this.myTradesPanel(user);
+    const isBuyer = order.buyerId === user.id;
+    const isSeller = order.sellerId === user.id;
+    if (!isBuyer && !isSeller) return this.myTradesPanel(user);
+    const isTrade = order.flow === "trade";
+    const sellerReceive = Math.max(0, order.price - (order.fee || 0));
+
+    const fields = [
+      { name: "商品・サービス", value: order.itemName, inline: true },
+      { name: "金額", value: `${fmt(order.price)}\n（手数料差引後 ${fmt(sellerReceive)} を販売者へ）`, inline: true },
+      { name: "状態", value: orderStatusLabel(order.status), inline: true },
+      { name: "販売者", value: order.sellerName, inline: true },
+      { name: "購入者", value: order.buyerName, inline: true },
+      { name: "代金", value: order.payout === "held" ? "IRIS預かり中" : order.payout === "cancelled" ? "返金済み" : "販売者へ支払い済み", inline: true }
+    ];
+    if (order.request) fields.push({ name: "依頼内容", value: order.request, inline: false });
+    if (isTrade && order.status === "delivered" && order.autoCompleteAt) {
+      fields.push({ name: "自動完了", value: `${shortDate(order.autoCompleteAt)} までに問題報告がなければ自動で完了します。`, inline: false });
+    }
+    if (order.reportReason) fields.push({ name: "報告内容", value: order.reportReason, inline: false });
+
+    const actions = [];
+    if (isTrade) {
+      if (isSeller && order.status === "ordered") {
+        actions.push(runButton("受注する", `marketplace trade-accept ${order.id}`, "success"));
+        actions.push(runButton("対応できない・返金", `marketplace trade-decline ${order.id}`, "danger"));
+      }
+      if (isSeller && order.status === "accepted") {
+        actions.push(runButton("対応完了", `marketplace trade-deliver ${order.id}`, "primary"));
+        actions.push(runButton("対応できない・返金", `marketplace trade-decline ${order.id}`, "danger"));
+      }
+      if (isBuyer && order.status === "ordered") {
+        actions.push(runButton("キャンセル", `marketplace trade-cancel ${order.id}`, "danger"));
+      }
+      if (isBuyer && order.status === "delivered") {
+        actions.push(runButton("受取確認", `marketplace trade-confirm ${order.id}`, "success"));
+      }
+      if (["ordered", "accepted", "delivered"].includes(order.status)) {
+        actions.push(customButton("問題を報告", `eco:market:trade-report:${order.id}`, "secondary"));
+      }
+    } else if (isBuyer && ["open", "reported"].includes(order.status)) {
+      actions.push(runButton("受け取り確認", `marketplace complete-order ${order.id}`, "success"));
+      if (order.status === "open") actions.push(runButton("問題を報告", `marketplace report-order ${order.id}`, "danger"));
+    }
+
+    const components = [];
+    if (actions.length) components.push(buttons(actions.slice(0, 5)));
+    components.push(buttons([
+      panelButton("自分の取引", "my-trades"),
+      panelButton("ショップ", "marketplace")
+    ]));
+
+    return {
+      title: `取引 #${order.id} ${order.itemName}`.slice(0, 256),
+      description: isTrade
+        ? "民営取引です。代金は取引完了までIRISが預かり、購入者の受取確認（または自動完了）で販売者へ支払われます。"
+        : "旧方式の民営取引です。",
+      color: order.status === "reported" ? 0xef4444 : TRADE_ACTIVE_STATUSES.has(order.status) || order.status === "open" ? 0x0ea5e9 : 0x475569,
+      fields,
+      components
+    };
+  }
+
+  myTradesPanel(user, tabRaw = "buy", pageRaw = 1) {
+    const tab = ["sell", "販売"].includes(String(tabRaw || "").toLowerCase()) ? "sell" : "buy";
+    const orders = (tab === "buy" ? this.userOrders(user.id) : this.sellerOrders(user.id))
+      .filter((order) => order.sellerId !== "official" || tab === "buy");
+    const isActive = (order) => TRADE_ACTIVE_STATUSES.has(order.status) || ["open", "reported"].includes(order.status);
+    const sorted = [...orders].sort((a, b) => {
+      const activeDiff = Number(isActive(b)) - Number(isActive(a));
+      if (activeDiff !== 0) return activeDiff;
+      return Number(b.id) - Number(a.id);
+    });
+    const { page, pageCount, slice } = paginate(sorted, pageRaw, 6);
+    const activeCount = orders.filter(isActive).length;
+
+    const components = [];
+    if (slice.length) {
+      components.push(select("取引を開く", slice.map((order) =>
+        option(`#${order.id} ${order.itemName}`.slice(0, 90), `run:marketplace trade ${order.id}`,
+          `${tab === "buy" ? order.sellerName : order.buyerName} / ${orderStatusLabel(order.status)} / ${fmt(order.price)}`.slice(0, 100)))));
+    }
+    components.push(buttons([
+      runButton("購入した取引", "marketplace my-trades buy", tab === "buy" ? "primary" : "secondary"),
+      runButton("販売した取引", "marketplace my-trades sell", tab === "sell" ? "primary" : "secondary"),
+      panelButton("ショップ", "marketplace")
+    ]));
+    if (pageCount > 1) {
+      components.push(buttons([
+        runButton("前へ", `marketplace my-trades ${tab} ${Math.max(1, page - 1)}`, "secondary", page <= 1),
+        runButton("次へ", `marketplace my-trades ${tab} ${Math.min(pageCount, page + 1)}`, "secondary", page >= pageCount)
+      ]));
+    }
+
+    return {
+      title: `自分の取引（${tab === "buy" ? "購入" : "販売"}）`,
+      description: orders.length
+        ? `対応中 ${activeCount}件 / 全 ${orders.length}件${pageCount > 1 ? ` / ページ ${page}/${pageCount}` : ""}`
+        : "まだ取引はありません。",
+      color: 0x0ea5e9,
+      fields: slice.map((order) => ({
+        name: `#${order.id} ${order.itemName}`.slice(0, 256),
+        value: `${orderStatusLabel(order.status)} / ${fmt(order.price)} / ${tab === "buy" ? `販売者 ${order.sellerName}` : `購入者 ${order.buyerName}`}${order.payout === "held" ? " / 代金預かり中" : ""}`,
+        inline: false
+      })),
+      components
+    };
+  }
+
+  tradeTransitionError(user, order, actionLabel) {
+    return {
+      ok: false,
+      title: `${actionLabel}できません`,
+      lines: [`取引 #${order.id} は現在「${orderStatusLabel(order.status)}」のため、この操作はできません。`],
+      panel: this.tradeDetailPanel(user, order.id)
+    };
+  }
+
+  // delivered 後の自動完了。絶対時刻（autoCompleteAt）で判定するため再起動後も継続できる。
+  sweepTradeAutoCompletion() {
+    const settings = this.state.marketplace.settings;
+    const now = this.now().getTime();
+    const notifications = [];
+    const completed = [];
+    const warned = [];
+    for (const order of this.state.marketplace.orders) {
+      if (order.flow !== "trade" || order.status !== "delivered") continue;
+      const dueAt = new Date(order.autoCompleteAt || 0).getTime();
+      if (!Number.isFinite(dueAt) || dueAt <= 0) continue;
+      if (dueAt <= now) {
+        order.status = "completed";
+        order.completedAt = new Date(now).toISOString();
+        order.autoCompletedAt = order.completedAt;
+        const paid = this.releaseOrderPayout(order);
+        completed.push(order);
+        notifications.push({ userId: order.buyerId, event: "trade_auto_completed", data: { orderId: order.id, itemName: order.itemName, role: "buyer" } });
+        notifications.push({ userId: order.sellerId, event: "trade_completed", data: { orderId: order.id, itemName: order.itemName, buyerName: order.buyerName, paid, role: "seller", auto: true } });
+        this.marketLog(`取引 #${order.id} ${order.itemName} を自動完了しました。`);
+        continue;
+      }
+      const warnAt = dueAt - settings.tradeAutoCompleteWarnHours * 3600000;
+      if (warnAt <= now && !order.autoCompleteWarnedAt) {
+        order.autoCompleteWarnedAt = new Date(now).toISOString();
+        warned.push(order);
+        notifications.push({
+          userId: order.buyerId,
+          event: "trade_autocomplete_warning",
+          data: { orderId: order.id, itemName: order.itemName, autoCompleteAt: order.autoCompleteAt }
+        });
+      }
+    }
+    return { changed: completed.length > 0 || warned.length > 0, completed, warned, notifications };
   }
 
   setSalesDmEnabled(user, enabled = null) {
@@ -3895,6 +4461,8 @@ class EconomyEngine {
 
   buyUserListing(user, id) {
     const listing = this.findListing(id);
+    // 新方式の出品は統一取引フロー（エスクロー + 状態機械）で処理する
+    if (listing?.kind === "service") return this.buyServiceListing(user, id, {});
     if (!listing || listing.status !== "active") return { ok: false, title: "買えません", lines: ["この商品は現在販売されていません。"] };
     if (listing.type === "role") return { ok: false, title: "買えません", lines: ["ロール商品は民営での取り扱いを終了しました。公式ショップ・公式オークションをご利用ください。"] };
     if (listing.sellerId === user.id) return { ok: false, title: "自分の商品です", lines: ["自分の商品は購入できません。"] };
@@ -4028,6 +4596,7 @@ class EconomyEngine {
     listing.reviewedAt = new Date().toISOString();
     listing.reviewedBy = adminUser.id;
     listing.reviewedByName = adminUser.name;
+    this.markListingPublished(listing);
     this.marketLog(`${adminUser.name} が #${listing.id} ${listing.name} を承認しました。`);
     return {
       ok: true,
@@ -4098,6 +4667,7 @@ class EconomyEngine {
 
   completeOrder(user, id) {
     const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
+    if (order?.flow === "trade") return this.confirmTrade(user, id);
     if (!order || order.buyerId !== user.id) {
       return { ok: false, title: "取引が見つかりません", lines: ["受け取り確認（完了報告）は購入者だけができます。"] };
     }
@@ -4125,6 +4695,7 @@ class EconomyEngine {
 
   reportOrder(user, id) {
     const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
+    if (order?.flow === "trade") return this.reportTrade(user, id);
     if (!order || (order.sellerId !== user.id && order.buyerId !== user.id)) {
       return { ok: false, title: "取引が見つかりません", lines: ["関係者だけが報告できます。"] };
     }
@@ -4140,9 +4711,10 @@ class EconomyEngine {
   adminCompleteOrder(adminUser, id) {
     const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
     if (!order) return { ok: false, title: "取引が見つかりません", lines: [`#${id} は台帳に載っていません。`] };
-    if (order.status === "complete") return { ok: false, title: "既に完了", lines: [`#${order.id} はすでに完了しています。`] };
+    if (["complete", "completed"].includes(order.status)) return { ok: false, title: "既に完了", lines: [`#${order.id} はすでに完了しています。`] };
     if (order.status === "refunded") return { ok: false, title: "返金済み", lines: [`#${order.id} は返金済みのため完了にできません。`] };
-    order.status = "complete";
+    if (order.status === "cancelled") return { ok: false, title: "キャンセル済み", lines: [`#${order.id} はキャンセル済みのため完了にできません。`] };
+    order.status = order.flow === "trade" ? "completed" : "complete";
     order.completedAt = new Date().toISOString();
     order.completedBy = adminUser.id;
     order.completedByName = adminUser.name;
@@ -4172,6 +4744,7 @@ class EconomyEngine {
     const order = this.state.marketplace.orders.find((entry) => String(entry.id) === String(id));
     if (!order) return { ok: false, title: "取引が見つかりません", lines: [`#${id} は台帳に載っていません。`] };
     if (order.status === "refunded") return { ok: false, title: "返金済み", lines: [`#${order.id} はすでに返金済みです。`] };
+    if (order.status === "cancelled") return { ok: false, title: "キャンセル済み", lines: [`#${order.id} はキャンセル時に返金済みです。`] };
 
     const buyer = this.getUser(order.buyerId, order.buyerName);
     buyer.wallet += order.price;
@@ -4201,9 +4774,8 @@ class EconomyEngine {
 
       const listing = this.findListing(order.listingId);
       if (listing) {
-        listing.stock = (listing.stock || 0) + 1;
+        this.restoreListingSlot(listing);
         listing.sold = Math.max(0, (listing.sold || 0) - 1);
-        if (listing.status === "soldout" && listing.stock > 0) listing.status = "active";
       }
       notifications.push({
         userId: order.sellerId,
@@ -5865,8 +6437,11 @@ function migrateState(state) {
   next.currency = CURRENCY;
   next.marketplace = { ...base.marketplace, ...(next.marketplace || {}) };
   next.marketplace.shops = { ...base.marketplace.shops, ...(next.marketplace.shops || {}) };
-  next.marketplace.listings = Array.isArray(next.marketplace.listings) ? next.marketplace.listings : [];
+  next.marketplace.listings = Array.isArray(next.marketplace.listings) ? next.marketplace.listings.map(migrateUserListing) : [];
   next.marketplace.orders = Array.isArray(next.marketplace.orders) ? next.marketplace.orders.map(migrateMarketplaceOrder) : [];
+  next.marketplace.reports = Array.isArray(next.marketplace.reports) ? next.marketplace.reports.map(migrateListingReport) : [];
+  next.marketplace.nextReportId = Math.max(1, Number(next.marketplace.nextReportId) || 1,
+    ...next.marketplace.reports.map((report) => Number(report.id) + 1 || 1));
   next.marketplace.auctions = Array.isArray(next.marketplace.auctions) ? next.marketplace.auctions : [];
   next.marketplace.officialItems = Object.fromEntries(
     Object.entries(next.marketplace.officialItems || {}).map(([id, item]) => [id, migrateOfficialItem(item, id)])
@@ -5883,6 +6458,14 @@ function migrateState(state) {
   next.marketplace.settings = { ...base.marketplace.settings, ...(next.marketplace.settings || {}) };
   next.marketplace.settings.officialPurchaseLogChannelId = isDiscordSnowflake(next.marketplace.settings.officialPurchaseLogChannelId)
     ? String(next.marketplace.settings.officialPurchaseLogChannelId)
+    : null;
+  next.marketplace.settings.tradeAutoCompleteHours = clamp(Math.floor(Number(next.marketplace.settings.tradeAutoCompleteHours) || MARKETPLACE_CONFIG.tradeAutoCompleteHours), 1, 24 * 30);
+  next.marketplace.settings.tradeAutoCompleteWarnHours = clamp(Math.floor(Number(next.marketplace.settings.tradeAutoCompleteWarnHours) || MARKETPLACE_CONFIG.tradeAutoCompleteWarnHours), 1, 24 * 30);
+  next.marketplace.settings.marketForumChannelId = isDiscordSnowflake(next.marketplace.settings.marketForumChannelId)
+    ? String(next.marketplace.settings.marketForumChannelId)
+    : null;
+  next.marketplace.settings.tradeChannelId = isDiscordSnowflake(next.marketplace.settings.tradeChannelId)
+    ? String(next.marketplace.settings.tradeChannelId)
     : null;
   next.marketplace.nextListingId = Math.max(1, Number(next.marketplace.nextListingId) || 1);
   next.marketplace.nextOrderId = Math.max(1, Number(next.marketplace.nextOrderId) || 1);
@@ -5920,6 +6503,13 @@ function migrateState(state) {
   next.inn.nextId = Math.max(1, Number(next.inn.nextId) || 1);
   next.ledger = Array.isArray(next.ledger) ? next.ledger : [];
   next.users = Object.fromEntries(Object.entries(next.users || {}).map(([id, user]) => [id, migrateUser(user)]));
+  // 既存販売者は「初回出品審査」を再度受けさせない: 公開実績のある出品が1件でもあれば初回済み扱い
+  for (const listing of next.marketplace.listings) {
+    if (["active", "soldout", "stopped"].includes(listing.status)) {
+      const seller = next.users[listing.sellerId];
+      if (seller?.marketplace) seller.marketplace.firstListingPublished = true;
+    }
+  }
   delete next.market;
   delete next.policy;
   delete next.sink;
@@ -6058,12 +6648,67 @@ function migrateBoostRewardPayment(entry = {}, id = "") {
   };
 }
 
-function migrateMarketplaceOrder(order = {}) {
+// 出品の互換読み込み。legacy出品（type/mode/manual付き）はフィールドを保持したまま起動できる。
+// 新方式（kind: "service"）は stock: null=無制限 / 正整数=残り受付数 として扱う。
+function migrateUserListing(listing = {}) {
+  const kind = listing.kind === "service" ? "service" : null;
+  const stock = kind
+    ? (listing.stock === null || listing.stock === undefined ? null : clamp(Math.floor(Number(listing.stock) || 0), 0, MARKETPLACE_CONFIG.listingLimitMax))
+    : (listing.stock === null || listing.stock === undefined ? 0 : Math.max(0, Math.floor(Number(listing.stock) || 0)));
   return {
+    ...listing,
+    kind,
+    category: kind ? (MARKET_CATEGORIES[listing.category] ? listing.category : "other") : (listing.category || null),
+    stock,
+    sold: Math.max(0, Math.floor(Number(listing.sold) || 0)),
+    stoppedReason: listing.stoppedReason || null,
+    forumThreadId: isDiscordSnowflake(listing.forumThreadId) ? String(listing.forumThreadId) : null,
+    forumPanelMessageId: isDiscordSnowflake(listing.forumPanelMessageId) ? String(listing.forumPanelMessageId) : null
+  };
+}
+
+function migrateMarketplaceOrder(order = {}) {
+  const flow = order.flow === "trade" ? "trade" : null;
+  const migrated = {
     ...order,
+    flow,
     sellerDmNotifiedAt: validDateIso(order.sellerDmNotifiedAt),
     sellerDmFailedAt: validDateIso(order.sellerDmFailedAt),
     sellerSeenAt: validDateIso(order.sellerSeenAt)
+  };
+  if (flow === "trade") {
+    migrated.status = TRADE_STATUSES.has(order.status) ? order.status : "reported";
+    migrated.request = cleanMarketText(order.request, MARKETPLACE_CONFIG.tradeRequestMaxLength) || null;
+    migrated.acceptedAt = validDateIso(order.acceptedAt);
+    migrated.deliveredAt = validDateIso(order.deliveredAt);
+    migrated.completedAt = validDateIso(order.completedAt);
+    migrated.reportedAt = validDateIso(order.reportedAt);
+    migrated.refundedAt = validDateIso(order.refundedAt);
+    migrated.cancelledAt = validDateIso(order.cancelledAt);
+    migrated.autoCompleteAt = validDateIso(order.autoCompleteAt);
+    migrated.autoCompleteWarnedAt = validDateIso(order.autoCompleteWarnedAt);
+    migrated.reportReason = cleanMarketText(order.reportReason, 200) || null;
+    migrated.threadId = isDiscordSnowflake(order.threadId) ? String(order.threadId) : null;
+    migrated.threadArchivedAt = validDateIso(order.threadArchivedAt);
+  }
+  return migrated;
+}
+
+function migrateListingReport(report = {}) {
+  return {
+    id: Math.max(1, Math.floor(Number(report.id) || 1)),
+    listingId: report.listingId ?? null,
+    listingName: cleanMarketText(report.listingName, 48) || "出品",
+    sellerId: report.sellerId || null,
+    sellerName: cleanMarketText(report.sellerName, 80) || "販売者",
+    reporterId: report.reporterId || null,
+    reporterName: cleanMarketText(report.reporterName, 80) || "報告者",
+    reason: cleanMarketText(report.reason, 200) || "（理由記入なし）",
+    at: validDateIso(report.at) || new Date(0).toISOString(),
+    status: report.status === "resolved" ? "resolved" : "open",
+    resolution: cleanMarketText(report.resolution, 120) || null,
+    resolvedBy: report.resolvedBy || null,
+    resolvedAt: validDateIso(report.resolvedAt)
   };
 }
 
@@ -6321,10 +6966,33 @@ function listingStatusLabel(status) {
 function orderStatusLabel(status) {
   if (status === "open") return "対応待ち";
   if (status === "complete") return "完了";
+  if (status === "ordered") return "受注待ち";
+  if (status === "accepted") return "対応中";
+  if (status === "delivered") return "受取確認待ち";
+  if (status === "completed") return "完了";
+  if (status === "cancelled") return "キャンセル";
   if (status === "reported") return "問題報告あり";
   if (status === "refunded") return "返金済み";
   if (status === "expired") return "期限切れ";
   return status || "不明";
+}
+
+// ページ送り: page は 1 始まり。範囲外は最寄りの有効ページへ丸め、古いメッセージからの操作でも壊れない。
+function paginate(items, pageRaw, perPage) {
+  const list = Array.isArray(items) ? items : [];
+  const pageCount = Math.max(1, Math.ceil(list.length / perPage));
+  const parsed = Math.floor(Number(pageRaw));
+  const page = Math.min(pageCount, Math.max(1, Number.isFinite(parsed) ? parsed : 1));
+  return { page, pageCount, slice: list.slice((page - 1) * perPage, page * perPage), total: list.length };
+}
+
+// 受付上限の入力を正規化する。空欄・「無制限」= null、1〜上限の整数、それ以外は false（エラー）
+function normalizeListingLimit(value) {
+  const text = String(value ?? "").trim();
+  if (!text || ["無制限", "unlimited", "none", "-"].includes(text.toLowerCase())) return null;
+  const parsed = parsePositiveInt(text);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > MARKETPLACE_CONFIG.listingLimitMax) return false;
+  return parsed;
 }
 
 function officialItemStatusLabel(status) {
