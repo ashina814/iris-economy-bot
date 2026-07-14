@@ -157,6 +157,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   await ensureRankPanel();
   startVoiceRewardSweeper();
   startMarketSweeper();
+  startTradeSweeper();
   startOfficialRoleExpirySweeper();
   startBoostRewardSweeper();
   startYadoSweeper();
@@ -236,6 +237,22 @@ async function handleInteraction(interaction) {
       await handleBalanceRoleAmountModal(interaction);
       return;
     }
+    if (interaction.customId.startsWith("eco:modal:trade-buy:")) {
+      await handleTradeBuyModal(interaction);
+      return;
+    }
+    if (interaction.customId.startsWith("eco:modal:forum-sell:")) {
+      await handleForumSellModal(interaction);
+      return;
+    }
+    if (interaction.customId.startsWith("eco:modal:trade-report:")) {
+      await handleTradeReportModal(interaction);
+      return;
+    }
+    if (interaction.customId.startsWith("eco:modal:listing-report:")) {
+      await handleListingReportModal(interaction);
+      return;
+    }
     if (interaction.customId === "eco:modal:shop-search") {
       await handleShopSearchModal(interaction);
       return;
@@ -295,6 +312,10 @@ async function handleInteraction(interaction) {
       await handleVcXpLocationChannelSelect(interaction);
       return;
     }
+    if (["eco:channel:market-forum", "eco:channel:trade-channel"].includes(interaction.customId)) {
+      await handleMarketChannelSelect(interaction);
+      return;
+    }
     return;
   }
 
@@ -321,6 +342,30 @@ async function handleInteraction(interaction) {
     }
     if (interaction.isButton() && interaction.customId.startsWith("eco:market:auction-bid:")) {
       await showMarketAuctionBidModal(interaction, interaction.customId.split(":")[3]);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:trade-buy:")) {
+      await showTradeBuyModal(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:trade-report:")) {
+      await showTradeReportModal(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:listing-report:")) {
+      await showListingReportModal(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:forum-sell:")) {
+      await showForumSellModal(interaction);
+      return;
+    }
+    if (interaction.isButton() && ["eco:market:forum-clear", "eco:market:trade-channel-clear"].includes(interaction.customId)) {
+      await handleMarketChannelClear(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId === "eco:market:post-street-panel") {
+      await postStreetPanel(interaction);
       return;
     }
     if (interaction.isButton() && interaction.customId === "eco:market:official-item-create") {
@@ -461,6 +506,9 @@ async function handleInteraction(interaction) {
     store.save(engine.state);
     await updateDiscord(interaction, result);
     void processOfficialPurchaseEffects(interaction, result);
+    if (result?.tradeUpdate) {
+      await postTradeThreadUpdate(result.tradeUpdate.orderId).catch((error) => console.warn(`取引スレッド更新に失敗しました: ${error.message}`));
+    }
     return;
   }
 
@@ -489,6 +537,9 @@ async function handleInteraction(interaction) {
 
   await replyDiscord(interaction, result, { ephemeral: slash.ephemeral });
   void processOfficialPurchaseEffects(interaction, result);
+  if (result?.tradeUpdate) {
+    await postTradeThreadUpdate(result.tradeUpdate.orderId).catch((error) => console.warn(`取引スレッド更新に失敗しました: ${error.message}`));
+  }
 }
 
 async function replyInteractionError(interaction) {
@@ -535,6 +586,9 @@ client.on(Events.MessageCreate, async (message) => {
   store.save(engine.state);
   await sendResult(message.channel, result);
   await notifyOfficialPurchase(result);
+  if (result?.tradeUpdate) {
+    await postTradeThreadUpdate(result.tradeUpdate.orderId).catch((error) => console.warn(`取引スレッド更新に失敗しました: ${error.message}`));
+  }
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
@@ -577,6 +631,8 @@ client.on(Events.GuildMemberAdd, async (member) => {
   if (member.user.bot) return;
   syncGuildMember(member);
   await handleBoostMemberState(member, "member-add");
+  // 復帰した販売者の新規購入ブロックを解除する（出品自体は本人の再開操作まで停止のまま）
+  engine.recordSellerReturn(actorFromMember(member));
   const used = await detectUsedInvite(member.guild);
   const result = used?.inviter
     ? engine.recordInviteJoin(
@@ -608,6 +664,8 @@ client.on(Events.GuildMemberRemove, async (member) => {
   removeGuildMember(member);
   recordBoostMemberLeft(member);
   engine.recordInviteLeave(actorFromMember(member));
+  // 販売者の退出: 出品を新規購入不可にする（進行中の取引は運営対応可能なまま残す）
+  engine.pauseSellerListingsOnLeave(actorFromMember(member));
   store.save(engine.state);
 });
 
@@ -785,6 +843,9 @@ function canRunCommand(context, command) {
     normalized.startsWith("marketplace auction-end") ||
     normalized.startsWith("marketplace review") ||
     normalized.startsWith("marketplace order") ||
+    normalized.startsWith("marketplace report-queue") ||
+    normalized.startsWith("marketplace report-detail") ||
+    normalized.startsWith("marketplace report-resolve") ||
     normalized.startsWith("marketplace official-manage") ||
     normalized.startsWith("marketplace official-fulfillment") ||
     normalized === "panel market-admin" ||
@@ -1003,11 +1064,13 @@ async function deliverNotifications(notifications) {
 async function deliverOne(note) {
   const userRec = engine.state.users?.[note.userId];
   const enabled = Boolean(userRec?.notifyEnabled);
-  const sellerSaleDm = note.event === "listing_sold" && userRec?.marketplace?.salesDmEnabled !== false;
+  const sellerSaleDm = ["listing_sold", "trade_ordered"].includes(note.event) && userRec?.marketplace?.salesDmEnabled !== false;
+  // 取引の進行通知は金銭が絡むため、通知設定OFFでもDMを試みる（拒否時はログチャンネルへ）
+  const transactional = String(note.event || "").startsWith("trade_") && note.event !== "trade_ordered";
   const embed = buildNotificationEmbed(note);
   if (!embed) return { stateChanged: false };
   let stateChanged = false;
-  if (enabled || sellerSaleDm) {
+  if (enabled || sellerSaleDm || transactional) {
     const discordId = extractDiscordUserId(note.userId);
     if (discordId) {
       try {
@@ -1090,6 +1153,67 @@ function buildNotificationEmbed(note) {
         .setTitle("◆ 落札しました")
         .setColor(0x22c55e)
         .setDescription(`#${data.auctionId} **${data.name}** を ${fmt(data.winningBid)} で落札しました。持ち物に付与済み。`);
+    case "trade_ordered":
+      return embed
+        .setTitle("◆ 出品が購入されました（受注待ち）")
+        .setColor(0x0ea5e9)
+        .setDescription(`**${data.itemName}** が購入されました。「自分の取引」または取引スレッドから受注してください。`)
+        .addFields(
+          { name: "取引ID", value: `#${data.orderId}`, inline: true },
+          { name: "購入者", value: extractDiscordUserId(data.buyerId) ? `<@${extractDiscordUserId(data.buyerId)}>` : data.buyerName || "-", inline: true },
+          { name: "金額", value: `${fmt(data.price || 0)}（手数料差引後 ${fmt(data.sellerReceive || 0)}）`, inline: true },
+          { name: "依頼内容", value: data.request || "（記入なし）", inline: false },
+          { name: "代金", value: "取引完了までIRISが預かります。", inline: false }
+        );
+    case "trade_purchased":
+      return embed
+        .setTitle("◆ 購入しました（販売者の受注待ち）")
+        .setColor(0x0ea5e9)
+        .setDescription(`**${data.itemName}** を ${data.sellerName} から購入しました。（${fmt(data.price || 0)} / 取引 #${data.orderId}）`)
+        .addFields({ name: "代金", value: "取引完了までIRISが預かります。進行状況は「自分の取引」から確認できます。", inline: false });
+    case "trade_accepted":
+      return embed
+        .setTitle("◆ 販売者が受注しました")
+        .setColor(0x0ea5e9)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** を ${data.sellerName} が受注し、対応中になりました。`);
+    case "trade_delivered":
+      return embed
+        .setTitle("◆ 販売者が対応完了を報告しました")
+        .setColor(0x22c55e)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** の対応完了が報告されました。内容を確認して「受取確認」を押してください。`)
+        .addFields({ name: "自動完了", value: data.autoCompleteAt ? `問題報告がなければ ${new Date(data.autoCompleteAt).toLocaleString("ja-JP")} に自動で完了します。` : "-", inline: false });
+    case "trade_autocomplete_warning":
+      return embed
+        .setTitle("◇ まもなく自動完了します")
+        .setColor(0xf59e0b)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** は ${data.autoCompleteAt ? new Date(data.autoCompleteAt).toLocaleString("ja-JP") : "まもなく"} に自動完了し、代金が販売者へ支払われます。`)
+        .addFields({ name: "問題がある場合", value: "「自分の取引」から問題を報告すると自動完了を止められます。", inline: false });
+    case "trade_completed":
+      return embed
+        .setTitle("◆ 取引が完了しました")
+        .setColor(0x22c55e)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** が完了しました。${data.role === "seller" ? `代金 ${fmt(data.paid || 0)} を受け取りました。` : ""}${data.auto ? "（自動完了）" : ""}`);
+    case "trade_auto_completed":
+      return embed
+        .setTitle("◆ 取引が自動完了しました")
+        .setColor(0x22c55e)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** は期限内に問題報告がなかったため自動完了し、代金を販売者へ支払いました。`);
+    case "trade_cancelled":
+      return embed
+        .setTitle("◇ 取引がキャンセルされました")
+        .setColor(0x64748b)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** が購入者によりキャンセルされました（受注前のため全額返金済み）。`);
+    case "trade_refunded":
+      return embed
+        .setTitle("◇ 取引が返金されました")
+        .setColor(0xf59e0b)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}**（${fmt(data.amount || 0)}）が返金されました。${data.by === "seller" ? "販売者が対応できないため辞退しました。" : ""}`);
+    case "trade_reported":
+      return embed
+        .setTitle("◇ 取引に問題報告が入りました")
+        .setColor(0xef4444)
+        .setDescription(`取引 #${data.orderId} **${data.itemName}** に ${data.byName} さんから問題報告が入りました。運営が確認します。`)
+        .addFields({ name: "内容", value: data.reason || "（記入なし）", inline: false });
     case "order_admin_completed":
       return embed
         .setTitle("◆ 取引が完了扱いになりました")
@@ -1250,21 +1374,14 @@ async function updateMarketShopFromModal(interaction) {
 }
 
 async function showMarketListingModal(interaction) {
-  const actor = actorFromInteraction(interaction);
-  const user = engine.getUser(actor.id, actor.name);
-  if (!user.marketplace?.shopOpened) {
-    await interaction.reply({ content: "先に「店を開く」を押してください。", ephemeral: true });
-    return;
-  }
-  const draft = user.marketplace?.listingDraft || {};
   const modal = new ModalBuilder()
     .setCustomId("eco:modal:market-listing-create")
-    .setTitle(`出品内容 ${draft.mode === "timed" ? "期間制" : "買い切り"}`);
+    .setTitle("出品内容");
   modal.addComponents(
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
         .setCustomId("name")
-        .setLabel("商品名")
+        .setLabel("商品・サービス名")
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
         .setMaxLength(48)
@@ -1279,20 +1396,12 @@ async function showMarketListingModal(interaction) {
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
-        .setCustomId("stock")
-        .setLabel("在庫")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(3)
-        .setValue("1")
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId("duration")
-        .setLabel("期間（日数、買い切りなら空欄）")
+        .setCustomId("limit")
+        .setLabel("受付上限（空欄で無制限）")
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
-        .setMaxLength(4)
+        .setMaxLength(3)
+        .setPlaceholder("例: 3")
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
@@ -1300,7 +1409,8 @@ async function showMarketListingModal(interaction) {
         .setLabel("説明")
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(false)
-        .setMaxLength(240)
+        .setMaxLength(400)
+        .setPlaceholder("内容、対応できる時間帯、注意事項など")
     )
   );
   await interaction.showModal(modal);
@@ -1310,17 +1420,352 @@ async function createMarketListingFromModal(interaction) {
   const actor = actorFromInteraction(interaction);
   const user = engine.getUser(actor.id, actor.name);
   const draft = user.marketplace?.listingDraft || {};
-  const result = engine.createUserListing(user, {
+  const result = engine.createServiceListing(user, {
     name: interaction.fields.getTextInputValue("name"),
     price: interaction.fields.getTextInputValue("price"),
-    stock: interaction.fields.getTextInputValue("stock"),
-    durationDays: interaction.fields.getTextInputValue("duration"),
+    limit: interaction.fields.getTextInputValue("limit"),
     description: interaction.fields.getTextInputValue("description"),
-    type: draft.type,
-    mode: draft.mode
+    category: draft.category
   });
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleMarketChannelSelect(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const channelId = interaction.values?.[0];
+  const actor = actorFromInteraction(interaction);
+  const adminUser = engine.getUser(actor.id, actor.name);
+  const result = interaction.customId === "eco:channel:market-forum"
+    ? engine.setMarketForumChannel(adminUser, channelId)
+    : engine.setTradeChannel(adminUser, channelId);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleMarketChannelClear(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const actor = actorFromInteraction(interaction);
+  const adminUser = engine.getUser(actor.id, actor.name);
+  const result = interaction.customId === "eco:market:forum-clear"
+    ? engine.setMarketForumChannel(adminUser, null)
+    : engine.setTradeChannel(adminUser, null);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function postStreetPanel(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  if (!interaction.channel?.isTextBased?.()) {
+    await interaction.reply({ content: "テキストチャンネルで使ってください。", ephemeral: true });
+    return;
+  }
+  const panel = engine.marketEntrancePanel();
+  const result = { ok: true, title: panel.title, lines: [], panel };
+  const embed = buildEmbed(result);
+  const components = buildComponents(result);
+  await interaction.channel.send({ embeds: embed ? [embed] : [], components });
+  await interaction.reply({ content: "このチャンネルにIRIS商店街入口を送信しました。", ephemeral: true });
+}
+
+// ---- 商店街フォーラム連携 ----
+
+function marketForumChannelId() {
+  return engine.state.marketplace.settings.marketForumChannelId || null;
+}
+
+async function showForumSellModal(interaction) {
+  const threadId = interaction.customId.split(":")[3];
+  const thread = interaction.channel;
+  if (!thread?.isThread?.() || thread.id !== threadId || thread.parentId !== marketForumChannelId()) {
+    await interaction.reply({ content: "この投稿では販売設定できません。", ephemeral: true });
+    return;
+  }
+  if (thread.ownerId && thread.ownerId !== interaction.user.id && !isAdmin(interaction)) {
+    await interaction.reply({ content: "販売設定ができるのは投稿の作成者だけです。", ephemeral: true });
+    return;
+  }
+  const categoryList = "voice=通話 / game=ゲーム / creative=制作 / consultation=相談 / fun=ネタ / other=その他";
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:forum-sell:${threadId}`)
+    .setTitle("この投稿をIRISで販売する");
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("price")
+        .setLabel("価格（Ris）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(12)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("limit")
+        .setLabel("受付上限（空欄で無制限）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(3)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("category")
+        .setLabel(`カテゴリ（${categoryList}）`.slice(0, 45))
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(20)
+        .setPlaceholder("voice / game / creative / consultation / fun / other")
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+function normalizeForumCategoryInput(raw) {
+  const text = String(raw || "").trim().toLowerCase();
+  if (!text) return "other";
+  const byLabel = { "通話": "voice", "ゲーム": "game", "制作": "creative", "相談": "consultation", "ネタ": "fun", "その他": "other" };
+  return byLabel[String(raw || "").trim()] || (["voice", "game", "creative", "consultation", "fun", "other"].includes(text) ? text : "other");
+}
+
+async function handleForumSellModal(interaction) {
+  const threadId = interaction.customId.split(":")[3];
+  const thread = interaction.channel;
+  if (!thread?.isThread?.() || thread.id !== threadId) {
+    await interaction.reply({ content: "対象の投稿を特定できませんでした。", ephemeral: true });
+    return;
+  }
+  const starter = await thread.fetchStarterMessage().catch(() => null);
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.createForumListing(user, {
+    name: thread.name,
+    description: starter?.content || "",
+    price: interaction.fields.getTextInputValue("price"),
+    limit: interaction.fields.getTextInputValue("limit"),
+    category: normalizeForumCategoryInput(interaction.fields.getTextInputValue("category"))
+  }, {
+    threadId: thread.id,
+    parentChannelId: thread.parentId,
+    threadOwnerId: thread.ownerId || interaction.user.id
+  });
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  // 台帳の登録が確定してから、投稿内の販売パネル送信（失敗しても出品はショップから購入できる）
+  if (result.ok && result.listing) {
+    try {
+      await postForumSalesPanel(thread, result.listing.id);
+    } catch (error) {
+      console.warn(`フォーラム販売パネルの送信に失敗しました (#${result.listing.id}): ${error.message}`);
+    }
+  }
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function postForumSalesPanel(thread, listingId) {
+  const panel = engine.forumSalesPanel(listingId);
+  if (!panel || !thread) return;
+  const result = { ok: true, title: panel.title, lines: [], panel };
+  const embed = buildEmbed(result);
+  const components = buildComponents(result);
+  const message = await thread.send({ embeds: embed ? [embed] : [], components });
+  const changed = engine.recordForumPanelMessage(listingId, message.id);
+  if (changed) store.save(engine.state);
+  await message.pin().catch(() => null);
+}
+
+client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
+  try {
+    if (!newlyCreated || !thread?.parentId || thread.parentId !== marketForumChannelId()) return;
+    await thread.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("この投稿をIRISで販売しますか？")
+          .setColor(0x0f766e)
+          .setDescription("価格・カテゴリ・受付上限を設定すると、この投稿から直接購入できるようになります。\n代金は取引完了までIRISが預かります。設定できるのは投稿の作成者だけです。")
+      ],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`eco:market:forum-sell:${thread.id}`).setLabel("販売設定をする").setStyle(ButtonStyle.Primary)
+        )
+      ]
+    });
+  } catch (error) {
+    console.warn(`商店街フォーラム案内の送信に失敗しました: ${error.message}`);
+  }
+});
+
+client.on(Events.ThreadDelete, async (thread) => {
+  try {
+    if (!thread?.parentId || thread.parentId !== marketForumChannelId()) return;
+    const listing = engine.pauseForumListingByThread(thread.id);
+    if (listing) store.save(engine.state);
+  } catch (error) {
+    console.warn(`フォーラム投稿削除の処理に失敗しました: ${error.message}`);
+  }
+});
+
+// 取引スレッド: 作成失敗しても台帳（注文・Ris）は既に確定済みで、DMと「自分の取引」から継続できる
+async function ensureTradeThread(order) {
+  if (!order || order.flow !== "trade" || order.threadId) return null;
+  const channelId = engine.state.marketplace.settings.tradeChannelId;
+  if (!channelId) return null;
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel || typeof channel.threads?.create !== "function") {
+    console.warn(`取引チャンネル ${channelId} が見つからないため、取引スレッドを作成できませんでした。`);
+    return null;
+  }
+  const thread = await channel.threads.create({
+    name: `取引-${order.id}-${order.itemName}`.slice(0, 90),
+    type: ChannelType.PrivateThread,
+    invitable: false,
+    reason: `IRIS取引 #${order.id}`
+  });
+  const changed = engine.recordTradeThread(order.id, thread.id);
+  if (changed) store.save(engine.state);
+  for (const internalId of [order.buyerId, order.sellerId]) {
+    const uid = extractDiscordUserId(internalId);
+    if (uid) await thread.members.add(uid).catch(() => null);
+  }
+  await postTradeThreadStatus(thread, order.id).catch(() => null);
+  return thread;
+}
+
+async function postTradeThreadStatus(thread, orderId) {
+  const panel = engine.tradeThreadPanel(orderId);
+  if (!panel || !thread) return;
+  const result = { ok: true, title: panel.title, lines: [], panel };
+  const embed = buildEmbed(result);
+  const components = buildComponents(result);
+  await thread.send({ embeds: embed ? [embed] : [], components });
+}
+
+// 取引の状態が変わったら、取引スレッドに新しい状態パネルを投稿し、終了状態ならアーカイブする
+async function postTradeThreadUpdate(orderId) {
+  const order = engine.findTradeOrder(orderId);
+  if (!order?.threadId) return;
+  const thread = await client.channels.fetch(order.threadId).catch(() => null);
+  if (!thread?.isThread?.()) return;
+  await postTradeThreadStatus(thread, order.id).catch(() => null);
+  if (["completed", "refunded", "cancelled"].includes(order.status)) {
+    const changed = !order.threadArchivedAt;
+    order.threadArchivedAt = order.threadArchivedAt || new Date().toISOString();
+    if (changed) store.save(engine.state);
+    await thread.setArchived(true, "取引終了").catch(() => null);
+  }
+}
+
+async function showTradeBuyModal(interaction) {
+  const listingId = interaction.customId.split(":")[3];
+  const listing = engine.findListing(listingId);
+  if (!listing || listing.status !== "active") {
+    await interaction.reply({ content: "この出品は現在受付していません。", ephemeral: true });
+    return;
+  }
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:trade-buy:${listingId}`)
+    .setTitle(`購入: ${listing.name}`.slice(0, 45));
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("request")
+        .setLabel("依頼内容・希望・備考（任意）")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setMaxLength(300)
+        .setPlaceholder("例: 初心者です。平日22時以降希望です。")
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleTradeBuyModal(interaction) {
+  const listingId = interaction.customId.split(":")[3];
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.buyServiceListing(user, listingId, {
+    request: interaction.fields.getTextInputValue("request")
+  });
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  // 台帳とRisの状態を確定・保存してから、Discord側の副作用（取引スレッド作成）を試す
+  if (result.ok && result.order) {
+    await ensureTradeThread(result.order).catch((error) => {
+      console.warn(`取引スレッド作成に失敗しました (#${result.order.id}): ${error.message}`);
+    });
+  }
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function showTradeReportModal(interaction) {
+  const orderId = interaction.customId.split(":")[3];
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:trade-report:${orderId}`)
+    .setTitle(`問題を報告 取引#${orderId}`.slice(0, 45));
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("何が起きたか（運営に伝わります）")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(200)
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleTradeReportModal(interaction) {
+  const orderId = interaction.customId.split(":")[3];
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.reportTrade(user, orderId, interaction.fields.getTextInputValue("reason"));
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  if (result.ok) {
+    await sendLog({ ok: true, title: `⚠ 取引 #${orderId} に問題報告`, lines: [`${user.name}: ${interaction.fields.getTextInputValue("reason") || "（理由なし）"}`] });
+  }
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function showListingReportModal(interaction) {
+  const listingId = interaction.customId.split(":")[3];
+  const modal = new ModalBuilder()
+    .setCustomId(`eco:modal:listing-report:${listingId}`)
+    .setTitle(`出品を報告 #${listingId}`.slice(0, 45));
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("reason")
+        .setLabel("報告理由（運営に伝わります）")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+        .setMaxLength(200)
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleListingReportModal(interaction) {
+  const listingId = interaction.customId.split(":")[3];
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const result = engine.reportListing(user, listingId, interaction.fields.getTextInputValue("reason"));
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  if (result.ok) {
+    await sendLog({ ok: true, title: "⚠ 出品への通報", lines: [`#${listingId} を ${user.name} が報告: ${interaction.fields.getTextInputValue("reason") || "（理由なし）"}`] });
+  }
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 
@@ -2579,11 +3024,11 @@ async function showShopEditModal(interaction, listingId) {
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
         .setCustomId("stock")
-        .setLabel("在庫（1〜99、空欄で変更なし）")
+        .setLabel(listing.kind === "service" ? "受付上限（数字か「無制限」、空欄で変更なし）" : "在庫（1〜99、空欄で変更なし）")
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
-        .setMaxLength(3)
-        .setValue(String(listing.stock || ""))
+        .setMaxLength(5)
+        .setValue(listing.stock === null ? "無制限" : String(listing.stock || ""))
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
@@ -2591,7 +3036,7 @@ async function showShopEditModal(interaction, listingId) {
         .setLabel("説明（空欄で変更なし）")
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(false)
-        .setMaxLength(240)
+        .setMaxLength(400)
         .setValue(listing.description || "")
     )
   );
@@ -2656,11 +3101,11 @@ async function showShopResubmitModal(interaction, listingId) {
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
         .setCustomId("stock")
-        .setLabel("在庫（1〜99、空欄で元のまま）")
+        .setLabel(listing.kind === "service" ? "受付上限（数字か「無制限」、空欄で元のまま）" : "在庫（1〜99、空欄で元のまま）")
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
-        .setMaxLength(3)
-        .setValue(String(listing.stock || ""))
+        .setMaxLength(5)
+        .setValue(listing.stock === null ? "無制限" : String(listing.stock || ""))
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
@@ -2668,7 +3113,7 @@ async function showShopResubmitModal(interaction, listingId) {
         .setLabel("説明（空欄で元のまま）")
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(false)
-        .setMaxLength(240)
+        .setMaxLength(400)
         .setValue(listing.description || "")
     )
   );
@@ -4306,6 +4751,27 @@ function startVoiceRewardSweeper() {
   }, intervalMs).unref?.();
 }
 
+// delivered から一定時間で自動完了（絶対時刻judge・冪等）。警告通知もここから出す。
+function startTradeSweeper() {
+  const intervalMs = 5 * 60 * 1000;
+  setInterval(async () => {
+    let result;
+    try {
+      result = engine.sweepTradeAutoCompletion();
+      if (!result.changed && !result.notifications.length) return;
+      store.save(engine.state);
+    } catch (error) {
+      console.warn(`取引自動完了スイープに失敗しました: ${error.message}`);
+      return;
+    }
+    await deliverNotifications(result.notifications);
+    for (const order of result.completed) {
+      await postTradeThreadUpdate(order.id).catch(() => null);
+    }
+    if (result.completed.length) console.log(`民営取引を ${result.completed.length}件自動完了しました。`);
+  }, intervalMs).unref?.();
+}
+
 function startMarketSweeper() {
   const intervalMs = 60_000;
   setInterval(async () => {
@@ -4667,7 +5133,9 @@ function buildComponents(result, options = {}) {
     if (component.type === "channel-select") {
       const typeMap = {
         category: ChannelType.GuildCategory,
-        voice: ChannelType.GuildVoice
+        voice: ChannelType.GuildVoice,
+        text: ChannelType.GuildText,
+        forum: ChannelType.GuildForum
       };
       const channelTypes = (component.channelTypes || [])
         .map((type) => typeMap[type])
