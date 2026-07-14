@@ -3329,9 +3329,10 @@ class EconomyEngine {
   officialFulfillmentTaskPanel(adminUser, id) {
     const task = this.officialFulfillmentTask(id);
     if (!task) return this.officialFulfillmentPanel(adminUser);
+    const autoNicknameChange = this.isOfficialNicknameChangeTask(task);
     return {
       title: `公式商品対応 #${task.id}`,
-      description: "ロールが設定されている場合は再試行でBotが付与を試みます。手動対応だけなら完了にしてください。",
+      description: autoNicknameChange ? "希望ニックネームへの変更とチケット削除を完了ボタンで実行します。失敗時は対応キューを残して再試行できます。" : "ロールが設定されている場合は再試行でBotが付与を試みます。手動対応だけなら完了にしてください。",
       color: task.status === "completed" ? 0x16a34a : 0xf59e0b,
       fields: [
         { name: "購入者", value: task.buyerName, inline: true },
@@ -3340,12 +3341,13 @@ class EconomyEngine {
         { name: "ロール", value: task.roleId ? `<@&${task.roleId}>` : "なし", inline: true },
         { name: "期限", value: task.roleDurationDays > 0 ? `${task.roleDurationDays}日` : "なし / 無期限", inline: true },
         { name: "チケット", value: task.ticketChannelId ? `<#${task.ticketChannelId}>` : task.roleId ? "不要（ロール自動付与）" : "未作成", inline: true },
+        ...(autoNicknameChange ? [{ name: "完了時の処理", value: "希望ニックネームへ変更し、対応チケットを削除します。", inline: false }] : []),
         ...(task.requestText ? [{ name: "希望内容", value: task.requestText, inline: false }] : []),
         { name: "メモ", value: task.note || "-", inline: false }
       ],
       components: [
         ...(task.status === "pending" ? [buttons([
-          customButton("対応を完了", `eco:market:official-fulfillment-complete:${task.id}`, "success"),
+          customButton(autoNicknameChange ? "名前変更して完了" : "対応を完了", `eco:market:official-fulfillment-complete:${task.id}`, "success"),
           ...(task.roleId ? [customButton("ロールを再試行", `eco:market:official-fulfillment-retry:${task.id}`, "primary")] : []),
           ...(!task.roleId && !task.ticketChannelId ? [customButton("購入者とチケットを作成", `eco:market:official-fulfillment-ticket:${task.id}`, "primary")] : [])
         ])] : []),
@@ -3356,6 +3358,14 @@ class EconomyEngine {
 
   officialFulfillmentTask(id) {
     return this.officialFulfillmentTasks().find((task) => String(task.id) === String(id)) || null;
+  }
+
+  isOfficialNicknameChangeItem(item) {
+    return item?.id === "official:name-henkou";
+  }
+
+  isOfficialNicknameChangeTask(task) {
+    return this.isOfficialNicknameChangeItem({ id: task?.itemId }) && Boolean(cleanMarketText(task?.requestText, 32));
   }
 
   completeOfficialFulfillment(adminUser, id, note = "運営対応を完了しました") {
