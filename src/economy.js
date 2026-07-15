@@ -7397,7 +7397,7 @@ function createBoostRewardsState(overrides = {}) {
       continuityBonus: clamp(Math.floor(Number(overrides?.settings?.continuityBonus) || 10000), 0, Number.MAX_SAFE_INTEGER),
       // 新方式: ブースト状態への一律月次 + ブースト行為ごとの即時ボーナス（月あたり回数上限つき）
       monthlyFlatReward: clamp(Math.floor(Number(overrides?.settings?.monthlyFlatReward ?? 10000)), 0, Number.MAX_SAFE_INTEGER),
-      instantBonus: clamp(Math.floor(Number(overrides?.settings?.instantBonus ?? 5000)), 0, Number.MAX_SAFE_INTEGER),
+      instantBonus: clamp(Math.floor(Number(overrides?.settings?.instantBonus ?? 10000)), 0, Number.MAX_SAFE_INTEGER),
       instantBonusMonthlyCap: clamp(Math.floor(Number(overrides?.settings?.instantBonusMonthlyCap ?? 3)), 0, 50),
       announceChannelId: isDiscordSnowflake(overrides?.settings?.announceChannelId) ? String(overrides.settings.announceChannelId) : null
     },
