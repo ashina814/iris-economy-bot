@@ -689,7 +689,7 @@ client.on(Events.GuildMemberUpdate, async (_oldMember, member) => {
 });
 
 if (process.env.IRIS_ENTRYPOINT_TEST === "1") {
-  module.exports = { applyOfficialPurchaseUsername, assertUniquePanelComponentIds, buildComponents, client, completeOfficialNicknameFulfillment, engine, handleInteraction, isEphemeralComponentSource, officialPurchaseBuyerName, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult, syncShopForumFromResult };
+  module.exports = { applyOfficialPurchaseUsername, assertUniquePanelComponentIds, buildComponents, client, completeOfficialNicknameFulfillment, engine, ensureShopForumThread, handleInteraction, isEphemeralComponentSource, officialPurchaseBuyerName, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult, syncShopForumFromResult };
 } else {
   client.login(token);
 }
@@ -1586,11 +1586,19 @@ async function ensureShopForumThread(sellerId) {
     });
     const attach = engine.attachShopForumThread(engine.getUser(sellerId, seller.name), thread.id);
     store.save(engine.state);
-    if (!attach.ok && !attach.already) {
-      console.warn(`店舗Forum投稿の紐付けに失敗しました (${sellerId}): ${attach.title}`);
-      return null;
-    }
-    return thread.id;
+    if (attach.ok) return thread.id;
+    // 紐付けに失敗した場合、作ったばかりの投稿はDBに載っていない孤児になる。
+    // 作成直後のBot投稿（ユーザーの書き込みなし）なので削除してロールバックする。
+    // 取引・Ris・出品には触れない。削除に失敗したら孤児としてmarketLogに記録し、手動回収できるようにする。
+    await thread.delete(`IRIS店舗ページのロールバック: ${attach.title || "紐付け失敗"}`).catch((error) => {
+      console.warn(`孤児の店舗Forum投稿 ${thread.id} を削除できませんでした: ${error.message}`);
+      engine.marketLog(`店舗Forum投稿 <#${thread.id}> がDBに紐付かないまま残っています（孤児）。不要なら手動で削除してください。`);
+      store.save(engine.state);
+    });
+    // 並行して別の投稿（手動採用など）が先に紐付いていた場合は、DBに記録済みのそちらを使う
+    if (attach.already) return attach.threadId;
+    console.warn(`店舗Forum投稿の紐付けに失敗しました (${sellerId}): ${attach.title}`);
+    return null;
   } catch (error) {
     console.warn(`店舗Forum投稿の作成に失敗しました (${sellerId}): ${error.message}`);
     engine.markShopForumSyncFailed(sellerId, error.message);
