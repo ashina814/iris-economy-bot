@@ -53,6 +53,25 @@ for (const command of [
   if (result.panel) buildComponents(result);
 }
 
+// ランキング系は discord.js のチューニング層（buildMentionLeaderboard）が rank コマンドを
+// 横取りするため、必ず本番entryチェーン経由の engine.run で検証する。
+// （rank boost が未対応タイプ扱いで純資産ランキングに落ちる回帰を防ぐ）
+const boostRankActor = { id: "entrypoint-test:boost-ranker", name: "boost ranker" };
+engine.run("join", boostRankActor);
+engine.recordBoostEvent({
+  guildId: "999999999999999901",
+  discordUserId: "999999999999999902",
+  messageId: "999999999999999903",
+  messageType: 8,
+  displayName: "entrypoint booster"
+});
+for (const rankCommand of ["rank boost", "rank ブースト", "ランキング boost"]) {
+  const boostRank = engine.run(rankCommand, boostRankActor);
+  assert(String(boostRank.title).includes("ブーストランキング"), `${rankCommand} はブーストランキングを返す必要があります（純資産ランキングに落ちてはいけません）`);
+  assert(boostRank.lines.some((line) => line.includes("entrypoint booster") && line.includes("1回")), `${rankCommand} に累計回数が表示される必要があります`);
+}
+assert(String(engine.run("rank", boostRankActor).title).includes("純資産ランキング"), "引数なしの rank は従来通り純資産ランキングのままである必要があります");
+
 const emptyShopOwner = { id: "entrypoint-test:empty-shop", name: "empty shop owner" };
 engine.run("join", emptyShopOwner);
 engine.openShop(engine.getUser(emptyShopOwner.id, emptyShopOwner.name));
