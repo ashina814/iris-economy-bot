@@ -1293,6 +1293,16 @@ class EconomyEngine {
         active: Boolean(this.state.boostRewards.members[userId]?.active)
       }))
       .filter((entry) => entry.totalBoosts > 0)
+      // サーバーを退出した人はランキングに出さない（記録は保持し、復帰すれば再表示される）。
+      // メンバーディレクトリが取れない環境（テスト・CLI）ではフィルタしない。
+      .filter((entry) => {
+        const separator = String(entry.userId).indexOf(":");
+        if (separator <= 0) return true;
+        const guildId = String(entry.userId).slice(0, separator);
+        const discordUserId = String(entry.userId).slice(separator + 1);
+        const directory = global.__IRIS_GUILD_MEMBER_DIRECTORY__?.get?.(guildId);
+        return !directory || directory.has(discordUserId);
+      })
       .sort((a, b) => b.totalBoosts - a.totalBoosts || String(a.userId).localeCompare(String(b.userId)))
       .slice(0, Math.max(1, Math.min(25, limit)));
   }
