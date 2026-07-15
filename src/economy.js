@@ -766,6 +766,16 @@ class EconomyEngine {
     };
   }
 
+  getCasinoTransaction(transactionId, guildId) {
+    const transaction = this.state.casino.transactions[transactionId];
+    if (!transaction) {
+      return { ok: false, code: "TRANSACTION_NOT_FOUND", status: 404, message: "casino transaction not found" };
+    }
+    const scoped = this.scopedCasinoTransaction(transaction, guildId);
+    if (!scoped.ok) return scoped;
+    return { ok: true, status: 200, transaction: this.publicCasinoTransaction(transaction) };
+  }
+
   reserveCasinoBet(data = {}, guildId, limits = {}) {
     const normalized = this.normalizeCasinoReservation(data, guildId, limits);
     if (!normalized.ok) return normalized;

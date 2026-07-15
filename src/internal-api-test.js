@@ -276,7 +276,12 @@ async function main() {
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, 9000, "予約再送で二重控除しない");
     assert.strictEqual(saveCount, 1, "idempotent reservation does not write state again");
 
-    assert.strictEqual(duplicateReserve.body.currency, "Ris", "idempotent reservation returns the configured currency");
+  assert.strictEqual(duplicateReserve.body.currency, "Ris", "idempotent reservation returns the configured currency");
+
+  const reservedLookup = await request(port, { method: "GET", path: "/internal/v1/casino/transactions/tx-win", token: "secret-secret-secret" });
+  assert.strictEqual(reservedLookup.status, 200, "reserved transaction lookup succeeds");
+  assert.strictEqual(reservedLookup.body.currency, "Ris", "lookup returns the configured currency");
+  assert.strictEqual(reservedLookup.body.transaction.status, "reserved", "lookup returns reserved status");
     failNextSave = true;
     const beforeSaveRetryState = JSON.parse(JSON.stringify(engine.state));
     const beforeSaveRetryWallet = engine.getUser(actor.id, actor.name).wallet;
@@ -398,7 +403,11 @@ async function main() {
     assert.strictEqual(duplicateSettle.status, 200, "同じ精算再送は冪等");
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeWinSettle + 2500, "精算再送で二重加算しない");
 
-    assert.strictEqual(duplicateSettle.body.currency, "Ris", "idempotent settlement returns the configured currency");
+  assert.strictEqual(duplicateSettle.body.currency, "Ris", "idempotent settlement returns the configured currency");
+
+  const settledLookup = await request(port, { method: "GET", path: "/internal/v1/casino/transactions/tx-win", token: "secret-secret-secret" });
+  assert.strictEqual(settledLookup.status, 200, "settled transaction lookup succeeds");
+  assert.strictEqual(settledLookup.body.transaction.status, "settled", "lookup returns settled status");
     const cancelAfterSettle = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations/tx-win/cancel",
@@ -453,7 +462,16 @@ async function main() {
     });
     assert.strictEqual(cancelAgain.status, 200, "二重取消は冪等");
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeCancel + 300, "二重返金しない");
-    assert.strictEqual(cancelAgain.body.currency, "Ris", "idempotent cancellation returns the configured currency");
+  assert.strictEqual(cancelAgain.body.currency, "Ris", "idempotent cancellation returns the configured currency");
+
+  const cancelledLookup = await request(port, { method: "GET", path: "/internal/v1/casino/transactions/tx-cancel", token: "secret-secret-secret" });
+  assert.strictEqual(cancelledLookup.status, 200, "cancelled transaction lookup succeeds");
+  assert.strictEqual(cancelledLookup.body.transaction.status, "cancelled", "lookup returns cancelled status");
+
+  const missingLookup = await request(port, { method: "GET", path: "/internal/v1/casino/transactions/missing", token: "secret-secret-secret" });
+  assert.strictEqual(missingLookup.status, 404, "missing transaction lookup returns not found");
+  const invalidLookup = await request(port, { method: "GET", path: "/internal/v1/casino/transactions/%2F", token: "secret-secret-secret" });
+  assert.strictEqual(invalidLookup.status, 400, "invalid transaction id is rejected");
     const settleAfterCancel = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations/tx-cancel/settle",

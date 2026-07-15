@@ -110,6 +110,22 @@ async function handleInternalRequest(req, res, context) {
     return;
   }
 
+  const transactionMatch = pathname.match(/^\/internal\/v1\/casino\/transactions\/([^/]+)$/);
+  if (method === "GET" && transactionMatch) {
+    const decoded = decodePathSegment(transactionMatch[1]);
+    if (!decoded.ok) {
+      sendJson(res, 400, { ok: false, error: { code: "INVALID_PATH", message: "invalid path segment" } });
+      return;
+    }
+    if (!/^[A-Za-z0-9:_.-]{1,128}$/.test(decoded.value)) {
+      sendJson(res, 400, { ok: false, error: { code: "INVALID_TRANSACTION_ID", message: "invalid transaction id" } });
+      return;
+    }
+    const result = context.engine.getCasinoTransaction(decoded.value, context.guildId);
+    sendDomainResult(res, result);
+    return;
+  }
+
   if (method === "POST" && pathname === "/internal/v1/activity/adjustments") {
     if (!hasJsonContentType(req)) {
       sendJson(res, 415, { ok: false, error: { code: "UNSUPPORTED_MEDIA_TYPE", message: "content-type must be application/json" } });
