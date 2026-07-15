@@ -630,8 +630,18 @@ function isActivityLeaderboardEligible(user, axis) {
   return false;
 }
 
-function leaderboardSpec(typeRaw) {
+function leaderboardSpec(typeRaw, engineRef = null) {
   const type = normalizePanelId(typeRaw || "net");
+  if (["boost", "boosts", "ブースト"].includes(type)) {
+    return {
+      key: "boost",
+      title: "🚀 ブーストランキング",
+      unit: "回",
+      emptyLine: "まだブースト記録がありません。サーバーをブーストすると記録されます。",
+      score: (user) => Math.max(0, Math.floor(Number(engineRef?.state?.boostRewards?.counter?.users?.[user?.id]?.totalBoosts) || 0)),
+      label: (value, user) => `${value.toLocaleString("ja-JP")}回${engineRef?.state?.boostRewards?.members?.[user?.id]?.active ? " 🟢" : ""}`
+    };
+  }
   if (["text", "txt", "tc", "発言"].includes(type)) {
     return {
       key: "text",
@@ -677,8 +687,29 @@ function leaderboardSpec(typeRaw) {
   };
 }
 
+// ブースト累計はカウンター台帳が正本（未joinのブースターや取り込みデータも含む）。
+// サーバー退出者はランキングに出さない（記録は保持し、復帰すれば再表示）。
+function buildBoostRankedEntries(engine) {
+  const counterUsers = engine.state.boostRewards?.counter?.users || {};
+  const members = engine.state.boostRewards?.members || {};
+  return Object.entries(counterUsers)
+    .map(([userId, entry]) => ({
+      user: engine.state.users?.[userId] || { id: userId, name: entry.displayName || userId },
+      value: Math.max(0, Math.floor(Number(entry.totalBoosts) || 0)),
+      active: Boolean(members[userId]?.active)
+    }))
+    .filter((entry) => entry.value > 0)
+    .filter((entry) => {
+      const guildId = guildIdFromInternalUserId(entry.user.id);
+      const discordId = extractDiscordUserId(entry.user.id);
+      const directory = guildId && guildId !== "dm" ? global.__IRIS_GUILD_MEMBER_DIRECTORY__?.get?.(guildId) || null : null;
+      return !directory || !discordId || directory.has(discordId);
+    })
+    .sort((a, b) => b.value - a.value || String(a.user.id).localeCompare(String(b.user.id)));
+}
+
 function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
-  const spec = leaderboardSpec(typeRaw);
+  const spec = leaderboardSpec(typeRaw, engine);
   const memberDirectory = memberDirectoryForActor(actor);
   // guild.members.cache is intentionally partial: fetching every member here caused
   // Discord rate limits and interaction timeouts. It can enrich display names, but it
@@ -688,12 +719,14 @@ function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
       ? isActivityLeaderboardEligible(user, spec.key)
       : user.joined
   );
-  const ranked = users
-    .map((user) => ({ user, value: spec.score(user) }))
-    .sort((a, b) => b.value - a.value || String(a.user.name || "").localeCompare(String(b.user.name || ""), "ja"));
+  const ranked = spec.key === "boost"
+    ? buildBoostRankedEntries(engine)
+    : users
+      .map((user) => ({ user, value: spec.score(user) }))
+      .sort((a, b) => b.value - a.value || String(a.user.name || "").localeCompare(String(b.user.name || ""), "ja"));
 
   if (ranked.length === 0) {
-    return { ok: true, title: spec.title, lines: ["まだ誰も経済圏に住んでいません。`join` からどうぞ。"] };
+    return { ok: true, title: spec.title, lines: [spec.emptyLine || "まだ誰も経済圏に住んでいません。`join` からどうぞ。"] };
   }
 
   const actorId = actor?.id || null;
