@@ -703,8 +703,8 @@ const boostEvent1 = boostEngine.recordBoostEvent({
 });
 assert(boostEvent1.ok && boostEvent1.counted, "ブースト通知を記録できる");
 assert.strictEqual(boostEvent1.totalBoosts, 1, "累計1回になる");
-assert.strictEqual(boostEvent1.bonusPaid, 5000, "即時ボーナス5,000 Risを支払う");
-assert.strictEqual(boostEngine.getUser(boostInternalId, "ブースター").wallet, walletBeforeEvents + 5000, "即時ボーナスが財布に入る");
+assert.strictEqual(boostEvent1.bonusPaid, 10000, "即時ボーナス10,000 Risを支払う");
+assert.strictEqual(boostEngine.getUser(boostInternalId, "ブースター").wallet, walletBeforeEvents + 10000, "即時ボーナスが財布に入る");
 const boostEventDup = boostEngine.recordBoostEvent({
   guildId: boostGuildId,
   discordUserId: boostUserId,
@@ -713,7 +713,7 @@ const boostEventDup = boostEngine.recordBoostEvent({
   displayName: "ブースター"
 });
 assert(boostEventDup.ok && !boostEventDup.counted && boostEventDup.duplicate, "同じ通知メッセージは二重加算しない");
-assert.strictEqual(boostEngine.getUser(boostInternalId, "ブースター").wallet, walletBeforeEvents + 5000, "重複通知で財布は増えない");
+assert.strictEqual(boostEngine.getUser(boostInternalId, "ブースター").wallet, walletBeforeEvents + 10000, "重複通知で財布は増えない");
 assert(!boostEngine.recordBoostEvent({ guildId: boostGuildId, discordUserId: boostUserId, messageId: "610000000000000002", messageType: 0 }).ok,
   "ブースト以外のメッセージタイプは記録しない");
 
@@ -725,12 +725,12 @@ assert(cappedEvent.counted, "上限超過でもカウント自体は成立する
 assert.strictEqual(cappedEvent.bonusPaid, 0, "月上限を超えた即時ボーナスは支払わない");
 assert(cappedEvent.bonusCapped, "上限超過が結果に示される");
 assert.strictEqual(cappedEvent.totalBoosts, 4, "累計は4回になる");
-assert.strictEqual(boostEngine.getUser(boostInternalId, "ブースター").wallet, walletBeforeEvents + 15000, "即時ボーナスは月3回分まで");
+assert.strictEqual(boostEngine.getUser(boostInternalId, "ブースター").wallet, walletBeforeEvents + 30000, "即時ボーナスは月3回分まで");
 
 // 翌月になれば即時ボーナスは再び支払われる
 boostNow = new Date("2026-09-01T00:00:00.000Z");
 const nextMonthEvent = boostEngine.recordBoostEvent({ guildId: boostGuildId, discordUserId: boostUserId, messageId: "610000000000000006", messageType: 8, displayName: "ブースター" });
-assert.strictEqual(nextMonthEvent.bonusPaid, 5000, "翌月は即時ボーナスの回数がリセットされる");
+assert.strictEqual(nextMonthEvent.bonusPaid, 10000, "翌月は即時ボーナスの回数がリセットされる");
 
 // --- ブーストランキング ---
 const boostUser2 = "222222222222222223";
