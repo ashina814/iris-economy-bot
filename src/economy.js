@@ -559,6 +559,7 @@ class EconomyEngine {
       marketplace: () => this.marketplacePanel(user),
       "official-shop": () => this.officialShopPanel(user),
       "user-shops": () => this.userShopsPanel(user),
+      "seller-directory": () => this.sellerDirectoryPanel(user),
       "my-trades": () => this.myTradesPanel(user),
       "official-auctions": () => this.officialAuctionsPanel(user),
       "market-inventory": () => this.marketInventoryPanel(user),
@@ -2236,6 +2237,7 @@ class EconomyEngine {
     if (["top", "home"].includes(action)) return this.marketplace(user);
     if (["official", "official-shop"].includes(action)) return this.panelResult(this.officialShopPanel(user));
     if (["shops", "user-shops", "street"].includes(action)) return this.panelResult(this.userShopsPanel(user, args[1]));
+    if (["sellers", "stores", "seller-directory"].includes(action)) return this.panelResult(this.sellerDirectoryPanel(user, args[1]));
     if (["recommended", "recommend", "today"].includes(action)) return this.panelResult(this.recommendedShelfPanel(user));
     if (["affordable", "can-buy", "available"].includes(action)) return this.panelResult(this.affordableItemsPanel(user));
     if (["campaign-shop", "campaign"].includes(action)) return this.panelResult(this.campaignShopPanel(user));
@@ -2376,7 +2378,7 @@ class EconomyEngine {
     const newest = street.slice(0, 3);
     const fields = [
       { name: "残高", value: this.moneyLine(user), inline: true },
-      { name: "民営商店街", value: street.length ? `${street.length}件の出品が受付中（販売者 ${sellerCount}人）` : "出品を待っています", inline: true },
+      { name: "商店街", value: street.length ? `店舗 ${sellerCount}店 / 受付中の出品 ${street.length}件` : "出品を待っています", inline: true },
       { name: "自分の取引", value: activeTrades ? `対応中 ${activeTrades}件` : "対応中の取引はありません", inline: true },
       {
         name: "新着",
@@ -2386,16 +2388,17 @@ class EconomyEngine {
     ];
     const components = [
       buttons([
-        panelButton("商店街を見る", "user-shops", "primary"),
-        customButton("商品を探す", "eco:shop:search-open"),
-        panelButton("出品する", "listing-new", "success"),
-        panelButton("自分の取引", "my-trades")
+        panelButton("🏪 店舗を見る", "seller-directory", "primary"),
+        customButton("🔍 商品を探す", "eco:shop:search-open")
       ]),
       buttons([
-        panelButton("公式ショップ", "official-shop", "primary"),
+        panelButton("🧾 自分の取引", "my-trades"),
+        panelButton("🏷 自分の店", "my-shop")
+      ]),
+      buttons([
+        panelButton("🏛 公式ショップ", "official-shop", "primary"),
         panelButton("公式オークション", "official-auctions"),
-        panelButton("持ち物", "market-inventory"),
-        panelButton("自分の店", "my-shop")
+        panelButton("持ち物", "market-inventory")
       ])
     ];
     if (this.state.inviteCampaign.active) {
@@ -2411,10 +2414,67 @@ class EconomyEngine {
       ]));
     }
     return {
-      title: "ショップ",
-      description: "商品を探して、詳細を見て、確認してから購入できます。売る側の管理も下の控えめな導線から行えます。",
+      title: "🛍 IRIS MARKET",
+      description: "人から探すなら「店舗を見る」、目的から探すなら「商品を探す」。購入前には必ず詳細と確認画面を挟みます。",
       color: 0x7c3aed,
       fields,
+      components
+    };
+  }
+
+  // 店舗（販売者）単位の一覧。人から探す入口。
+  sellerDirectoryPanel(user, pageRaw = 1) {
+    const bySeller = new Map();
+    for (const listing of this.state.marketplace.listings) {
+      if (!["active", "pending", "soldout"].includes(listing.status)) continue;
+      if (!bySeller.has(listing.sellerId)) bySeller.set(listing.sellerId, []);
+      bySeller.get(listing.sellerId).push(listing);
+    }
+    const sellers = [...bySeller.entries()]
+      .map(([sellerId, listings]) => {
+        const seller = this.state.users[sellerId];
+        const shop = seller?.marketplace || {};
+        const active = listings.filter((listing) => listing.status === "active" && this.listingCanAccept(listing));
+        const isClosed = (shop.shopStatus || "open") === "closed";
+        const isAway = Boolean(shop.leftGuildAt);
+        return {
+          sellerId,
+          name: this.sellerPageName(sellerId, seller?.name || listings[0]?.sellerName || ""),
+          listedCount: active.length,
+          newestId: Math.max(...listings.map((listing) => Number(listing.id) || 0)),
+          statusLabel: isAway ? "不在" : isClosed ? "休止中" : active.length ? "受付中" : "受付停止中",
+          open: !isClosed && !isAway && active.length > 0
+        };
+      })
+      .sort((a, b) => (Number(b.open) - Number(a.open)) || (b.newestId - a.newestId));
+    const { page, pageCount, slice, total } = paginate(sellers, pageRaw, 8);
+    const components = [];
+    if (slice.length) {
+      components.push(select("店舗を開く", slice.map((entry) =>
+        option(entry.name.slice(0, 90), `run:marketplace shop-view ${entry.sellerId}`, `${entry.listedCount}商品 / ${entry.statusLabel}`.slice(0, 100)))));
+    }
+    components.push(buttons([
+      customButton("商品を探す", "eco:shop:search-open", "primary"),
+      panelButton("自分の店", "my-shop"),
+      panelButton("ショップ", "marketplace")
+    ]));
+    if (pageCount > 1) {
+      components.push(buttons([
+        runButton("前へ", `marketplace sellers ${Math.max(1, page - 1)}`, "secondary", page <= 1),
+        runButton("次へ", `marketplace sellers ${Math.min(pageCount, page + 1)}`, "secondary", page >= pageCount)
+      ]));
+    }
+    return {
+      title: "🏪 IRIS商店街 店舗一覧",
+      description: total
+        ? `${total}店${pageCount > 1 ? ` / ページ ${page}/${pageCount}` : ""}。店舗を開くと、その販売者の全出品が見られます。`
+        : "まだ店舗がありません。最初の出品をすると自動で店舗ページができます。",
+      color: 0x0f766e,
+      fields: slice.map((entry) => ({
+        name: entry.name.slice(0, 256),
+        value: `${entry.listedCount}商品 / ${entry.statusLabel}`,
+        inline: true
+      })),
       components
     };
   }
@@ -2961,18 +3021,37 @@ class EconomyEngine {
     const pending = this.sellerListings(user.id).filter((listing) => listing.status === "pending").length;
     const openTrades = this.sellerOrders(user.id).filter((order) => TRADE_ACTIVE_STATUSES.has(order.status) || order.status === "open").length;
     const isClosed = (shop.shopStatus || "open") === "closed";
+    const forumConfigured = Boolean(this.state.marketplace.settings.marketForumChannelId);
+    const forumLine = shop.marketForumThreadId
+      ? `<#${shop.marketForumThreadId}>${shop.marketForumSyncStatus === "failed" ? "（同期失敗。再同期を押してください）" : ""}`
+      : shop.marketForumSyncStatus === "detached"
+        ? "連携解除（投稿が削除されました。再同期で作り直せます）"
+        : forumConfigured
+          ? "未作成（出品すると自動で店舗投稿ができます）"
+          : "未設定（Forumがなくてもここから販売できます）";
+    const fields = [
+      { name: "受付", value: isClosed ? "休止中（新規購入不可）" : "受付中", inline: true },
+      { name: "累計売上", value: fmt(shop.sales || 0), inline: true },
+      { name: "出品中", value: `${active}件`, inline: true },
+      { name: "審査待ち", value: `${pending}件`, inline: true },
+      { name: "対応中の取引", value: `${openTrades}件`, inline: true },
+      { name: "販売通知", value: shop.salesDmEnabled === false ? "DM OFF" : "DM ON", inline: true },
+      { name: "店舗Forum", value: forumLine, inline: false }
+    ];
+    const managementRow = [
+      customButton(isClosed ? "受付を再開する" : "受付を休止する", "eco:shop:status-toggle", isClosed ? "success" : "danger"),
+      customButton(shop.salesDmEnabled === false ? "販売DMをON" : "販売DMをOFF", "eco:shop:sales-dm-toggle", shop.salesDmEnabled === false ? "success" : "secondary"),
+      panelButton("商店街", "seller-directory"),
+      panelButton("ショップ", "marketplace")
+    ];
+    if (forumConfigured) {
+      managementRow.splice(2, 0, customButton("店舗Forum再同期", "eco:market:shop-forum-resync", "secondary"));
+    }
     return {
       title: `${this.sellerPageName(user.id, user.name)}${isClosed ? "（受付休止中）" : ""}`,
       description: shop.shopDescription || "販売者ページです。店名や説明は任意で設定できます（未設定でも出品できます）。",
       color: isClosed ? 0x64748b : 0x14b8a6,
-      fields: [
-        { name: "受付", value: isClosed ? "休止中（新規購入不可）" : "受付中", inline: true },
-        { name: "累計売上", value: fmt(shop.sales || 0), inline: true },
-        { name: "出品中", value: `${active}件`, inline: true },
-        { name: "審査待ち", value: `${pending}件`, inline: true },
-        { name: "対応中の取引", value: `${openTrades}件`, inline: true },
-        { name: "販売通知", value: shop.salesDmEnabled === false ? "DM OFF" : "DM ON", inline: true }
-      ],
+      fields,
       components: [
         buttons([
           panelButton("出品する", "listing-new", "primary"),
@@ -2980,12 +3059,7 @@ class EconomyEngine {
           panelButton("自分の取引", "my-trades", "primary"),
           customButton("店名・説明を編集", "eco:market:shop-settings")
         ]),
-        buttons([
-          customButton(isClosed ? "受付を再開する" : "受付を休止する", "eco:shop:status-toggle", isClosed ? "success" : "danger"),
-          customButton(shop.salesDmEnabled === false ? "販売DMをON" : "販売DMをOFF", "eco:shop:sales-dm-toggle", shop.salesDmEnabled === false ? "success" : "secondary"),
-          panelButton("商店街", "user-shops"),
-          panelButton("ショップ", "marketplace")
-        ])
+        buttons(managementRow)
       ]
     };
   }
@@ -3664,6 +3738,7 @@ class EconomyEngine {
       ok: true,
       title: "再提出しました（審査待ち）",
       lines: [`元: #${listing.id} → 新: #${newListing.id} ${newListing.name}`, "運営確認後に公開されます。"],
+      shopForumSync: { sellerId: user.id },
       panel: this.myListingsPanel(user)
     };
   }
@@ -3918,12 +3993,20 @@ class EconomyEngine {
       sellerFlagged: false,
       firstListingPublished: false,
       leftGuildAt: null,
+      marketForumThreadId: null,
+      marketForumPanelMessageId: null,
+      marketForumSyncStatus: null,
+      marketForumSyncError: null,
+      marketForumSyncAt: null,
+      marketForumDetachedThreadId: null,
       ...(user.marketplace || {})
     };
     if (!["open", "closed"].includes(user.marketplace.shopStatus)) user.marketplace.shopStatus = "open";
     user.marketplace.salesDmEnabled = user.marketplace.salesDmEnabled !== false;
     user.marketplace.inventory = Array.isArray(user.marketplace.inventory) ? user.marketplace.inventory : [];
     user.marketplace.listingDraft = { type: "item", mode: "permanent", category: "other", ...(user.marketplace.listingDraft || {}) };
+    user.marketplace.marketForumThreadId = isDiscordSnowflake(user.marketplace.marketForumThreadId) ? String(user.marketplace.marketForumThreadId) : null;
+    user.marketplace.marketForumPanelMessageId = isDiscordSnowflake(user.marketplace.marketForumPanelMessageId) ? String(user.marketplace.marketForumPanelMessageId) : null;
     return user.marketplace;
   }
 
@@ -4043,6 +4126,7 @@ class EconomyEngine {
           : "商店街に公開されました。"
       ],
       listing,
+      shopForumSync: { sellerId: user.id, ensure: true },
       panel: this.myListingsPanel(user)
     };
   }
@@ -4136,6 +4220,7 @@ class EconomyEngine {
       ].filter(Boolean),
       order,
       trade: { orderId: order.id },
+      shopForumSync: { sellerId: seller.id },
       panel: this.tradeDetailPanel(user, order.id),
       notifications: [
         {
@@ -4234,6 +4319,7 @@ class EconomyEngine {
       title: "キャンセルしました",
       lines: [`取引 #${order.id} ${order.itemName} をキャンセルし、${fmt(order.price)} を返金しました。`],
       tradeUpdate: { orderId: order.id },
+      shopForumSync: { sellerId: order.sellerId },
       panel: this.tradeDetailPanel(user, order.id),
       notifications: [
         { userId: order.sellerId, event: "trade_cancelled", data: { orderId: order.id, itemName: order.itemName, buyerName: order.buyerName } }
@@ -4256,6 +4342,7 @@ class EconomyEngine {
       title: "辞退・返金しました",
       lines: [`取引 #${order.id} ${order.itemName} を辞退し、購入者に ${fmt(order.price)} を全額返金しました。`],
       tradeUpdate: { orderId: order.id },
+      shopForumSync: { sellerId: order.sellerId },
       panel: this.tradeDetailPanel(user, order.id),
       notifications: [
         { userId: order.buyerId, event: "trade_refunded", data: { orderId: order.id, itemName: order.itemName, amount: order.price, by: "seller" } }
@@ -4353,7 +4440,7 @@ class EconomyEngine {
 
   pauseSellerListingsOnLeave(actor) {
     const user = this.state.users[actor?.id];
-    if (!user) return { paused: 0 };
+    if (!user) return { paused: 0, sellerId: null };
     const shop = this.ensureShopShape(user);
     shop.leftGuildAt = new Date().toISOString();
     let paused = 0;
@@ -4365,7 +4452,7 @@ class EconomyEngine {
       paused += 1;
     }
     if (paused > 0) this.marketLog(`${user.name} の退出により出品 ${paused}件を一時停止しました（進行中の取引は残ります）。`);
-    return { paused };
+    return { paused, sellerId: user.id };
   }
 
   // 再参加しても出品は自動再開しない。新規購入ブロック（leftGuildAt）だけ解除する。
@@ -4374,7 +4461,7 @@ class EconomyEngine {
     if (!user?.marketplace?.leftGuildAt) return false;
     user.marketplace.leftGuildAt = null;
     this.marketLog(`${user.name} が復帰しました。停止中の出品は本人の再開操作で公開されます。`);
-    return true;
+    return user.id;
   }
 
   // ---- 出品の通報（即削除はしない。運営キューに積む） ----
@@ -4470,17 +4557,165 @@ class EconomyEngine {
     return true;
   }
 
-  // フォーラム投稿が削除されたら新規購入を止める（取引・Risには触らない）
-  pauseForumListingByThread(threadId) {
+  // ---- 店舗Forum（1販売者 = 1店舗投稿）。DBが正本で、Forumは表示面 ----
+
+  sellerIdByShopForumThread(threadId) {
+    const id = String(threadId || "");
+    if (!id) return null;
+    for (const [userId, user] of Object.entries(this.state.users || {})) {
+      if (user?.marketplace?.marketForumThreadId === id) return userId;
+    }
+    return null;
+  }
+
+  // 店舗Forum投稿を一度だけ紐付ける（同一販売者・同一スレッドの二重登録を防ぐ）
+  attachShopForumThread(user, threadId) {
+    const shop = this.ensureShopShape(user);
+    if (!isDiscordSnowflake(threadId)) {
+      return { ok: false, title: "店舗Forumを設定できません", lines: ["対象の投稿を特定できませんでした。"] };
+    }
+    if (shop.marketForumThreadId) {
+      return {
+        ok: false,
+        already: true,
+        threadId: shop.marketForumThreadId,
+        title: "店舗Forumはすでにあります",
+        lines: [`あなたの店舗投稿は <#${shop.marketForumThreadId}> です。1人1店舗のため、新しい投稿は作成しません。`]
+      };
+    }
+    const usedBy = this.sellerIdByShopForumThread(threadId);
+    if (usedBy && usedBy !== user.id) {
+      return { ok: false, title: "店舗Forumを設定できません", lines: ["この投稿はすでに別の販売者の店舗として使われています。"] };
+    }
+    shop.marketForumThreadId = String(threadId);
+    shop.marketForumPanelMessageId = null;
+    shop.marketForumSyncStatus = "linked";
+    shop.marketForumSyncError = null;
+    shop.marketForumSyncAt = new Date().toISOString();
+    shop.marketForumDetachedThreadId = null;
+    this.marketLog(`${user.name} の店舗Forum投稿を <#${shop.marketForumThreadId}> に紐付けました。`);
+    return { ok: true, threadId: shop.marketForumThreadId, title: "店舗Forumを設定しました", lines: [`<#${shop.marketForumThreadId}> をあなたの店舗投稿として使います。`] };
+  }
+
+  setShopForumPanelMessage(sellerId, messageId) {
+    const seller = this.state.users[sellerId];
+    if (!seller || !isDiscordSnowflake(messageId)) return false;
+    const shop = this.ensureShopShape(seller);
+    if (shop.marketForumPanelMessageId === String(messageId)) return false;
+    shop.marketForumPanelMessageId = String(messageId);
+    return true;
+  }
+
+  markShopForumSynced(sellerId) {
+    const seller = this.state.users[sellerId];
+    if (!seller) return false;
+    const shop = this.ensureShopShape(seller);
+    shop.marketForumSyncStatus = "synced";
+    shop.marketForumSyncError = null;
+    shop.marketForumSyncAt = new Date().toISOString();
+    return true;
+  }
+
+  // Forum同期の失敗はDB・取引に影響させず、記録だけ残してあとから再同期できるようにする
+  markShopForumSyncFailed(sellerId, message = "") {
+    const seller = this.state.users[sellerId];
+    if (!seller) return false;
+    const shop = this.ensureShopShape(seller);
+    shop.marketForumSyncStatus = "failed";
+    shop.marketForumSyncError = cleanMarketText(message, 200) || "同期に失敗しました";
+    shop.marketForumSyncAt = new Date().toISOString();
+    this.marketLog(`${seller.name} の店舗Forum同期に失敗しました（DBの出品・取引はそのまま）: ${shop.marketForumSyncError}`);
+    return true;
+  }
+
+  // 店舗Forum投稿が削除されたら、連携だけ解除する（出品・取引・Risには触らない）
+  detachShopForumThreadByThread(threadId) {
+    const sellerId = this.sellerIdByShopForumThread(threadId);
+    if (!sellerId) return null;
+    const seller = this.state.users[sellerId];
+    const shop = this.ensureShopShape(seller);
+    shop.marketForumDetachedThreadId = shop.marketForumThreadId;
+    shop.marketForumThreadId = null;
+    shop.marketForumPanelMessageId = null;
+    shop.marketForumSyncStatus = "detached";
+    shop.marketForumSyncError = null;
+    shop.marketForumSyncAt = new Date().toISOString();
+    this.marketLog(`${seller.name} の店舗Forum投稿が削除されたため連携を解除しました。出品と進行中の取引はそのまま残ります。`);
+    return sellerId;
+  }
+
+  // 旧方式（1商品1Forum投稿）の投稿が削除された場合もForum連携だけ外す。出品は/ショップで販売継続できる。
+  unlinkLegacyForumListingByThread(threadId) {
     const listing = this.state.marketplace.listings.find(
-      (entry) => entry.forumThreadId === String(threadId) && ["active", "pending"].includes(entry.status)
+      (entry) => entry.forumThreadId === String(threadId)
     );
     if (!listing) return null;
-    listing.status = "stopped";
-    listing.stoppedReason = "forum_post_deleted";
-    listing.stoppedAt = new Date().toISOString();
-    this.marketLog(`フォーラム投稿の削除により出品 #${listing.id} ${listing.name} を停止しました。`);
+    listing.forumThreadId = null;
+    listing.forumPanelMessageId = null;
+    this.marketLog(`旧Forum投稿の削除により出品 #${listing.id} ${listing.name} のForum連携を解除しました（/ショップからの販売と既存取引は継続）。`);
     return listing;
+  }
+
+  shopForumEligible(user) {
+    return Boolean(this.state.marketplace.settings.marketForumChannelId) && !user?.marketplace?.marketForumThreadId;
+  }
+
+  shopTradeStats(sellerId) {
+    const orders = this.sellerOrders(sellerId);
+    const completed = orders.filter((order) => ["completed", "complete"].includes(order.status)).length;
+    const active = orders.filter((order) => TRADE_ACTIVE_STATUSES.has(order.status) || ["open", "reported"].includes(order.status)).length;
+    return { completed, active, total: orders.length };
+  }
+
+  // 店舗Forum投稿内に貼る店舗パネル。商品ごとのボタンは並べず、セレクトでcomponent上限を守る。
+  shopForumPanel(sellerId) {
+    const seller = this.state.users[sellerId];
+    if (!seller) return null;
+    const shop = this.ensureShopShape(seller);
+    const isClosed = (shop.shopStatus || "open") === "closed";
+    const isAway = Boolean(shop.leftGuildAt);
+    const listings = this.sellerListings(sellerId).filter((listing) => ["active", "pending", "soldout"].includes(listing.status));
+    const accepting = listings.filter((listing) => listing.status === "active" && this.listingCanAccept(listing));
+    const stats = this.shopTradeStats(sellerId);
+    const statusLine = isAway ? "サーバー不在のため新規購入停止中" : isClosed ? "受付休止中" : "受付中";
+    const listingLine = (listing) => {
+      const state = listing.status === "pending" ? "審査待ち" : listing.status === "soldout" ? "受付上限" : this.listingCanAccept(listing) ? `受付 ${this.listingLimitLine(listing)}` : "受付停止";
+      return `・${listing.name}\n　${fmt(listing.price)} / ${state}`;
+    };
+    const shown = listings.slice(0, 10);
+    const components = [];
+    if (accepting.length) {
+      components.push(select("商品を見る", accepting.slice(0, 25).map((listing) =>
+        option(listing.name.slice(0, 90), `run:marketplace listing ${listing.id}`, `${fmt(listing.price)} / ${MARKET_CATEGORIES[listing.category] || "その他"}`.slice(0, 100)))));
+    }
+    components.push(buttons([
+      runButton("この店の全出品", `marketplace shop-view ${sellerId}`, "primary"),
+      panelButton("自分の取引", "my-trades"),
+      panelButton("ショップ", "marketplace")
+    ]));
+    return {
+      title: `🏪 ${this.sellerPageName(sellerId, seller.name)}`.slice(0, 256),
+      description: [
+        shop.shopDescription || "説明はまだありません。",
+        "",
+        "この投稿はIRISの店舗ページです。購入すると代金は取引完了までIRISが預かります。"
+      ].join("\n"),
+      color: isClosed || isAway ? 0x64748b : 0x0f766e,
+      fields: [
+        { name: "店主", value: seller.name, inline: true },
+        { name: "受付状況", value: statusLine, inline: true },
+        { name: "受付中の出品", value: `${accepting.length}件`, inline: true },
+        { name: "取引実績", value: `完了 ${stats.completed}件`, inline: true },
+        {
+          name: "現在の出品",
+          value: shown.length
+            ? shown.map(listingLine).join("\n") + (listings.length > shown.length ? `\n…ほか ${listings.length - shown.length}件は「この店の全出品」から` : "")
+            : "現在出品はありません。",
+          inline: false
+        }
+      ],
+      components
+    };
   }
 
   // フォーラム投稿内に貼る販売パネル
@@ -4517,30 +4752,33 @@ class EconomyEngine {
   }
 
   // 商店街入口パネル（運営が任意のテキストチャンネルに常設する）
+  // 常設用の公開メッセージ。ボタン操作しても本人だけのephemeral画面が開き、このメッセージ自体は書き換えない。
   marketEntrancePanel() {
     const active = this.activeListings().sort((a, b) => b.id - a.id);
-    const sellerCount = new Set(active.map((listing) => listing.sellerId)).size;
-    const newest = active.slice(0, 3);
+    const sellerIds = [...new Set(active.map((listing) => listing.sellerId))];
+    const newestShops = [...new Map(active.map((listing) => [listing.sellerId, listing])).entries()]
+      .slice(0, 3)
+      .map(([sellerId, listing]) => `・${this.sellerPageName(sellerId, listing.sellerName)}`);
     return {
       title: "🏪 IRIS商店街",
-      description: "ユーザー同士のサービス売買はここから。代金は取引完了までIRISが預かるので安心です。",
+      description: "ユーザー同士のサービス売買はここから。代金は取引完了までIRISが預かるので安心です。\nボタンを押すと、あなただけに見える画面が開きます。",
       color: 0x0f766e,
       fields: [
+        { name: "現在の店舗数", value: `${sellerIds.length}店`, inline: true },
         { name: "受付中の出品", value: `${active.length}件`, inline: true },
-        { name: "活動中の販売者", value: `${sellerCount}人`, inline: true },
         {
-          name: "新着",
-          value: newest.length
-            ? newest.map((listing) => `・${listing.name}　${fmt(listing.price)}`).join("\n")
-            : "まだ出品がありません。最初の出品者になりましょう。",
+          name: "新着店舗",
+          value: newestShops.length
+            ? newestShops.join("\n")
+            : "まだ店舗がありません。最初の出品者になりましょう。",
           inline: false
         }
       ],
       components: [
         buttons([
-          panelButton("商店街を見る", "user-shops", "primary"),
+          panelButton("店舗を見る", "seller-directory", "primary"),
           customButton("商品を探す", "eco:shop:search-open"),
-          panelButton("出品する", "listing-new", "success"),
+          panelButton("自分の店", "my-shop"),
           panelButton("自分の取引", "my-trades")
         ]),
         buttons([panelButton("公式ショップ", "official-shop")])
@@ -4652,7 +4890,13 @@ class EconomyEngine {
     report.resolvedBy = adminUser.id;
     report.resolvedAt = new Date().toISOString();
     this.marketLog(`${adminUser.name} が通報 #${report.id} を処理: ${report.resolution}`);
-    return { ok: true, title: "通報を処理しました", lines, panel: this.marketReportsPanel() };
+    return {
+      ok: true,
+      title: "通報を処理しました",
+      lines,
+      ...(action === "stop" && report.sellerId ? { shopForumSync: { sellerId: report.sellerId } } : {}),
+      panel: this.marketReportsPanel()
+    };
   }
 
   // ---- 取引画面（購入者/販売者で操作を出し分ける。legacy注文も閲覧できる） ----
@@ -4873,7 +5117,7 @@ class EconomyEngine {
       updatedAt: new Date().toISOString()
     };
     this.marketLog(`${user.name} が店の設定を更新しました。`);
-    return this.myShop(user);
+    return { ...this.myShop(user), shopForumSync: { sellerId: user.id } };
   }
 
   setListingDraft(user, patch = {}) {
@@ -5084,6 +5328,7 @@ class EconomyEngine {
       ok: true,
       title: "承認しました",
       lines: [`#${listing.id} ${listing.name} を公開しました。`, `販売者: ${listing.sellerName}`, `価格: ${fmt(listing.price)}`],
+      shopForumSync: { sellerId: listing.sellerId, ensure: true },
       panel: this.marketReviewPanel(),
       notifications: [
         {
@@ -5110,6 +5355,7 @@ class EconomyEngine {
       ok: true,
       title: "却下しました",
       lines: [`#${listing.id} ${listing.name} を却下しました。`, `販売者: ${listing.sellerName}`, `理由: ${trimmed || "記入なし"}`],
+      shopForumSync: { sellerId: listing.sellerId },
       panel: this.marketReviewPanel(),
       notifications: [
         {
@@ -5130,7 +5376,7 @@ class EconomyEngine {
     listing.status = "stopped";
     listing.stoppedAt = new Date().toISOString();
     this.marketLog(`${user.name} が ${listing.name} を停止しました。`);
-    return { ok: true, title: "出品停止", lines: [`${listing.name} を停止しました。`], panel: this.myListingsPanel(user) };
+    return { ok: true, title: "出品停止", lines: [`${listing.name} を停止しました。`], shopForumSync: { sellerId: listing.sellerId }, panel: this.myListingsPanel(user) };
   }
 
   // エスクロー保留中の代金を販売者に支払う。保留中でない注文（旧データ含む）は何もしない。
@@ -5288,6 +5534,7 @@ class EconomyEngine {
             : `販売者 ${order.sellerName} の売上と在庫を巻き戻しました。`
       ],
       ...(order.flow === "trade" ? { tradeUpdate: { orderId: order.id } } : {}),
+      ...(order.sellerId !== "official" ? { shopForumSync: { sellerId: order.sellerId } } : {}),
       panel: this.marketTradesPanel(),
       notifications
     };
@@ -5676,6 +5923,7 @@ class EconomyEngine {
       ok: true,
       title: needsReview ? "商品を更新しました（再審査待ち）" : "商品を更新しました",
       lines: [`#${listing.id} ${listing.name}`, ...changes],
+      shopForumSync: { sellerId: listing.sellerId },
       panel: this.myListingsPanel(user)
     };
   }
@@ -5700,6 +5948,7 @@ class EconomyEngine {
       ok: true,
       title: needsReview ? "再開しました（審査待ち）" : "再開しました",
       lines: [`#${listing.id} ${listing.name}`, needsReview ? "審査対象のため、運営確認後に再公開されます。" : "商店街に再公開されました。"],
+      shopForumSync: { sellerId: listing.sellerId },
       panel: this.myListingsPanel(user)
     };
   }
@@ -5774,6 +6023,7 @@ class EconomyEngine {
           ? "出品は商店街と検索から除外され、購入できなくなります。個別に停止しなくてもOKです。"
           : "出品が商店街と検索に再表示されます。"
       ],
+      shopForumSync: { sellerId: user.id },
       panel: this.myShopPanel(user)
     };
   }

@@ -25,6 +25,7 @@ const {
   GatewayIntentBits,
   PermissionFlagsBits,
   AuditLogEvent,
+  MessageFlags,
   ModalBuilder,
   REST,
   RoleSelectMenuBuilder,
@@ -360,6 +361,14 @@ async function handleInteraction(interaction) {
       await showForumSellModal(interaction);
       return;
     }
+    if (interaction.isButton() && interaction.customId.startsWith("eco:market:forum-adopt:")) {
+      await handleForumAdoptButton(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId === "eco:market:shop-forum-resync") {
+      await handleShopForumResync(interaction);
+      return;
+    }
     if (interaction.isButton() && ["eco:market:forum-clear", "eco:market:trade-channel-clear"].includes(interaction.customId)) {
       await handleMarketChannelClear(interaction);
       return;
@@ -504,8 +513,9 @@ async function handleInteraction(interaction) {
     applyOfficialPurchaseUsername(result, interaction.user);
     decorateResultForDiscord(result, interaction);
     store.save(engine.state);
-    await updateDiscord(interaction, result);
+    await respondPanel(interaction, result);
     void processOfficialPurchaseEffects(interaction, result);
+    void syncShopForumFromResult(result);
     if (result?.tradeUpdate) {
       await postTradeThreadUpdate(result.tradeUpdate.orderId).catch((error) => console.warn(`取引スレッド更新に失敗しました: ${error.message}`));
     }
@@ -537,6 +547,7 @@ async function handleInteraction(interaction) {
 
   await replyDiscord(interaction, result, { ephemeral: slash.ephemeral });
   void processOfficialPurchaseEffects(interaction, result);
+  void syncShopForumFromResult(result);
   if (result?.tradeUpdate) {
     await postTradeThreadUpdate(result.tradeUpdate.orderId).catch((error) => console.warn(`取引スレッド更新に失敗しました: ${error.message}`));
   }
@@ -632,7 +643,8 @@ client.on(Events.GuildMemberAdd, async (member) => {
   syncGuildMember(member);
   await handleBoostMemberState(member, "member-add");
   // 復帰した販売者の新規購入ブロックを解除する（出品自体は本人の再開操作まで停止のまま）
-  engine.recordSellerReturn(actorFromMember(member));
+  const returnedSellerId = engine.recordSellerReturn(actorFromMember(member));
+  if (returnedSellerId) void syncShopForumFromResult({ shopForumSync: { sellerId: returnedSellerId } });
   const used = await detectUsedInvite(member.guild);
   const result = used?.inviter
     ? engine.recordInviteJoin(
@@ -665,8 +677,9 @@ client.on(Events.GuildMemberRemove, async (member) => {
   recordBoostMemberLeft(member);
   engine.recordInviteLeave(actorFromMember(member));
   // 販売者の退出: 出品を新規購入不可にする（進行中の取引は運営対応可能なまま残す）
-  engine.pauseSellerListingsOnLeave(actorFromMember(member));
+  const pauseResult = engine.pauseSellerListingsOnLeave(actorFromMember(member));
   store.save(engine.state);
+  if (pauseResult?.sellerId) void syncShopForumFromResult({ shopForumSync: { sellerId: pauseResult.sellerId } });
 });
 
 client.on(Events.GuildMemberUpdate, async (_oldMember, member) => {
@@ -676,7 +689,7 @@ client.on(Events.GuildMemberUpdate, async (_oldMember, member) => {
 });
 
 if (process.env.IRIS_ENTRYPOINT_TEST === "1") {
-  module.exports = { applyOfficialPurchaseUsername, assertUniquePanelComponentIds, buildComponents, client, completeOfficialNicknameFulfillment, engine, officialPurchaseBuyerName, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult };
+  module.exports = { applyOfficialPurchaseUsername, assertUniquePanelComponentIds, buildComponents, client, completeOfficialNicknameFulfillment, engine, ensureShopForumThread, handleInteraction, isEphemeralComponentSource, officialPurchaseBuyerName, parseOfficialFulfillmentControlId, officialPurchaseNotificationResult, syncShopForumFromResult };
 } else {
   client.login(token);
 }
@@ -1041,6 +1054,28 @@ async function updateDiscord(interaction, result) {
   }
 }
 
+// 押されたメッセージが「本人だけのephemeral画面」かどうか。
+// 公開常設パネル（商店街入口・店舗Forumパネル・取引スレッドパネルなど）はここでfalseになる。
+function isEphemeralComponentSource(interaction) {
+  try {
+    return Boolean(interaction.message?.flags?.has?.(MessageFlags.Ephemeral));
+  } catch {
+    return false;
+  }
+}
+
+// componentからの応答の共通ルール:
+// - ephemeral画面のボタン → その画面をそのまま更新（従来通りの画面遷移）
+// - 公開メッセージのボタン → 公開メッセージには触れず、本人だけのephemeral返信を返す
+// これにより誰が公開パネルを操作しても、公開メッセージ自体は書き換わらない。
+async function respondPanel(interaction, result) {
+  if (isEphemeralComponentSource(interaction)) {
+    await updateDiscord(interaction, result);
+    return;
+  }
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
 async function deliverNotifications(notifications) {
   if (!Array.isArray(notifications) || notifications.length === 0) return;
   let stateChanged = false;
@@ -1370,6 +1405,7 @@ async function updateMarketShopFromModal(interaction) {
   });
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
+  void syncShopForumFromResult(result);
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 
@@ -1429,6 +1465,7 @@ async function createMarketListingFromModal(interaction) {
   });
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
+  void syncShopForumFromResult(result);
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 
@@ -1480,10 +1517,209 @@ async function postStreetPanel(interaction) {
   await interaction.reply({ content: "このチャンネルにIRIS商店街入口を送信しました。", ephemeral: true });
 }
 
-// ---- 商店街フォーラム連携 ----
+// ---- 商店街フォーラム連携（1販売者 = 1店舗投稿。DBが正本で、Forumは表示面） ----
 
 function marketForumChannelId() {
   return engine.state.marketplace.settings.marketForumChannelId || null;
+}
+
+// 同一販売者の店舗投稿を同時に二重作成しないためのプロセス内ロック
+const shopForumCreateLocks = new Set();
+
+function panelPayload(panel) {
+  const result = { ok: true, title: panel.title, lines: [], panel };
+  const embed = buildEmbed(result);
+  return { embeds: embed ? [embed] : [], components: buildComponents(result) };
+}
+
+// 出品・編集・停止などの結果に shopForumSync マーカーが付いていたら店舗Forumを追随させる。
+// Forum側の失敗は台帳（出品・取引・Ris）に影響させず、ログと同期状態にだけ残す。
+async function syncShopForumFromResult(result) {
+  const sellerId = result?.shopForumSync?.sellerId;
+  if (!sellerId) return;
+  try {
+    const seller = engine.state.users[sellerId];
+    if (!seller) return;
+    if (!seller.marketplace?.marketForumThreadId && result.shopForumSync.ensure) {
+      await ensureShopForumThread(sellerId);
+    }
+    if (engine.state.users[sellerId]?.marketplace?.marketForumThreadId) {
+      await syncShopForumPanel(sellerId);
+    }
+  } catch (error) {
+    console.warn(`店舗Forum同期に失敗しました (${sellerId}): ${error.message}`);
+    engine.markShopForumSyncFailed(sellerId, error.message);
+    store.save(engine.state);
+  }
+}
+
+// 販売者の店舗Forum投稿を作成する（既にあれば何もしない）。初出品時に呼ばれる。
+async function ensureShopForumThread(sellerId) {
+  const forumId = marketForumChannelId();
+  if (!forumId) return null;
+  const seller = engine.state.users[sellerId];
+  if (!seller) return null;
+  if (seller.marketplace?.marketForumThreadId) return seller.marketplace.marketForumThreadId;
+  if (shopForumCreateLocks.has(sellerId)) return null;
+  shopForumCreateLocks.add(sellerId);
+  try {
+    // ロック取得後にもう一度確認（同時押し対策）
+    if (engine.state.users[sellerId]?.marketplace?.marketForumThreadId) {
+      return engine.state.users[sellerId].marketplace.marketForumThreadId;
+    }
+    const forum = await client.channels.fetch(forumId).catch(() => null);
+    if (!forum || typeof forum.threads?.create !== "function") {
+      throw new Error(`商店街フォーラム ${forumId} を取得できませんでした`);
+    }
+    const shop = engine.ensureShopShape(seller);
+    const storeName = engine.sellerPageName(sellerId, seller.name);
+    const thread = await forum.threads.create({
+      name: String(storeName).slice(0, 95),
+      message: {
+        content: [
+          shop.shopDescription || "紹介文はまだありません。「自分の店」の「店名・説明を編集」で書けます。",
+          "",
+          "この投稿はIRISの店舗ページです。出品はすべてIRISのエスクロー（代金預かり）取引になります。"
+        ].join("\n")
+      },
+      reason: `IRIS店舗ページ: ${seller.name}`
+    });
+    const attach = engine.attachShopForumThread(engine.getUser(sellerId, seller.name), thread.id);
+    store.save(engine.state);
+    if (attach.ok) return thread.id;
+    // 紐付けに失敗した場合、作ったばかりの投稿はDBに載っていない孤児になる。
+    // 作成直後のBot投稿（ユーザーの書き込みなし）なので削除してロールバックする。
+    // 取引・Ris・出品には触れない。削除に失敗したら孤児としてmarketLogに記録し、手動回収できるようにする。
+    await thread.delete(`IRIS店舗ページのロールバック: ${attach.title || "紐付け失敗"}`).catch((error) => {
+      console.warn(`孤児の店舗Forum投稿 ${thread.id} を削除できませんでした: ${error.message}`);
+      engine.marketLog(`店舗Forum投稿 <#${thread.id}> がDBに紐付かないまま残っています（孤児）。不要なら手動で削除してください。`);
+      store.save(engine.state);
+    });
+    // 並行して別の投稿（手動採用など）が先に紐付いていた場合は、DBに記録済みのそちらを使う
+    if (attach.already) return attach.threadId;
+    console.warn(`店舗Forum投稿の紐付けに失敗しました (${sellerId}): ${attach.title}`);
+    return null;
+  } catch (error) {
+    console.warn(`店舗Forum投稿の作成に失敗しました (${sellerId}): ${error.message}`);
+    engine.markShopForumSyncFailed(sellerId, error.message);
+    store.save(engine.state);
+    return null;
+  } finally {
+    shopForumCreateLocks.delete(sellerId);
+  }
+}
+
+// 店舗Forum投稿内のBotパネルをDBの内容に合わせて更新する（なければ投稿しピン留め）。
+async function syncShopForumPanel(sellerId) {
+  const seller = engine.state.users[sellerId];
+  const threadId = seller?.marketplace?.marketForumThreadId;
+  if (!threadId) return false;
+  try {
+    const thread = await client.channels.fetch(threadId).catch(() => null);
+    if (!thread?.isThread?.()) {
+      throw new Error(`店舗Forum投稿 ${threadId} を取得できませんでした`);
+    }
+    const panel = engine.shopForumPanel(sellerId);
+    if (!panel) return false;
+    const payload = panelPayload(panel);
+    const panelMessageId = seller.marketplace.marketForumPanelMessageId;
+    let updated = false;
+    if (panelMessageId) {
+      const message = await thread.messages.fetch(panelMessageId).catch(() => null);
+      if (message) {
+        await message.edit(payload);
+        updated = true;
+      }
+    }
+    if (!updated) {
+      const message = await thread.send(payload);
+      engine.setShopForumPanelMessage(sellerId, message.id);
+      await message.pin().catch(() => null);
+    }
+    // 店名変更をスレッド名にも反映（失敗しても致命的ではない）
+    const storeName = String(engine.sellerPageName(sellerId, seller.name)).slice(0, 95);
+    if (thread.name !== storeName) {
+      await thread.setName(storeName).catch(() => null);
+    }
+    // Botが作った投稿なら、本文（starter message）も店舗説明に追随させる
+    const starter = await thread.fetchStarterMessage().catch(() => null);
+    if (starter && starter.author?.id === client.user?.id) {
+      const intro = [
+        seller.marketplace.shopDescription || "紹介文はまだありません。「自分の店」の「店名・説明を編集」で書けます。",
+        "",
+        "この投稿はIRISの店舗ページです。出品はすべてIRISのエスクロー（代金預かり）取引になります。"
+      ].join("\n");
+      if (starter.content !== intro) await starter.edit({ content: intro }).catch(() => null);
+    }
+    engine.markShopForumSynced(sellerId);
+    store.save(engine.state);
+    return true;
+  } catch (error) {
+    console.warn(`店舗Forumパネル更新に失敗しました (${sellerId}): ${error.message}`);
+    engine.markShopForumSyncFailed(sellerId, error.message);
+    store.save(engine.state);
+    return false;
+  }
+}
+
+// 「自分の店」の店舗Forum再同期ボタン。投稿がなければ作り直す。
+async function handleShopForumResync(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  engine.ensureShopShape(user);
+  if (!marketForumChannelId()) {
+    await interaction.editReply({ content: "商店街フォーラムが設定されていません。運営に確認してください。" });
+    return;
+  }
+  if (!user.marketplace.marketForumThreadId) {
+    const created = await ensureShopForumThread(user.id);
+    if (!created) {
+      await interaction.editReply({ content: "店舗Forum投稿を作成できませんでした。時間をおいて再同期してください。" });
+      return;
+    }
+  }
+  const synced = await syncShopForumPanel(user.id);
+  // getUser はユーザーオブジェクトを差し替えることがあるため、必ずstateから読み直す
+  const shopState = () => engine.state.users[user.id]?.marketplace || {};
+  await interaction.editReply({
+    content: synced
+      ? `店舗Forumを再同期しました: <#${shopState().marketForumThreadId}>`
+      : "店舗Forumの同期に失敗しました。投稿が削除されている場合は、時間をおいてもう一度押すと作り直します。"
+  });
+  // 投稿が消えていた場合は連携を外して、次回の再同期で作り直せるようにする
+  const threadId = shopState().marketForumThreadId;
+  if (!synced && threadId) {
+    const thread = await client.channels.fetch(threadId).catch(() => null);
+    if (!thread) {
+      engine.detachShopForumThreadByThread(threadId);
+      store.save(engine.state);
+    }
+  }
+}
+
+// 商店街Forumに手動で投稿された場合、その投稿を本人の店舗ページとして採用できる
+async function handleForumAdoptButton(interaction) {
+  const threadId = interaction.customId.split(":")[3];
+  const thread = interaction.channel;
+  if (!thread?.isThread?.() || thread.id !== threadId || thread.parentId !== marketForumChannelId()) {
+    await interaction.reply({ content: "この投稿は店舗ページとして使えません。", ephemeral: true });
+    return;
+  }
+  if (thread.ownerId && thread.ownerId !== interaction.user.id && !isAdmin(interaction)) {
+    await interaction.reply({ content: "店舗ページにできるのは投稿の作成者だけです。", ephemeral: true });
+    return;
+  }
+  const actor = actorFromInteraction(interaction);
+  const user = engine.getUser(actor.id, actor.name);
+  const attach = engine.attachShopForumThread(user, thread.id);
+  store.save(engine.state);
+  if (!attach.ok) {
+    await interaction.reply({ content: (attach.lines || [attach.title]).join("\n"), ephemeral: true });
+    return;
+  }
+  await interaction.reply({ content: "この投稿をあなたの店舗ページにしました。出品はここにまとまって表示されます。", ephemeral: true });
+  await syncShopForumPanel(user.id);
 }
 
 async function showForumSellModal(interaction) {
@@ -1587,16 +1823,31 @@ async function postForumSalesPanel(thread, listingId) {
 client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
   try {
     if (!newlyCreated || !thread?.parentId || thread.parentId !== marketForumChannelId()) return;
+    // Botが自動作成した店舗投稿には案内不要
+    if (thread.ownerId && thread.ownerId === client.user?.id) return;
+    const ownerKey = thread.guildId && thread.ownerId ? `${thread.guildId}:${thread.ownerId}` : null;
+    const ownerShop = ownerKey ? engine.state.users[ownerKey]?.marketplace : null;
+    if (ownerShop?.marketForumThreadId) {
+      await thread.send({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("店舗ページはすでにあります")
+            .setColor(0x0f766e)
+            .setDescription(`あなたの店舗ページは <#${ownerShop.marketForumThreadId}> です。1人1店舗のため、この投稿は店舗ページになりません。\n出品は /ショップ の「自分の店」からどうぞ。`)
+        ]
+      });
+      return;
+    }
     await thread.send({
       embeds: [
         new EmbedBuilder()
-          .setTitle("この投稿をIRISで販売しますか？")
+          .setTitle("この投稿をあなたの店舗ページにしますか？")
           .setColor(0x0f766e)
-          .setDescription("価格・カテゴリ・受付上限を設定すると、この投稿から直接購入できるようになります。\n代金は取引完了までIRISが預かります。設定できるのは投稿の作成者だけです。")
+          .setDescription("IRIS商店街は1人1店舗です。この投稿を店舗ページにすると、あなたの出品がここにまとまって表示されます。\n出品自体は /ショップ の「自分の店」から行えます（代金は取引完了までIRISが預かります）。\n設定できるのは投稿の作成者だけです。")
       ],
       components: [
         new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`eco:market:forum-sell:${thread.id}`).setLabel("販売設定をする").setStyle(ButtonStyle.Primary)
+          new ButtonBuilder().setCustomId(`eco:market:forum-adopt:${thread.id}`).setLabel("この投稿を店舗ページにする").setStyle(ButtonStyle.Primary)
         )
       ]
     });
@@ -1608,7 +1859,14 @@ client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
 client.on(Events.ThreadDelete, async (thread) => {
   try {
     if (!thread?.parentId || thread.parentId !== marketForumChannelId()) return;
-    const listing = engine.pauseForumListingByThread(thread.id);
+    // 店舗投稿の削除: Forum連携だけ解除する。出品・進行中取引・Risには触らない。
+    const sellerId = engine.detachShopForumThreadByThread(thread.id);
+    if (sellerId) {
+      store.save(engine.state);
+      return;
+    }
+    // 旧方式（1商品1投稿）の投稿削除もForum連携の解除だけ行い、/ショップからの販売は続ける
+    const listing = engine.unlinkLegacyForumListingByThread(thread.id);
     if (listing) store.save(engine.state);
   } catch (error) {
     console.warn(`フォーラム投稿削除の処理に失敗しました: ${error.message}`);
@@ -1704,6 +1962,7 @@ async function handleTradeBuyModal(interaction) {
       console.warn(`取引スレッド作成に失敗しました (#${result.order.id}): ${error.message}`);
     });
   }
+  void syncShopForumFromResult(result);
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 
@@ -3055,6 +3314,7 @@ async function handleShopEditModal(interaction) {
   });
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
+  void syncShopForumFromResult(result);
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 
@@ -3132,6 +3392,7 @@ async function handleShopResubmitModal(interaction) {
   });
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
+  void syncShopForumFromResult(result);
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 
@@ -3211,6 +3472,7 @@ async function handleShopStatusToggle(interaction) {
   const result = engine.setShopStatus(user, target);
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
+  void syncShopForumFromResult(result);
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 
@@ -3271,7 +3533,8 @@ async function handleReviewButton(interaction) {
     const result = engine.approveListing(engine.getUser(actor.id, actor.name), listingId);
     decorateResultForDiscord(result, interaction);
     store.save(engine.state);
-    await updateDiscord(interaction, result);
+    await respondPanel(interaction, result);
+    void syncShopForumFromResult(result);
     return;
   }
   if (action === "reject") {
@@ -3314,7 +3577,11 @@ async function handleOrderAdminButton(interaction) {
   }
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
-  await updateDiscord(interaction, result);
+  await respondPanel(interaction, result);
+  void syncShopForumFromResult(result);
+  if (result?.tradeUpdate) {
+    await postTradeThreadUpdate(result.tradeUpdate.orderId).catch((error) => console.warn(`取引スレッド更新に失敗しました: ${error.message}`));
+  }
 }
 
 async function handleReviewRejectModal(interaction) {
@@ -3328,6 +3595,7 @@ async function handleReviewRejectModal(interaction) {
   const result = engine.rejectListing(engine.getUser(actor.id, actor.name), listingId, reason);
   decorateResultForDiscord(result, interaction);
   store.save(engine.state);
+  void syncShopForumFromResult(result);
   await replyDiscord(interaction, result, { ephemeral: true });
 }
 
