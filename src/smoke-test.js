@@ -648,12 +648,7 @@ const boostEngine = new EconomyEngine(createInitialState(), { now: () => boostNo
 const boostAdmin = boostEngine.getUser("123456789012345678:111111111111111111", "Boost Admin");
 const boostGuildId = "123456789012345678";
 const boostUserId = "222222222222222222";
-const tier1Role = "333333333333333331";
-const tier2Role = "333333333333333332";
-const tier3Role = "333333333333333333";
-assert(boostEngine.adminSetBoostRewardRole(boostAdmin, "tier1", tier1Role).ok, "1枠ロールを設定できる");
-assert(boostEngine.adminSetBoostRewardRole(boostAdmin, "tier2", tier2Role).ok, "2枠ロールを設定できる");
-assert(boostEngine.adminSetBoostRewardRole(boostAdmin, "tier3", tier3Role).ok, "3枠ロールを設定できる");
+const boostInternalId = `${boostGuildId}:${boostUserId}`;
 boostEngine.recordBoostMemberObservation({
   guildId: boostGuildId,
   discordUserId: boostUserId,
@@ -661,46 +656,124 @@ boostEngine.recordBoostMemberObservation({
   premiumSince: "2026-07-01T00:00:00.000Z",
   active: true
 });
-const noTierBoost = boostEngine.claimBoostMonthlyRewardForMember({
+
+// --- 月次一律報酬: 枠数ロール不要で自動支払い ---
+const julyBoost = boostEngine.claimBoostMonthlyRewardForMember({
   guildId: boostGuildId,
   discordUserId: boostUserId,
   displayName: "ブースター",
   premiumSince: "2026-07-01T00:00:00.000Z",
   roleIds: []
 });
-assert.strictEqual(noTierBoost.changed, false, "枠数ロールがない場合は支払わない");
-assert.strictEqual(noTierBoost.code, "BOOST_TIER_UNSET", "枠数未設定として扱う");
-const julyBoost = boostEngine.claimBoostMonthlyRewardForMember({
-  guildId: boostGuildId,
-  discordUserId: boostUserId,
-  displayName: "ブースター",
-  premiumSince: "2026-07-01T00:00:00.000Z",
-  roleIds: [tier2Role]
-});
-assert(julyBoost.changed, "初回月次ブースト報酬を支払う");
-assert.strictEqual(julyBoost.reward.amount, 20000, "2枠は20,000 Ris");
-const walletAfterJuly = boostEngine.getUser(`${boostGuildId}:${boostUserId}`, "ブースター").wallet;
+assert(julyBoost.changed, "枠数ロールがなくても月次ブースト報酬を支払う");
+assert.strictEqual(julyBoost.reward.amount, 10000, "月次一律は10,000 Ris");
+const walletAfterJuly = boostEngine.getUser(boostInternalId, "ブースター").wallet;
 const julyAgain = boostEngine.claimBoostMonthlyRewardForMember({
   guildId: boostGuildId,
   discordUserId: boostUserId,
   displayName: "ブースター",
   premiumSince: "2026-07-01T00:00:00.000Z",
-  roleIds: [tier2Role]
+  roleIds: []
 });
 assert.strictEqual(julyAgain.changed, false, "同月再送では二重付与しない");
-assert.strictEqual(boostEngine.getUser(`${boostGuildId}:${boostUserId}`, "ブースター").wallet, walletAfterJuly, "同月再送で財布は増えない");
+assert.strictEqual(boostEngine.getUser(boostInternalId, "ブースター").wallet, walletAfterJuly, "同月再送で財布は増えない");
 boostNow = new Date("2026-08-01T00:00:00.000Z");
 const augustBoost = boostEngine.claimBoostMonthlyRewardForMember({
   guildId: boostGuildId,
   discordUserId: boostUserId,
   displayName: "ブースター",
   premiumSince: "2026-07-01T00:00:00.000Z",
-  roleIds: [tier3Role]
+  roleIds: []
 });
 assert(augustBoost.changed, "翌月のブースト報酬を支払う");
-assert.strictEqual(augustBoost.reward.baseReward, 30000, "3枠以上は30,000 Ris");
+assert.strictEqual(augustBoost.reward.baseReward, 10000, "翌月も月次一律は10,000 Ris");
 assert.strictEqual(augustBoost.reward.continuityBonus, 10000, "前月継続で10,000 Risを足す");
-assert.strictEqual(augustBoost.reward.amount, 40000, "3枠以上 + 継続は40,000 Ris");
+assert.strictEqual(augustBoost.reward.amount, 20000, "一律 + 継続は20,000 Ris");
+
+// --- ブースト回数カウンター: 通知1件=1回・メッセージID重複防止・即時ボーナス ---
+boostNow = new Date("2026-08-02T00:00:00.000Z");
+const walletBeforeEvents = boostEngine.getUser(boostInternalId, "ブースター").wallet;
+const boostEvent1 = boostEngine.recordBoostEvent({
+  guildId: boostGuildId,
+  discordUserId: boostUserId,
+  messageId: "610000000000000001",
+  messageType: 8,
+  displayName: "ブースター",
+  at: boostNow.toISOString()
+});
+assert(boostEvent1.ok && boostEvent1.counted, "ブースト通知を記録できる");
+assert.strictEqual(boostEvent1.totalBoosts, 1, "累計1回になる");
+assert.strictEqual(boostEvent1.bonusPaid, 5000, "即時ボーナス5,000 Risを支払う");
+assert.strictEqual(boostEngine.getUser(boostInternalId, "ブースター").wallet, walletBeforeEvents + 5000, "即時ボーナスが財布に入る");
+const boostEventDup = boostEngine.recordBoostEvent({
+  guildId: boostGuildId,
+  discordUserId: boostUserId,
+  messageId: "610000000000000001",
+  messageType: 8,
+  displayName: "ブースター"
+});
+assert(boostEventDup.ok && !boostEventDup.counted && boostEventDup.duplicate, "同じ通知メッセージは二重加算しない");
+assert.strictEqual(boostEngine.getUser(boostInternalId, "ブースター").wallet, walletBeforeEvents + 5000, "重複通知で財布は増えない");
+assert(!boostEngine.recordBoostEvent({ guildId: boostGuildId, discordUserId: boostUserId, messageId: "610000000000000002", messageType: 0 }).ok,
+  "ブースト以外のメッセージタイプは記録しない");
+
+// 月あたりの即時ボーナス上限（既定3回）: 4回目はカウントのみ
+boostEngine.recordBoostEvent({ guildId: boostGuildId, discordUserId: boostUserId, messageId: "610000000000000003", messageType: 9, displayName: "ブースター" });
+boostEngine.recordBoostEvent({ guildId: boostGuildId, discordUserId: boostUserId, messageId: "610000000000000004", messageType: 10, displayName: "ブースター" });
+const cappedEvent = boostEngine.recordBoostEvent({ guildId: boostGuildId, discordUserId: boostUserId, messageId: "610000000000000005", messageType: 11, displayName: "ブースター" });
+assert(cappedEvent.counted, "上限超過でもカウント自体は成立する");
+assert.strictEqual(cappedEvent.bonusPaid, 0, "月上限を超えた即時ボーナスは支払わない");
+assert(cappedEvent.bonusCapped, "上限超過が結果に示される");
+assert.strictEqual(cappedEvent.totalBoosts, 4, "累計は4回になる");
+assert.strictEqual(boostEngine.getUser(boostInternalId, "ブースター").wallet, walletBeforeEvents + 15000, "即時ボーナスは月3回分まで");
+
+// 翌月になれば即時ボーナスは再び支払われる
+boostNow = new Date("2026-09-01T00:00:00.000Z");
+const nextMonthEvent = boostEngine.recordBoostEvent({ guildId: boostGuildId, discordUserId: boostUserId, messageId: "610000000000000006", messageType: 8, displayName: "ブースター" });
+assert.strictEqual(nextMonthEvent.bonusPaid, 5000, "翌月は即時ボーナスの回数がリセットされる");
+
+// --- ブーストランキング ---
+const boostUser2 = "222222222222222223";
+boostEngine.recordBoostEvent({ guildId: boostGuildId, discordUserId: boostUser2, messageId: "610000000000000007", messageType: 8, displayName: "二番手" });
+const boostRanking = boostEngine.run("rank boost", { id: boostAdmin.id, name: boostAdmin.name });
+assert(boostRanking.title.includes("ブーストランキング"), "rank boost でブーストランキングが出る");
+assert(boostRanking.lines[0].includes("ブースター") && boostRanking.lines[0].includes("5回"), "1位に累計5回のブースターが出る");
+assert(boostRanking.lines.some((line) => line.includes("二番手")), "2人目もランキングに出る");
+
+// --- 報酬額の設定変更 ---
+const amountsRes = boostEngine.adminUpdateBoostRewardAmounts(boostAdmin, { instantBonus: "3000", monthlyFlatReward: "12000" });
+assert(amountsRes.ok, "ブースト報酬額を変更できる");
+assert.strictEqual(boostEngine.boostRewardSettings().instantBonus, 3000, "即時ボーナス額が更新される");
+assert.strictEqual(boostEngine.boostRewardSettings().monthlyFlatReward, 12000, "月次一律額が更新される");
+assert(!boostEngine.adminUpdateBoostRewardAmounts(boostAdmin, { instantBonus: "-1" }).ok, "不正な報酬額は拒否される");
+assert(boostEngine.adminSetBoostAnnounceChannel(boostAdmin, "444444444444444444").ok, "お祝い通知チャンネルを設定できる");
+assert.strictEqual(boostEngine.boostRewardSettings().announceChannelId, "444444444444444444", "通知チャンネルが保存される");
+
+// --- 旧ブーストカウンターBotからの取り込み（即時ボーナスなし・一度きり） ---
+const importEngine = new EconomyEngine(createInitialState(), { now: () => boostNow });
+const importWalletBefore = importEngine.getUser(boostInternalId, "ブースター").wallet;
+const importRes = importEngine.importBoostCounter({
+  sourceId: "boost-counter-bot:test",
+  guildId: boostGuildId,
+  users: {
+    [boostUserId]: { totalBoosts: 8, firstBoostAt: "2026-01-01T00:00:00.000Z", lastBoostAt: "2026-07-01T00:00:00.000Z", displayName: "ブースター" }
+  },
+  processedMessages: { "620000000000000001": "2026-07-01T00:00:00.000Z" }
+});
+assert(importRes.ok && importRes.importedBoosts === 8, "旧Botの累計を取り込める");
+assert.strictEqual(importEngine.boostCounter().users[boostInternalId].totalBoosts, 8, "取り込んだ累計が保存される");
+assert.strictEqual(importEngine.getUser(boostInternalId, "ブースター").wallet, importWalletBefore, "取り込みでは即時ボーナスを支払わない");
+assert.strictEqual(importEngine.importBoostCounter({ sourceId: "boost-counter-bot:test", guildId: boostGuildId, users: {} }).code, "ALREADY_IMPORTED",
+  "同じ取り込み元の二回目は拒否される");
+assert(importEngine.recordBoostEvent({ guildId: boostGuildId, discordUserId: boostUserId, messageId: "620000000000000001", messageType: 8 }).duplicate,
+  "取り込み済み通知メッセージは再カウントされない");
+const importedNext = importEngine.recordBoostEvent({ guildId: boostGuildId, discordUserId: boostUserId, messageId: "620000000000000002", messageType: 8, displayName: "ブースター" });
+assert.strictEqual(importedNext.totalBoosts, 9, "取り込み後の新規ブーストは累計に積み上がる");
+
+// --- 再読み込みでカウンターが壊れない ---
+const boostReload = new EconomyEngine(JSON.parse(JSON.stringify(boostEngine.state)), { now: () => boostNow });
+assert.strictEqual(boostReload.boostCounter().users[boostInternalId].totalBoosts, 5, "再読み込みでも累計が維持される");
+assert(JSON.stringify(boostReload.boostRewardAdminPanel(boostAdmin)).includes("即時ボーナス"), "管理パネルに新報酬設定が表示される");
 
 // ソート: price_asc で価格昇順
 const sortedAsc = engine.searchListings({ sort: "price_asc" });

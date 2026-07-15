@@ -270,6 +270,10 @@ async function handleInteraction(interaction) {
       await handleMarketSettingsModal(interaction);
       return;
     }
+    if (interaction.customId === "eco:modal:boost-amounts") {
+      await handleBoostAmountsModal(interaction);
+      return;
+    }
   }
 
   if (interaction.isUserSelectMenu()) {
@@ -315,6 +319,10 @@ async function handleInteraction(interaction) {
     }
     if (["eco:channel:market-forum", "eco:channel:trade-channel"].includes(interaction.customId)) {
       await handleMarketChannelSelect(interaction);
+      return;
+    }
+    if (interaction.customId === "eco:channel:boost-announce") {
+      await handleBoostAnnounceChannelSelect(interaction);
       return;
     }
     return;
@@ -567,6 +575,11 @@ async function replyInteractionError(interaction) {
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) {
     if (message.author.id === DISBOARD_BOT_ID) await handleDisboardBump(message);
+    return;
+  }
+  // ブースト通知（システムメッセージ type 8〜11）: 回数記録と即時ボーナス。text XPの対象にはしない。
+  if (message.guild && BOOST_SYSTEM_MESSAGE_TYPES.has(Number(message.type))) {
+    await handleBoostSystemMessage(message).catch((error) => console.warn(`ブースト通知の処理に失敗しました: ${error.message}`));
     return;
   }
   if (message.guild && message.channelId === panelState.rankPanel?.channelId) scheduleRankPanelRefresh(message.channel);
@@ -1359,7 +1372,7 @@ function progressBar(percent) {
 async function handleRankPanelButton(interaction) {
   const action = interaction.customId.split(":")[2];
   const actor = actorFromInteraction(interaction);
-  const commands = { tc: "rank text", vc: "rank vc", invite: "rank invite", bump: "rank bump" };
+  const commands = { tc: "rank text", vc: "rank vc", invite: "rank invite", bump: "rank bump", boost: "rank boost" };
   const command = commands[action] || "card";
   const result = engine.run(command, actor);
   decorateResultForDiscord(result, interaction);
@@ -3508,6 +3521,18 @@ async function handleBoostRewardButton(interaction) {
     await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
     return;
   }
+  if (interaction.customId === "eco:boost:amounts-edit") {
+    await showBoostAmountsModal(interaction);
+    return;
+  }
+  if (interaction.customId === "eco:boost:announce-clear") {
+    const actor = actorFromInteraction(interaction);
+    const result = engine.adminSetBoostAnnounceChannel(engine.getUser(actor.id, actor.name), null);
+    decorateResultForDiscord(result, interaction);
+    store.save(engine.state);
+    await respondPanel(interaction, result);
+    return;
+  }
   if (interaction.customId === "eco:boost:run-monthly") {
     await interaction.deferUpdate();
     const result = await reconcileTrackedBoostRewards("manual");
@@ -3878,12 +3903,13 @@ async function postRankPanel(channel) {
 function buildRankPanelPayload() {
   const embed = new EmbedBuilder()
     .setTitle("ランク確認")
-    .setDescription("発言・通話・招待・Bump のランクとサーバー内順位を確認できます。")
+    .setDescription("発言・通話・招待・Bump・ブースト のランクとサーバー内順位を確認できます。")
     .setColor(0x7c3aed)
     .addFields(
       { name: "発言ランク", value: "発言量に応じて経験値・レベル・ランクが上がります。", inline: true },
       { name: "通話ランク", value: "VC滞在時間で経験値が増え、分給も上がります。", inline: true },
       { name: "招待・Bump階級", value: "招待成立数と DISBOARD の Bump 回数で階級が上がり、1回あたりの報酬が増えます。", inline: false },
+      { name: "ブースト", value: "サーバーブーストの累計回数を記録しています。ブーストすると即時ボーナスと月次報酬も届きます。", inline: false },
       { name: "使い方", value: "「自分のランク」で自身のカード、各ランキングボタンでトップ10を確認できます。", inline: false }
     );
   const row = new ActionRowBuilder().addComponents(
@@ -3893,7 +3919,10 @@ function buildRankPanelPayload() {
     new ButtonBuilder().setCustomId("eco:rank:invite").setLabel("招待ランキング").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("eco:rank:bump").setLabel("Bumpランキング").setStyle(ButtonStyle.Success)
   );
-  return { embeds: [embed], components: [row] };
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("eco:rank:boost").setLabel("ブーストランキング").setStyle(ButtonStyle.Success)
+  );
+  return { embeds: [embed], components: [row, row2] };
 }
 
 function decorateResultForDiscord(result, context) {
@@ -5165,6 +5194,136 @@ function startOfficialRoleExpirySweeper() {
     }
     if (changed) store.save(engine.state);
   }, 60_000).unref?.();
+}
+
+// Discordのブースト関連システムメッセージ（type 8〜11）
+const BOOST_SYSTEM_MESSAGE_TYPES = new Set([8, 9, 10, 11]);
+
+// ブースト通知メッセージ: 回数を記録し、即時ボーナスを支払い、お祝い通知を送る
+async function handleBoostSystemMessage(message) {
+  const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
+  const displayName = member?.displayName || message.author.globalName || message.author.username;
+  const result = engine.recordBoostEvent({
+    guildId: message.guild.id,
+    discordUserId: message.author.id,
+    messageId: message.id,
+    messageType: message.type,
+    displayName,
+    at: new Date(message.createdTimestamp).toISOString()
+  });
+  if (!result.ok || !result.counted) return;
+  store.save(engine.state);
+
+  const settings = engine.boostRewardSettings();
+  await sendLog({
+    ok: true,
+    title: "サーバーブースト記録",
+    lines: [
+      `${displayName} のブーストを記録しました（累計 ${result.totalBoosts}回）。`,
+      result.bonusPaid ? `即時ボーナス ${fmt(result.bonusPaid)} を付与しました。` : result.bonusCapped ? "今月の即時ボーナスは上限のためカウントのみ。" : null
+    ].filter(Boolean)
+  });
+
+  // お祝い通知（設定時のみ）。失敗してもカウント・報酬には影響しない。
+  if (!settings.announceChannelId) return;
+  try {
+    const channel = await client.channels.fetch(settings.announceChannelId).catch(() => null);
+    if (!channel?.isTextBased?.()) return;
+    const embed = new EmbedBuilder()
+      .setTitle("🚀 サーバーブーストありがとうございます！")
+      .setColor(0xf47fff)
+      .setDescription(`<@${message.author.id}> さんがサーバーをブーストしました！`)
+      .addFields(
+        { name: "累計ブースト", value: `**${result.totalBoosts}回**`, inline: true },
+        { name: "現在のサーバーブースト", value: `**${Number(message.guild.premiumSubscriptionCount ?? 0)}個**`, inline: true },
+        ...(result.bonusPaid ? [{ name: "ブーストボーナス", value: `**${fmt(result.bonusPaid)}** をお届けしました 💝`, inline: false }] : [])
+      )
+      .setTimestamp();
+    const avatar = member?.displayAvatarURL?.({ size: 256 });
+    if (avatar) embed.setThumbnail(avatar);
+    await channel.send({
+      content: `<@${message.author.id}>`,
+      embeds: [embed],
+      allowedMentions: { users: [message.author.id], roles: [], repliedUser: false }
+    });
+  } catch (error) {
+    console.warn(`ブーストお祝い通知の送信に失敗しました: ${error.message}`);
+  }
+}
+
+async function showBoostAmountsModal(interaction) {
+  const settings = engine.boostRewardSettings();
+  const modal = new ModalBuilder()
+    .setCustomId("eco:modal:boost-amounts")
+    .setTitle("ブースト報酬額を編集");
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("instantBonus")
+        .setLabel("即時ボーナス（ブースト1回ごと / Ris）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(9)
+        .setValue(String(settings.instantBonus))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("instantBonusMonthlyCap")
+        .setLabel("即時ボーナスの月あたり回数上限")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(3)
+        .setValue(String(settings.instantBonusMonthlyCap))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("monthlyFlatReward")
+        .setLabel("月次一律（ブースト中なら毎月 / Ris）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(9)
+        .setValue(String(settings.monthlyFlatReward))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("continuityBonus")
+        .setLabel("継続ボーナス（前月も受給していれば / Ris）")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(9)
+        .setValue(String(settings.continuityBonus))
+    )
+  );
+  await interaction.showModal(modal);
+}
+
+async function handleBoostAmountsModal(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const actor = actorFromInteraction(interaction);
+  const result = engine.adminUpdateBoostRewardAmounts(engine.getUser(actor.id, actor.name), {
+    instantBonus: interaction.fields.getTextInputValue("instantBonus") || "",
+    instantBonusMonthlyCap: interaction.fields.getTextInputValue("instantBonusMonthlyCap") || "",
+    monthlyFlatReward: interaction.fields.getTextInputValue("monthlyFlatReward") || "",
+    continuityBonus: interaction.fields.getTextInputValue("continuityBonus") || ""
+  });
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
+}
+
+async function handleBoostAnnounceChannelSelect(interaction) {
+  if (!isAdmin(interaction)) {
+    await interaction.reply({ content: "そこは運営用です。", ephemeral: true });
+    return;
+  }
+  const actor = actorFromInteraction(interaction);
+  const result = engine.adminSetBoostAnnounceChannel(engine.getUser(actor.id, actor.name), interaction.values?.[0] || null);
+  decorateResultForDiscord(result, interaction);
+  store.save(engine.state);
+  await replyDiscord(interaction, result, { ephemeral: true });
 }
 
 function startBoostRewardSweeper() {

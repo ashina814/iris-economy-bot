@@ -1136,9 +1136,10 @@ class EconomyEngine {
     if (!validDateIso(data.premiumSince)) {
       return { ok: false, changed: false, code: "BOOST_NOT_ACTIVE", message: "member is not boosting" };
     }
-    const tier = this.boostRewardTierForRoleIds(data.roleIds || []);
-    if (tier < 1) {
-      return { ok: false, changed: false, code: "BOOST_TIER_UNSET", message: "boost tier role is not set" };
+    // 月次はブースト中なら一律（枠数ロール不要・完全自動）。枠数の手動運用は廃止。
+    const baseReward = settings.monthlyFlatReward;
+    if (baseReward <= 0) {
+      return { ok: false, changed: false, code: "BOOST_MONTHLY_DISABLED", message: "monthly flat reward is disabled" };
     }
     const monthKey = data.monthKey || jstMonthKey(this.now());
     const rewardId = `${userId}:${monthKey}`;
@@ -1147,7 +1148,6 @@ class EconomyEngine {
       return { ok: true, changed: false, code: "BOOST_REWARD_ALREADY_PAID", reward: existing };
     }
     const previous = this.state.boostRewards.rewards[`${userId}:${previousJstMonthKey(monthKey)}`];
-    const baseReward = settings.tierRewards[`tier${tier}`] || 0;
     const continuityBonus = previous?.status === "paid" ? settings.continuityBonus : 0;
     const amount = baseReward + continuityBonus;
     if (!Number.isSafeInteger(amount) || amount < 0) {
@@ -1170,7 +1170,7 @@ class EconomyEngine {
       guildId,
       discordUserId,
       monthKey,
-      tier,
+      tier: 0,
       baseReward,
       continuityBonus,
       amount,
@@ -1190,10 +1190,10 @@ class EconomyEngine {
       lastSeenAt: now,
       lastEndedAt: null,
       lastRewardMonth: monthKey,
-      lastTier: tier
+      lastTier: 0
     };
-    this.log(user, "boost_reward", amount, `tier ${tier} / ${monthKey}${continuityBonus ? " / continuity" : ""}`);
-    this.boostRewardLog(`${user.name} ${monthKey} tier${tier} ${fmt(amount)} を付与しました。`);
+    this.log(user, "boost_reward", amount, `monthly / ${monthKey}${continuityBonus ? " / continuity" : ""}`);
+    this.boostRewardLog(`${user.name} ${monthKey} 月次 ${fmt(amount)} を付与しました。${continuityBonus ? `（継続 ${fmt(continuityBonus)} 含む）` : ""}`);
     return { ok: true, changed: true, reward, wallet: user.wallet };
   }
 
@@ -1215,6 +1215,169 @@ class EconomyEngine {
   boostRewardLog(line) {
     this.state.boostRewards.logs.push(`${shortDate(this.now().toISOString())} ${line}`);
     this.state.boostRewards.logs = this.state.boostRewards.logs.slice(-80);
+  }
+
+  // ---- ブースト回数カウンター（Discordのブースト通知 type 8〜11 を1件=1回として記録） ----
+
+  boostCounter() {
+    this.boostRewardSettings();
+    return this.state.boostRewards.counter;
+  }
+
+  // ブースト通知メッセージを記録し、即時ボーナス（月あたり回数上限つき）を支払う。
+  // 同じメッセージIDは二重加算しない。
+  recordBoostEvent(data = {}) {
+    const settings = this.boostRewardSettings();
+    const guildId = String(data.guildId || "");
+    const discordUserId = String(data.discordUserId || "");
+    const messageId = String(data.messageId || "");
+    if (!isDiscordSnowflake(guildId) || !isDiscordSnowflake(discordUserId) || !isDiscordSnowflake(messageId)) {
+      return { ok: false, counted: false, code: "INVALID_BOOST_EVENT" };
+    }
+    if (!BOOST_COUNTER_MESSAGE_TYPES.has(Number(data.messageType))) {
+      return { ok: false, counted: false, code: "NOT_BOOST_MESSAGE" };
+    }
+    const counter = this.boostCounter();
+    if (counter.processedMessages[messageId]) {
+      return { ok: true, counted: false, duplicate: true };
+    }
+    const at = validDateIso(data.at) || this.now().toISOString();
+    counter.processedMessages[messageId] = at;
+    pruneBoostProcessedMessages(counter);
+
+    const userId = `${guildId}:${discordUserId}`;
+    const displayName = cleanMarketText(data.displayName || "", 80);
+    const entry = counter.users[userId] || { totalBoosts: 0, firstBoostAt: null, lastBoostAt: null, displayName: "" };
+    entry.totalBoosts = Math.max(0, Math.floor(Number(entry.totalBoosts) || 0)) + 1;
+    entry.firstBoostAt = entry.firstBoostAt || at;
+    entry.lastBoostAt = at;
+    if (displayName) entry.displayName = displayName;
+    counter.users[userId] = entry;
+
+    // 即時ボーナス。支払い失敗・上限超過でもカウント自体は成立させる（DBが正本）。
+    let bonusPaid = 0;
+    let bonusCapped = false;
+    const monthKey = jstMonthKey(this.now());
+    if (settings.enabled && settings.instantBonus > 0) {
+      const payoutKey = `${userId}:${monthKey}`;
+      const paidCount = Math.max(0, Math.floor(Number(counter.instantPayouts[payoutKey]) || 0));
+      if (paidCount >= settings.instantBonusMonthlyCap) {
+        bonusCapped = true;
+      } else {
+        const user = this.getUser(userId, displayName || "Server Booster");
+        const walletCheck = this.nextCasinoWallet(user, settings.instantBonus);
+        const lifetimeCheck = this.nextCasinoLifetimeTotals(user, settings.instantBonus);
+        if (walletCheck.ok && lifetimeCheck.ok) {
+          user.wallet = walletCheck.wallet;
+          user.lifetimeEarned = lifetimeCheck.lifetimeEarned;
+          user.lifetimeLost = lifetimeCheck.lifetimeLost;
+          if (displayName) user.name = displayName;
+          counter.instantPayouts[payoutKey] = paidCount + 1;
+          bonusPaid = settings.instantBonus;
+          this.log(user, "boost_instant", bonusPaid, `boost #${entry.totalBoosts} / ${monthKey}`);
+        }
+      }
+      pruneBoostInstantPayouts(counter, monthKey);
+    }
+    this.boostRewardLog(`${displayName || userId} のブーストを記録（累計 ${entry.totalBoosts}回${bonusPaid ? ` / 即時 ${fmt(bonusPaid)}` : bonusCapped ? " / 今月の即時ボーナスは上限" : ""}）。`);
+    return { ok: true, counted: true, userId, totalBoosts: entry.totalBoosts, bonusPaid, bonusCapped, monthKey };
+  }
+
+  boostCounterRanking(limit = 10) {
+    const counter = this.boostCounter();
+    return Object.entries(counter.users)
+      .map(([userId, entry]) => ({
+        userId,
+        name: this.state.users[userId]?.name || entry.displayName || userId,
+        totalBoosts: Math.max(0, Math.floor(Number(entry.totalBoosts) || 0)),
+        active: Boolean(this.state.boostRewards.members[userId]?.active)
+      }))
+      .filter((entry) => entry.totalBoosts > 0)
+      .sort((a, b) => b.totalBoosts - a.totalBoosts || String(a.userId).localeCompare(String(b.userId)))
+      .slice(0, Math.max(1, Math.min(25, limit)));
+  }
+
+  // 旧ブーストカウンターBot（boost-data.json）からの一度きりの取り込み。即時ボーナスは支払わない。
+  importBoostCounter({ sourceId, guildId, users = {}, processedMessages = {} } = {}) {
+    const counter = this.boostCounter();
+    const source = cleanToken(sourceId || "", 80) || "unknown";
+    if (counter.importedSources[source]) {
+      return { ok: false, code: "ALREADY_IMPORTED", importedAt: counter.importedSources[source] };
+    }
+    if (!isDiscordSnowflake(String(guildId || ""))) {
+      return { ok: false, code: "INVALID_GUILD" };
+    }
+    let importedUsers = 0;
+    let importedBoosts = 0;
+    for (const [discordUserId, record] of Object.entries(users)) {
+      if (!isDiscordSnowflake(String(discordUserId))) continue;
+      const total = Math.max(0, Math.floor(Number(record?.totalBoosts) || 0));
+      if (total <= 0) continue;
+      const userId = `${guildId}:${discordUserId}`;
+      const entry = counter.users[userId] || { totalBoosts: 0, firstBoostAt: null, lastBoostAt: null, displayName: "" };
+      entry.totalBoosts = Math.max(0, Math.floor(Number(entry.totalBoosts) || 0)) + total;
+      entry.firstBoostAt = validDateIso(record?.firstBoostAt) || entry.firstBoostAt;
+      entry.lastBoostAt = validDateIso(record?.lastBoostAt) || entry.lastBoostAt;
+      entry.displayName = cleanMarketText(record?.displayName || record?.username || entry.displayName || "", 80);
+      counter.users[userId] = entry;
+      importedUsers += 1;
+      importedBoosts += total;
+    }
+    let importedMessages = 0;
+    for (const [messageId, at] of Object.entries(processedMessages)) {
+      if (!isDiscordSnowflake(String(messageId)) || counter.processedMessages[messageId]) continue;
+      counter.processedMessages[messageId] = validDateIso(at) || this.now().toISOString();
+      importedMessages += 1;
+    }
+    pruneBoostProcessedMessages(counter);
+    counter.importedSources[source] = this.now().toISOString();
+    this.boostRewardLog(`ブースト履歴を取り込みました（${source}: ${importedUsers}人 / ${importedBoosts}回 / 重複防止ID ${importedMessages}件）。`);
+    return { ok: true, importedUsers, importedBoosts, importedMessages };
+  }
+
+  adminSetBoostAnnounceChannel(adminUser, channelId) {
+    const settings = this.boostRewardSettings();
+    settings.announceChannelId = isDiscordSnowflake(channelId) ? String(channelId) : null;
+    this.boostRewardLog(`${adminUser.name} がブースト通知チャンネルを${settings.announceChannelId ? `<#${settings.announceChannelId}> に設定` : "解除"}しました。`);
+    return {
+      ok: true,
+      title: settings.announceChannelId ? "ブースト通知チャンネルを設定しました" : "ブースト通知を解除しました",
+      lines: [settings.announceChannelId ? `<#${settings.announceChannelId}> にお祝い通知を送ります。` : "ブーストのお祝い通知を停止しました（カウントと報酬は継続します）。"],
+      panel: this.boostRewardAdminPanel(adminUser)
+    };
+  }
+
+  adminUpdateBoostRewardAmounts(adminUser, patch = {}) {
+    const settings = this.boostRewardSettings();
+    const changes = [];
+    const parseAmount = (value, max = 10_000_000) => {
+      const text = String(value ?? "").trim();
+      if (!text) return null;
+      const parsed = Number.parseInt(text, 10);
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > max) return false;
+      return parsed;
+    };
+    const fields = [
+      ["monthlyFlatReward", "月次一律", 10_000_000],
+      ["instantBonus", "即時ボーナス", 10_000_000],
+      ["instantBonusMonthlyCap", "即時ボーナス月上限回数", 50],
+      ["continuityBonus", "継続ボーナス", 10_000_000]
+    ];
+    for (const [key, label, max] of fields) {
+      const parsed = parseAmount(patch[key], max);
+      if (parsed === false) {
+        return { ok: false, title: "設定できません", lines: [`${label} は 0〜${fmt(max)} の整数で入力してください。`], panel: this.boostRewardAdminPanel(adminUser) };
+      }
+      if (parsed !== null && parsed !== settings[key]) {
+        changes.push(`${label}: ${fmt(settings[key])} → ${fmt(parsed)}`);
+        settings[key] = parsed;
+      }
+    }
+    if (!changes.length) {
+      return { ok: false, title: "変更がありません", lines: ["少なくとも1つの値を変更してください。"], panel: this.boostRewardAdminPanel(adminUser) };
+    }
+    this.boostRewardLog(`${adminUser.name} がブースト報酬額を更新: ${changes.join(" / ")}`);
+    return { ok: true, title: "ブースト報酬を更新しました", lines: changes, panel: this.boostRewardAdminPanel(adminUser) };
   }
 
   profile(user) {
@@ -3866,29 +4029,42 @@ class EconomyEngine {
 
   boostRewardAdminPanel(user) {
     const settings = this.boostRewardSettings();
+    const counter = this.boostCounter();
     const monthKey = jstMonthKey(this.now());
     const rewardsThisMonth = Object.values(this.state.boostRewards.rewards || {}).filter((reward) => reward.monthKey === monthKey && reward.status === "paid");
     const trackedActive = Object.values(this.state.boostRewards.members || {}).filter((member) => member.active).length;
     const totalThisMonth = rewardsThisMonth.reduce((sum, reward) => sum + (Number(reward.amount) || 0), 0);
+    const counterUsers = Object.values(counter.users).filter((entry) => (Number(entry.totalBoosts) || 0) > 0);
+    const totalBoosts = counterUsers.reduce((sum, entry) => sum + (Number(entry.totalBoosts) || 0), 0);
     return {
       title: "サーバーブースト報酬",
-      description: "ブースト中の人へ月1回だけRisを付与します。枠数ロールは運営が付け替え、Botは読み取りだけを行います。",
+      description: "ブースト通知（システムメッセージ）を自動検知して回数を記録し、即時ボーナスと月次一律報酬を自動で支払います。枠数ロールの手動運用は不要です。",
       color: 0xf97316,
       fields: [
-        { name: "今月", value: `${monthKey} / 支払い ${rewardsThisMonth.length}件 / ${fmt(totalThisMonth)}`, inline: true },
+        { name: "今月", value: `${monthKey} / 月次支払い ${rewardsThisMonth.length}件 / ${fmt(totalThisMonth)}`, inline: true },
         { name: "追跡中", value: `ブースト中 ${trackedActive}人`, inline: true },
-        { name: "報酬", value: `1枠 ${fmt(settings.tierRewards.tier1)} / 2枠 ${fmt(settings.tierRewards.tier2)} / 3枠+ ${fmt(settings.tierRewards.tier3)}\n継続 ${fmt(settings.continuityBonus)}`, inline: false },
+        { name: "累計記録", value: `${counterUsers.length}人 / ${totalBoosts}回`, inline: true },
+        {
+          name: "報酬設定",
+          value: [
+            `即時ボーナス: ブースト1回につき ${fmt(settings.instantBonus)}（月${settings.instantBonusMonthlyCap}回まで）`,
+            `月次一律: ブースト中なら ${fmt(settings.monthlyFlatReward)}`,
+            `継続ボーナス: 前月も受給していれば +${fmt(settings.continuityBonus)}`
+          ].join("\n"),
+          inline: false
+        },
+        { name: "お祝い通知", value: settings.announceChannelId ? `<#${settings.announceChannelId}>` : "未設定（通知なしでもカウントは動作）", inline: true },
         { name: "自動ロール", value: settings.boosterRoleId ? `<@&${settings.boosterRoleId}>` : "未設定", inline: true },
-        { name: "枠数ロール", value: `1枠 ${settings.tierRoleIds.tier1 ? `<@&${settings.tierRoleIds.tier1}>` : "未設定"}\n2枠 ${settings.tierRoleIds.tier2 ? `<@&${settings.tierRoleIds.tier2}>` : "未設定"}\n3枠+ ${settings.tierRoleIds.tier3 ? `<@&${settings.tierRoleIds.tier3}>` : "未設定"}`, inline: true },
         { name: "最近のログ", value: this.state.boostRewards.logs.slice(-5).reverse().join("\n") || "まだログはありません。", inline: false }
       ],
       components: [
         roleSelect("ブースター自動ロールを選択", "eco:role:boost:booster"),
-        roleSelect("1枠ロールを選択", "eco:role:boost:tier1"),
-        roleSelect("2枠ロールを選択", "eco:role:boost:tier2"),
-        roleSelect("3枠以上ロールを選択", "eco:role:boost:tier3"),
+        { type: "channel-select", customId: "eco:channel:boost-announce", placeholder: "お祝い通知チャンネルを設定（テキストチャンネル）", channelTypes: ["text"] },
         buttons([
+          customButton("報酬額を編集", "eco:boost:amounts-edit", "primary"),
           customButton("今月分を再確認", "eco:boost:run-monthly", "primary"),
+          customButton("通知を解除", "eco:boost:announce-clear", "secondary", !settings.announceChannelId),
+          runButton("ブーストランキング", "rank boost"),
           panelButton("運営パネル", "admin")
         ])
       ]
@@ -6249,6 +6425,17 @@ class EconomyEngine {
       title = "Bumpランキング";
       score = (user) => user.bump?.count || 0;
       label = (value) => `${value}回 / ${rankFor(BUMP_RANKS, value).name}`;
+    } else if (["boost", "boosts", "ブースト"].includes(type)) {
+      // ブーストはカウンター台帳（未joinのブースターも含む）から出す
+      const ranked = this.boostCounterRanking(10);
+      if (ranked.length === 0) {
+        return { ok: true, title: "ブーストランキング", lines: ["まだブースト記録がありません。サーバーをブーストすると記録されます。"] };
+      }
+      return {
+        ok: true,
+        title: "🚀 ブーストランキング",
+        lines: ranked.map((entry, index) => `${index + 1}. ${entry.name} - ${entry.totalBoosts}回${entry.active ? " 🟢" : ""}`)
+      };
     }
 
     const users = allUsers.filter((user) => rankAxis ? this.isActivityRankEligible(user, rankAxis) : user.joined);
@@ -7168,12 +7355,35 @@ function createActivityState(overrides = {}) {
   };
 }
 
+// Discordのブースト関連システムメッセージ（type 8〜11）
+const BOOST_COUNTER_MESSAGE_TYPES = new Set([8, 9, 10, 11]);
+const BOOST_PROCESSED_MESSAGE_LIMIT = 20000;
+
+function pruneBoostProcessedMessages(counter) {
+  const keys = Object.keys(counter.processedMessages);
+  if (keys.length <= BOOST_PROCESSED_MESSAGE_LIMIT) return;
+  for (const key of keys.slice(0, keys.length - BOOST_PROCESSED_MESSAGE_LIMIT)) {
+    delete counter.processedMessages[key];
+  }
+}
+
+// 即時ボーナスの支払い回数は当月・前月分だけ残す（上限判定に必要なのは当月分のみ）
+function pruneBoostInstantPayouts(counter, monthKey) {
+  const keep = new Set([monthKey, previousJstMonthKey(monthKey)]);
+  for (const key of Object.keys(counter.instantPayouts)) {
+    const keyMonth = key.slice(key.lastIndexOf(":") + 1);
+    if (!keep.has(keyMonth)) delete counter.instantPayouts[key];
+  }
+}
+
 function createBoostRewardsState(overrides = {}) {
   const rewards = overrides?.settings?.tierRewards || {};
+  const counter = overrides?.counter || {};
   return {
     settings: {
       enabled: overrides?.settings?.enabled !== false,
       boosterRoleId: isDiscordSnowflake(overrides?.settings?.boosterRoleId) ? String(overrides.settings.boosterRoleId) : null,
+      // 枠数ロール・枠数別報酬はlegacy設定として保持のみ（月次は一律報酬に移行済み）
       tierRoleIds: {
         tier1: isDiscordSnowflake(overrides?.settings?.tierRoleIds?.tier1) ? String(overrides.settings.tierRoleIds.tier1) : null,
         tier2: isDiscordSnowflake(overrides?.settings?.tierRoleIds?.tier2) ? String(overrides.settings.tierRoleIds.tier2) : null,
@@ -7184,10 +7394,22 @@ function createBoostRewardsState(overrides = {}) {
         tier2: clamp(Math.floor(Number(rewards.tier2) || 20000), 0, Number.MAX_SAFE_INTEGER),
         tier3: clamp(Math.floor(Number(rewards.tier3) || 30000), 0, Number.MAX_SAFE_INTEGER)
       },
-      continuityBonus: clamp(Math.floor(Number(overrides?.settings?.continuityBonus) || 10000), 0, Number.MAX_SAFE_INTEGER)
+      continuityBonus: clamp(Math.floor(Number(overrides?.settings?.continuityBonus) || 10000), 0, Number.MAX_SAFE_INTEGER),
+      // 新方式: ブースト状態への一律月次 + ブースト行為ごとの即時ボーナス（月あたり回数上限つき）
+      monthlyFlatReward: clamp(Math.floor(Number(overrides?.settings?.monthlyFlatReward ?? 10000)), 0, Number.MAX_SAFE_INTEGER),
+      instantBonus: clamp(Math.floor(Number(overrides?.settings?.instantBonus ?? 5000)), 0, Number.MAX_SAFE_INTEGER),
+      instantBonusMonthlyCap: clamp(Math.floor(Number(overrides?.settings?.instantBonusMonthlyCap ?? 3)), 0, 50),
+      announceChannelId: isDiscordSnowflake(overrides?.settings?.announceChannelId) ? String(overrides.settings.announceChannelId) : null
     },
     members: { ...((overrides && overrides.members) || {}) },
     rewards: { ...((overrides && overrides.rewards) || {}) },
+    // ブースト回数カウンター: Discordのブースト通知（message type 8〜11）1件 = 1回
+    counter: {
+      users: { ...(counter.users || {}) },
+      processedMessages: { ...(counter.processedMessages || {}) },
+      instantPayouts: { ...(counter.instantPayouts || {}) },
+      importedSources: { ...(counter.importedSources || {}) }
+    },
     logs: Array.isArray(overrides?.logs) ? overrides.logs : []
   };
 }
