@@ -1,6 +1,7 @@
 const http = require("http");
 const crypto = require("crypto");
 const { URL } = require("url");
+const { CURRENCY } = require("./economy");
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8787;
@@ -246,7 +247,7 @@ function sendDomainResult(res, result) {
     sendJson(res, result.status || 200, {
       ok: true,
       wallet: result.wallet,
-      currency: result.currency,
+      currency: result.currency || CURRENCY.code,
       userId: result.userId,
       discordUserId: result.discordUserId,
       name: result.name,

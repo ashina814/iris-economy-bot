@@ -119,6 +119,7 @@ async function main() {
     assert.strictEqual(wallet.status, 200, "wallet取得が成功する");
     assert.strictEqual(wallet.body.wallet, 10000, "wallet残高が返る");
 
+    assert.strictEqual(wallet.body.currency, "Ris", "wallet response keeps the configured currency");
     const otherGuildUser = "345678901234567890";
     engine.run("join", { id: `345678901234567890:${otherGuildUser}`, name: "Other Guild" });
     const otherGuild = await request(port, { path: `/internal/v1/wallets/${otherGuildUser}`, token: "secret-secret-secret" });
@@ -265,6 +266,7 @@ async function main() {
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, 9000, "予約時にbetを控除");
     assert.strictEqual(saveCount, 1, "予約時に保存");
 
+    assert.strictEqual(reserve.body.currency, "Ris", "reservation returns the configured currency");
     const duplicateReserve = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations",
@@ -274,6 +276,7 @@ async function main() {
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, 9000, "予約再送で二重控除しない");
     assert.strictEqual(saveCount, 1, "idempotent reservation does not write state again");
 
+    assert.strictEqual(duplicateReserve.body.currency, "Ris", "idempotent reservation returns the configured currency");
     failNextSave = true;
     const beforeSaveRetryState = JSON.parse(JSON.stringify(engine.state));
     const beforeSaveRetryWallet = engine.getUser(actor.id, actor.name).wallet;
@@ -386,6 +389,7 @@ async function main() {
     assert.strictEqual(settle.status, 200, "精算が成功する");
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeWinSettle + 2500, "payoutは賭け金込みの返却総額");
 
+    assert.strictEqual(settle.body.currency, "Ris", "settlement returns the configured currency");
     const duplicateSettle = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations/tx-win/settle",
@@ -394,6 +398,7 @@ async function main() {
     assert.strictEqual(duplicateSettle.status, 200, "同じ精算再送は冪等");
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeWinSettle + 2500, "精算再送で二重加算しない");
 
+    assert.strictEqual(duplicateSettle.body.currency, "Ris", "idempotent settlement returns the configured currency");
     const cancelAfterSettle = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations/tx-win/cancel",
@@ -440,6 +445,7 @@ async function main() {
     });
     assert.strictEqual(cancel.status, 200, "取消が成功");
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeCancel + 300, "取消はbetを返金");
+    assert.strictEqual(cancel.body.currency, "Ris", "cancellation returns the configured currency");
     const cancelAgain = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations/tx-cancel/cancel",
@@ -447,6 +453,7 @@ async function main() {
     });
     assert.strictEqual(cancelAgain.status, 200, "二重取消は冪等");
     assert.strictEqual(engine.getUser(actor.id, actor.name).wallet, beforeCancel + 300, "二重返金しない");
+    assert.strictEqual(cancelAgain.body.currency, "Ris", "idempotent cancellation returns the configured currency");
     const settleAfterCancel = await request(port, {
       method: "POST",
       path: "/internal/v1/casino/reservations/tx-cancel/settle",
