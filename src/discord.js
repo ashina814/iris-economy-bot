@@ -250,15 +250,15 @@ function decorateTunedPanels(result, engine) {
       });
     }
     panel.components ||= [];
-    const hasXpControls = panel.components.some((component) =>
-      component?.type === "buttons" && component.items?.some((item) => item?.panel === "rank-xp-settings")
+    // それぞれのボタンを個別に判定する。片方だけ既にある状態で両方足すと
+    // コンポーネントIDが重複し、パネル操作全体が失敗するため。
+    const hasPanelButton = (panelId) => panel.components.some((component) =>
+      component?.type === "buttons" && component.items?.some((item) => item?.panel === panelId)
     );
-    if (!hasXpControls) {
-      panel.components.push(buttons([
-        panelButton("TC/VC XP設定", "rank-xp-settings", "primary"),
-        panelButton("VC XP倍率設定", "vc-xp-location-settings", "success")
-      ]));
-    }
+    const xpButtons = [];
+    if (!hasPanelButton("rank-xp-settings")) xpButtons.push(panelButton("TC/VC XP設定", "rank-xp-settings", "primary"));
+    if (!hasPanelButton("vc-xp-location-settings")) xpButtons.push(panelButton("VC XP倍率設定", "vc-xp-location-settings", "success"));
+    if (xpButtons.length) panel.components.push(buttons(xpButtons));
   }
 
   return result;
