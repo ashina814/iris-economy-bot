@@ -250,6 +250,36 @@ async function verifyPublicPanelRoutingInner() {
   await handleInteraction(ephemeralNav.interaction);
   assert.strictEqual(ephemeralNav.calls.reply.length, 0, "ephemeral画面内の遷移で新しい返信を作ってはいけません");
   assert.strictEqual(ephemeralNav.calls.update.length, 1, "ephemeral画面内の遷移はその画面を更新する必要があります");
+
+  // 参加ボタン: 新規ユーザーが公開パネルから押して初期資本を受け取れる
+  const joinPress = makeComponentInteraction({ customId: "eco:run:join", userId: "join-user-fresh", ephemeralSource: false });
+  await handleInteraction(joinPress.interaction);
+  assert(embedTitle(joinPress.calls.reply[0]).includes("経済圏へようこそ"), "参加ボタンで新規ユーザーが経済圏に参加できる必要があります");
+  assert.strictEqual(engine.state.users["entrypoint-test:join-user-fresh"].wallet >= 100000, true, "参加で初期資本が付与される必要があります");
+  assert.strictEqual(joinPress.calls.reply[0].ephemeral, true, "公開パネルからの参加はephemeralで返す必要があります");
+
+  // 旧世代パネルの未知customIdは無応答にせず、ephemeralで案内を返す
+  const staleButton = makeComponentInteraction({ customId: "eco:join", userId: "join-user-stale", ephemeralSource: false });
+  await handleInteraction(staleButton.interaction);
+  assert.strictEqual(staleButton.calls.reply.length, 1, "未知のコンポーネントIDにも必ず応答する必要があります（無応答はDiscord側で失敗表示になる）");
+  assert(String(staleButton.calls.reply[0].content).includes("古いパネル"), "未知のコンポーネントIDには案内メッセージを返す必要があります");
+  assert.strictEqual(staleButton.calls.reply[0].ephemeral, true, "未知IDへの案内はephemeralである必要があります");
+
+  // 重複コンポーネントIDのパネルは、クラッシュせず重複ボタンだけ落として表示する
+  const dupPanel = {
+    title: "dup test",
+    description: "x",
+    fields: [],
+    components: [
+      { type: "buttons", items: [
+        { kind: "panel", panel: "marketplace", label: "A", style: "primary" },
+        { kind: "panel", panel: "marketplace", label: "B", style: "secondary" }
+      ] }
+    ]
+  };
+  const dupRows = buildComponents({ panel: dupPanel });
+  assert.strictEqual(dupRows.length, 1, "重複IDのパネルでも行が生成される必要があります");
+  assert.strictEqual(dupRows[0].components.length, 1, "重複したボタンは1つに畳んで表示する必要があります");
 }
 
 // ---- 店舗Forum作成の孤児防止 ----

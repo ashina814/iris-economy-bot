@@ -408,7 +408,16 @@ async function handleInteraction(interaction) {
       return;
     }
     const command = commandFromComponent(interaction);
-    if (!command) return;
+    if (!command) {
+      // 旧世代パネルのボタンなど、現在のrouterが解釈できないIDは無言で捨てない。
+      // （無応答だとDiscord側で「インタラクションに失敗しました」になり、原因も残らない）
+      console.warn(`未対応のコンポーネントIDを受信しました: ${interaction.customId}`);
+      await interaction.reply({
+        content: "このボタンは古いパネルのもので、現在は使えません。`/アイリス` を開くか、新しいパネルから操作してください。",
+        ephemeral: true
+      }).catch(() => null);
+      return;
+    }
     if (command.startsWith("use ")) {
       const itemId = command.split(/\s+/)[1];
       if (await showOfficialItemUseModal(interaction, itemId)) return;
@@ -1089,8 +1098,15 @@ function isEphemeralComponentSource(interaction) {
 // これにより誰が公開パネルを操作しても、公開メッセージ自体は書き換わらない。
 async function respondPanel(interaction, result) {
   if (isEphemeralComponentSource(interaction)) {
-    await updateDiscord(interaction, result);
-    return;
+    try {
+      await updateDiscord(interaction, result);
+      return;
+    } catch (error) {
+      // 元メッセージが既に削除されている場合（Unknown Message 10008）は、
+      // 結果を失わずに本人へのephemeral返信へフォールバックする
+      if (error?.code !== 10008) throw error;
+      console.warn(`パネル更新先のメッセージが見つからないため、ephemeral返信にフォールバックします [${interaction.customId || "?"}]`);
+    }
   }
   await replyDiscord(interaction, result, { ephemeral: true });
 }
@@ -4469,8 +4485,10 @@ function yadoAllowedMemberIds(room) {
 }
 
 async function extendYadoRoom(interaction, ownerKey, room, channel) {
+  // パネル更新などのDiscord API呼び出しで3秒を超えると Unknown interaction (10062) になるため先にdeferする
+  await interaction.deferReply({ ephemeral: true });
   if (!yadoCanExtend(room)) {
-    await interaction.reply({ content: `これ以上は延長できません。作成から最大 ${formatDuration(yadoMaxLifetimeMs)} までです。`, ephemeral: true });
+    await interaction.editReply({ content: `これ以上は延長できません。作成から最大 ${formatDuration(yadoMaxLifetimeMs)} までです。` });
     return;
   }
 
@@ -4478,9 +4496,8 @@ async function extendYadoRoom(interaction, ownerKey, room, channel) {
   const user = engine.getUser(actor.id, actor.name);
   const cost = yadoExtendCost(room);
   if (user.wallet < cost) {
-    await interaction.reply({
-      content: `延長には ${fmt(cost)} 必要です。いまの財布は ${fmt(user.wallet)}。`,
-      ephemeral: true
+    await interaction.editReply({
+      content: `延長には ${fmt(cost)} 必要です。いまの財布は ${fmt(user.wallet)}。`
     });
     return;
   }
@@ -4505,9 +4522,8 @@ async function extendYadoRoom(interaction, ownerKey, room, channel) {
     yadoStore.save(yadoState);
     scheduleYadoExpiry(ownerKey, room.expiresAt);
     const refreshed = await refreshYadoControlMessage(room, channel);
-    await interaction.reply({
-      content: `宿を ${yadoExtendHours}時間延長しました。残り ${formatYadoCountdown(room.expiresAt - Date.now())} / 料金 ${fmt(cost)}。${refreshed ? "" : " 管理パネルの自動更新に失敗したため、最新化ボタンで再取得してください。"}`,
-      ephemeral: true
+    await interaction.editReply({
+      content: `宿を ${yadoExtendHours}時間延長しました。残り ${formatYadoCountdown(room.expiresAt - Date.now())} / 料金 ${fmt(cost)}。${refreshed ? "" : " 管理パネルの自動更新に失敗したため、最新化ボタンで再取得してください。"}`
     });
   } catch (error) {
     user.wallet = previous.wallet;
@@ -4518,7 +4534,7 @@ async function extendYadoRoom(interaction, ownerKey, room, channel) {
     store.save(engine.state);
     yadoStore.save(yadoState);
     scheduleYadoExpiry(ownerKey, room.expiresAt);
-    await interaction.reply({ content: "延長処理に失敗しました。料金は戻しました。", ephemeral: true });
+    await interaction.editReply({ content: "延長処理に失敗しました。料金は戻しました。" }).catch(() => null);
     console.warn(`二人宿の延長に失敗しました: ${error.message}`);
   }
 }
@@ -4778,6 +4794,9 @@ async function createYadoVoiceChannel(interaction, options = {}) {
     return;
   }
 
+  // メンバー取得・VC作成・パネル送信で3秒を超えると Unknown interaction (10062) になるため先にdeferする
+  await interaction.deferReply({ ephemeral: true });
+
   const actor = actorFromInteraction(interaction);
   const user = engine.getUser(actor.id, actor.name);
   const ownerKey = yadoOwnerKey(interaction.guild.id, interaction.user.id);
@@ -4789,26 +4808,24 @@ async function createYadoVoiceChannel(interaction, options = {}) {
   const partner = partnerId ? await interaction.guild.members.fetch(partnerId).catch(() => null) : null;
   if (secret) {
     if (!partner || partner.user.bot || partner.id === interaction.user.id) {
-      await interaction.reply({ content: "相手はサーバー内の通常ユーザーから1人選んでください。", ephemeral: true });
+      await interaction.editReply({ content: "相手はサーバー内の通常ユーザーから1人選んでください。" });
       return;
     }
   }
   const activeRoom = await getActiveYadoRoom(interaction.guild, ownerKey);
   if (activeRoom) {
     const payload = buildYadoControlPayload(activeRoom, activeRoom.channel, { ephemeral: true });
-    await interaction.reply({
+    await interaction.editReply({
       content: `すでに宿があります。${activeRoom.channel ? `${activeRoom.channel} ` : ""}終了まで ${formatDuration(activeRoom.expiresAt - Date.now())}。`,
       embeds: payload.embeds,
-      components: payload.components,
-      ephemeral: true
+      components: payload.components
     });
     return;
   }
 
   if (user.wallet < cost) {
-    await interaction.reply({
-      content: `宿の作成には ${fmt(cost)} 必要です。いまの財布は ${fmt(user.wallet)}。`,
-      ephemeral: true
+    await interaction.editReply({
+      content: `宿の作成には ${fmt(cost)} 必要です。いまの財布は ${fmt(user.wallet)}。`
     });
     return;
   }
@@ -4870,22 +4887,20 @@ async function createYadoVoiceChannel(interaction, options = {}) {
     scheduleYadoExpiry(ownerKey, expiresAt);
     const controlPosted = await sendYadoControlPanel(channel, room);
     const fallbackPayload = controlPosted ? null : buildYadoControlPayload(room, channel, { ephemeral: true });
-    await interaction.reply({
+    await interaction.editReply({
       content: secret
         ? `${channel} を作成しました。相手: ${partner} / 最大${capacity}人 / 料金 ${fmt(cost)} / 12時間で終了します。${controlPosted ? "宿内チャットに管理パネルを置きました。" : "下のパネルから管理できます。"}`
         : `${channel} を作成しました。公開宿 / 最大${capacity}人 / 料金 ${fmt(cost)} / 12時間で終了します。${controlPosted ? "宿内チャットに管理パネルを置きました。" : "下のパネルから管理できます。"}`,
       embeds: fallbackPayload?.embeds || [],
-      components: fallbackPayload?.components || [],
-      ephemeral: true
+      components: fallbackPayload?.components || []
     });
   } catch (error) {
     user.wallet += cost;
     user.lifetimeLost = Math.max(0, user.lifetimeLost - cost);
     store.save(engine.state);
-    await interaction.reply({
-      content: `VCを作成できませんでした。Botに「チャンネル管理」権限があるか確認してください。`,
-      ephemeral: true
-    });
+    await interaction.editReply({
+      content: `VCを作成できませんでした。Botに「チャンネル管理」権限があるか確認してください。`
+    }).catch(() => null);
     console.warn(`二人宿VC作成に失敗しました: ${error.message}`);
   }
 }
@@ -5524,7 +5539,14 @@ function buildComponents(result, options = {}) {
   const panel = result.panel;
   if (!panel?.components) return options.fallback ? fallbackComponents() : [];
 
-  assertUniquePanelComponentIds(panel);
+  // 重複IDはパネル全体を死なせず、警告して後勝ちのボタンだけ落とす
+  // （throwするとボタン押下が「インタラクションに失敗しました」になり操作不能になるため）
+  try {
+    assertUniquePanelComponentIds(panel);
+  } catch (error) {
+    console.warn(`パネル「${panel.title || "?"}」に${error.message}があるため、重複分を除いて表示します。`);
+    dedupePanelComponentIds(panel);
+  }
 
   return panel.components.slice(0, 5).map((component, rowIndex) => {
     const row = new ActionRowBuilder();
@@ -5625,6 +5647,25 @@ function assertUniquePanelComponentIds(panel) {
     if (seen.has(id)) throw new Error(`重複したコンポーネントID: ${id}`);
     seen.add(id);
   }
+}
+
+// 重複したボタンIDを持つ行から、2回目以降の同一IDボタンを取り除く（select等はそのまま）
+function dedupePanelComponentIds(panel) {
+  const seen = new Set();
+  for (const row of panel.components || []) {
+    if (row?.type !== "buttons" || !Array.isArray(row.items)) continue;
+    row.items = row.items.filter((item) => {
+      const id = item.kind === "panel"
+        ? `eco:panel:${item.panel}`
+        : item.kind === "custom"
+          ? item.customId
+          : `eco:run:${item.command}`;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }
+  panel.components = (panel.components || []).filter((row) => row?.type !== "buttons" || row.items.length > 0);
 }
 
 function fallbackComponents() {
