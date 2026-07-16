@@ -153,7 +153,13 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.warn("既存の /eco かプレフィックスコマンドで起動を継続します。");
   }
   await refreshInviteCaches();
-  for (const guild of readyClient.guilds.cache.values()) syncGuildMemberDirectory(guild);
+  for (const guild of readyClient.guilds.cache.values()) {
+    // 起動直後のキャッシュは不完全なことがあるため、一度だけ全メンバーを取得して
+    // ディレクトリ（在籍判定・ランキングの退出者フィルタの土台）を完全にする。
+    // 以後は GuildMemberAdd/Remove が差分を維持する。取得失敗時はキャッシュ分で継続。
+    await guild.members.fetch().catch((error) => console.warn(`メンバー一覧の取得に失敗しました (${guild.name}): ${error.message}`));
+    syncGuildMemberDirectory(guild);
+  }
   await resumeYadoRooms();
   await ensureRankPanel();
   startVoiceRewardSweeper();
