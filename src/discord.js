@@ -665,6 +665,9 @@ function leaderboardSpec(typeRaw, engineRef = null) {
       key: "invite",
       title: "招待ランキング",
       unit: "人",
+      // 実績0の人でTop10を埋めない・退出者は表示しない（記録は台帳に残る）
+      hideZero: true,
+      membersOnly: true,
       score: (user) => user.invites?.qualified || 0,
       label: (value) => `${value.toLocaleString("ja-JP")}人`
     };
@@ -674,6 +677,8 @@ function leaderboardSpec(typeRaw, engineRef = null) {
       key: "bump",
       title: "Bumpランキング",
       unit: "回",
+      hideZero: true,
+      membersOnly: true,
       score: (user) => user.bump?.count || 0,
       label: (value) => `${value.toLocaleString("ja-JP")}回`
     };
@@ -687,8 +692,16 @@ function leaderboardSpec(typeRaw, engineRef = null) {
   };
 }
 
+// サーバー退出判定: メンバーディレクトリがある場合だけ在籍を確認する
+// （記録は台帳に残り、復帰すれば再表示される。ディレクトリの無い環境では絞らない）
+function isCurrentGuildMember(internalUserId) {
+  const guildId = guildIdFromInternalUserId(internalUserId);
+  const discordId = extractDiscordUserId(internalUserId);
+  const directory = guildId && guildId !== "dm" ? global.__IRIS_GUILD_MEMBER_DIRECTORY__?.get?.(guildId) || null : null;
+  return !directory || !discordId || directory.has(discordId);
+}
+
 // ブースト累計はカウンター台帳が正本（未joinのブースターや取り込みデータも含む）。
-// サーバー退出者はランキングに出さない（記録は保持し、復帰すれば再表示）。
 function buildBoostRankedEntries(engine) {
   const counterUsers = engine.state.boostRewards?.counter?.users || {};
   const members = engine.state.boostRewards?.members || {};
@@ -699,12 +712,7 @@ function buildBoostRankedEntries(engine) {
       active: Boolean(members[userId]?.active)
     }))
     .filter((entry) => entry.value > 0)
-    .filter((entry) => {
-      const guildId = guildIdFromInternalUserId(entry.user.id);
-      const discordId = extractDiscordUserId(entry.user.id);
-      const directory = guildId && guildId !== "dm" ? global.__IRIS_GUILD_MEMBER_DIRECTORY__?.get?.(guildId) || null : null;
-      return !directory || !discordId || directory.has(discordId);
-    })
+    .filter((entry) => isCurrentGuildMember(entry.user.id))
     .sort((a, b) => b.value - a.value || String(a.user.id).localeCompare(String(b.user.id)));
 }
 
@@ -723,6 +731,8 @@ function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
     ? buildBoostRankedEntries(engine)
     : users
       .map((user) => ({ user, value: spec.score(user) }))
+      .filter((entry) => (spec.hideZero ? entry.value > 0 : true))
+      .filter((entry) => (spec.membersOnly ? isCurrentGuildMember(entry.user.id) : true))
       .sort((a, b) => b.value - a.value || String(a.user.name || "").localeCompare(String(b.user.name || ""), "ja"));
 
   if (ranked.length === 0) {

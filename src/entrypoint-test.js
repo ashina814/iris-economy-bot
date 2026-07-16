@@ -72,6 +72,30 @@ for (const rankCommand of ["rank boost", "rank ブースト", "ランキング b
 }
 assert(String(engine.run("rank", boostRankActor).title).includes("純資産ランキング"), "引数なしの rank は従来通り純資産ランキングのままである必要があります");
 
+// 招待・Bumpランキング: 実績0の人でTop10を埋めない・退出者を表示しない
+const bumpRanker = { id: "999999999999999904:999999999999999905", name: "bump ranker" };
+engine.run("join", bumpRanker);
+engine.getUser(bumpRanker.id, bumpRanker.name).bump.count = 999999;
+engine.getUser(bumpRanker.id, bumpRanker.name).invites.qualified = 999999;
+for (const rankCommand of ["rank bump", "rank invite"]) {
+  const contribution = engine.run(rankCommand, boostRankActor);
+  const rankedLines = contribution.lines.filter((line) => /^\d+\./.test(line));
+  assert(!rankedLines.some((line) => / - 0(回|人)/.test(line)), `${rankCommand} に実績0のユーザーを表示してはいけません`);
+  assert(rankedLines.some((line) => line.includes("bump ranker")), `${rankCommand} に実績のあるユーザーが表示される必要があります`);
+}
+const savedContribDirectory = global.__IRIS_GUILD_MEMBER_DIRECTORY__;
+global.__IRIS_GUILD_MEMBER_DIRECTORY__ = {
+  get(guildId) {
+    // bumpRanker のギルドに本人が居ない = サーバー退出済みの想定
+    return guildId === "999999999999999904" ? new Map() : null;
+  }
+};
+for (const rankCommand of ["rank bump", "rank invite"]) {
+  const filtered = engine.run(rankCommand, boostRankActor);
+  assert(!filtered.lines.some((line) => line.includes("bump ranker")), `${rankCommand} にサーバー退出者を表示してはいけません`);
+}
+global.__IRIS_GUILD_MEMBER_DIRECTORY__ = savedContribDirectory;
+
 const emptyShopOwner = { id: "entrypoint-test:empty-shop", name: "empty shop owner" };
 engine.run("join", emptyShopOwner);
 engine.openShop(engine.getUser(emptyShopOwner.id, emptyShopOwner.name));
