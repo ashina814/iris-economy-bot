@@ -112,6 +112,17 @@ async function main() {
   const port = server.address().port;
 
   try {
+    const beforeHealthState = JSON.parse(JSON.stringify(engine.state));
+    const beforeHealthSaves = saveCount;
+    const health = await request(port, { path: "/internal/v1/health", token: "secret-secret-secret" });
+    assert.strictEqual(health.status, 200, "authenticated health succeeds");
+    assert.deepStrictEqual(health.body, { ok: true, service: "iris-economy-bot", currency: "Ris", guildId }, "health returns only identity metadata");
+    assert.deepStrictEqual(engine.state, beforeHealthState, "health does not mutate economy state");
+    assert.strictEqual(saveCount, beforeHealthSaves, "health does not save state");
+
+    const unauthorizedHealth = await request(port, { path: "/internal/v1/health", token: "wrong-token" });
+    assert.strictEqual(unauthorizedHealth.status, 401, "health requires the internal API key");
+
     const unauthorized = await request(port, { path: `/internal/v1/wallets/${discordUserId}`, token: "bad-bad-bad-bad-bad" });
     assert.strictEqual(unauthorized.status, 401, "Bearer認証に失敗したら401");
 
