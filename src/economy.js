@@ -307,6 +307,8 @@ function createInitialState() {
       nextOfficialFulfillmentId: 1,
       reports: [],
       nextReportId: 1,
+      centralRefundBurdenTotal: 0,
+      centralRefundBurdenLog: [],
       logs: [],
       settings: {
         feeBps: MARKETPLACE_CONFIG.feeBps,
@@ -4480,7 +4482,10 @@ class EconomyEngine {
   confirmTrade(user, id) {
     const order = this.findTradeOrder(id);
     if (!order || order.buyerId !== user.id) return { ok: false, title: "取引が見つかりません", lines: ["受取確認は購入者だけができます。"] };
-    if (!["ordered", "accepted", "delivered"].includes(order.status)) return this.tradeTransitionError(user, order, "受取確認");
+    // 受取確認は販売者が「対応完了」を報告した delivered のみで許可する。
+    // 以前は ordered/accepted も受け付けていたため、直接コマンドを叩けば
+    // 販売者が未受注/対応中でもエスクローを解放できてしまう抜け穴があった。
+    if (order.status !== "delivered") return this.tradeTransitionError(user, order, "受取確認");
     order.status = "completed";
     order.completedAt = new Date().toISOString();
     const paid = this.releaseOrderPayout(order);
@@ -4666,6 +4671,23 @@ class EconomyEngine {
     const listing = this.findListing(id);
     if (!listing) return { ok: false, title: "出品が見つかりません", lines: [`#${id} は台帳にありません。`] };
     if (listing.sellerId === user.id) return { ok: false, title: "報告できません", lines: ["自分の出品は報告できません。"] };
+    // 同一ユーザーが同一出品へ未処理の通報を何件も積めた挙動を封じる。
+    // 運営が処理して status が "open" 以外になれば再通報は可能。
+    const existingOpen = this.state.marketplace.reports.find((entry) =>
+      String(entry.listingId) === String(listing.id) &&
+      entry.reporterId === user.id &&
+      entry.status === "open"
+    );
+    if (existingOpen) {
+      return {
+        ok: false,
+        title: "同じ通報が受付中です",
+        lines: [
+          `#${listing.id} ${listing.name} は既にあなたからの未処理の通報 #${existingOpen.id} が受付中です。`,
+          "運営が処理するまで新しい通報は作成できません。"
+        ]
+      };
+    }
     const report = {
       id: this.state.marketplace.nextReportId++,
       listingId: listing.id,
@@ -5684,17 +5706,50 @@ class EconomyEngine {
     ];
 
     const wasHeld = order.payout === "held";
+    let refundRecovered = 0;
+    let refundShortfall = 0;
+    const sellerReceive = order.sellerId !== "official"
+      ? Math.max(0, order.price - (order.fee || 0))
+      : 0;
     if (order.sellerId !== "official") {
       const seller = this.getUser(order.sellerId, order.sellerName);
-      const sellerReceive = Math.max(0, order.price - (order.fee || 0));
       if (wasHeld) {
         // エスクロー保留中の代金は販売者に渡っていないので、残高調整なしで預かり分を返すだけ
         order.payout = "cancelled";
       } else {
-        seller.wallet = Math.max(0, seller.wallet - sellerReceive);
-        seller.lifetimeLost += sellerReceive;
+        // 販売者が実際に持っている分だけを回収し、不足分は中央負担として記録する。
+        // 過去は seller.wallet を 0 で床止めしつつ sellerReceive 全額を lifetimeLost に加算
+        // していたため、回収不能額が無記録の中央発行になっていた。
+        refundRecovered = Math.max(0, Math.min(seller.wallet, sellerReceive));
+        refundShortfall = Math.max(0, sellerReceive - refundRecovered);
+        seller.wallet -= refundRecovered;
+        seller.lifetimeLost += refundRecovered;
         const shop = this.ensureShopShape(seller);
         shop.sales = Math.max(0, (shop.sales || 0) - sellerReceive);
+        if (refundShortfall > 0) {
+          this.state.marketplace.centralRefundBurdenTotal =
+            (this.state.marketplace.centralRefundBurdenTotal || 0) + refundShortfall;
+          const log = Array.isArray(this.state.marketplace.centralRefundBurdenLog)
+            ? this.state.marketplace.centralRefundBurdenLog
+            : (this.state.marketplace.centralRefundBurdenLog = []);
+          log.push({
+            orderId: order.id,
+            sellerId: order.sellerId,
+            sellerName: order.sellerName,
+            sellerReceive,
+            recovered: refundRecovered,
+            shortfall: refundShortfall,
+            fee: order.fee || 0,
+            price: order.price,
+            at: new Date().toISOString(),
+            adminId: adminUser.id,
+            adminName: adminUser.name
+          });
+          if (log.length > 200) log.splice(0, log.length - 200);
+          this.marketLog(
+            `#${order.id} の返金で販売者から回収不能な不足額 ${fmt(refundShortfall)} を中央負担に計上しました。`
+          );
+        }
       }
 
       const listing = this.findListing(order.listingId);
@@ -5705,9 +5760,18 @@ class EconomyEngine {
       notifications.push({
         userId: order.sellerId,
         event: "order_refunded",
-        data: { orderId: order.id, itemName: order.itemName, amount: wasHeld ? 0 : sellerReceive, role: "seller" }
+        data: {
+          orderId: order.id,
+          itemName: order.itemName,
+          amount: wasHeld ? 0 : sellerReceive,
+          recovered: wasHeld ? 0 : refundRecovered,
+          shortfall: wasHeld ? 0 : refundShortfall,
+          role: "seller"
+        }
       });
     }
+    order.refundRecovered = refundRecovered;
+    order.refundShortfall = refundShortfall;
 
     const buyerShop = this.ensureShopShape(buyer);
     buyerShop.inventory = buyerShop.inventory.filter((item) => String(item.orderId) !== String(order.id));
@@ -5727,7 +5791,9 @@ class EconomyEngine {
           ? "販売者は公式のため、売上調整は不要です。"
           : wasHeld
             ? "代金はエスクロー保留中だったため、販売者の残高調整はありません（受付枠のみ戻しました）。"
-            : `販売者 ${order.sellerName} の売上と在庫を巻き戻しました。`
+            : refundShortfall > 0
+              ? `販売者 ${order.sellerName} から ${fmt(refundRecovered)} を回収し、不足額 ${fmt(refundShortfall)} は中央負担に計上しました。`
+              : `販売者 ${order.sellerName} から ${fmt(refundRecovered)} を回収し、売上と在庫を巻き戻しました。`
       ],
       ...(order.flow === "trade" ? { tradeUpdate: { orderId: order.id } } : {}),
       ...(order.sellerId !== "official" ? { shopForumSync: { sellerId: order.sellerId } } : {}),
@@ -5854,10 +5920,18 @@ class EconomyEngine {
       };
     }
 
-    if (auction.highestBidderId && auction.highestBidderId !== user.id && auction.currentBid > 0) {
-      const previous = this.getUser(auction.highestBidderId, auction.highestBidderName);
-      previous.wallet += auction.currentBid;
-      this.marketLog(`${previous.name} に #${auction.id} の上書き返金 ${fmt(auction.currentBid)}。`);
+    // 上書き前の最高入札者情報を退避しておく。以前は highestBidderId を先に
+    // 新しい入札者で上書きしてから通知条件を判定していたため、条件が常に自身と
+    // 一致してしまい、前入札者への auction_outbid 通知が一切出ていなかった。
+    const prevBidderId = auction.highestBidderId || null;
+    const prevBidderName = auction.highestBidderName || null;
+    const prevBid = Number(auction.currentBid) || 0;
+    const wasOverwrittenByOther = prevBidderId && prevBidderId !== user.id && prevBid > 0;
+
+    if (wasOverwrittenByOther) {
+      const previous = this.getUser(prevBidderId, prevBidderName);
+      previous.wallet += prevBid;
+      this.marketLog(`${previous.name} に #${auction.id} の上書き返金 ${fmt(prevBid)}。`);
     }
 
     user.wallet -= required;
@@ -5871,15 +5945,14 @@ class EconomyEngine {
     auction.bids = auction.bids.slice(-50);
 
     const outbidNotifications = [];
-    if (auction.highestBidderId && auction.highestBidderId !== user.id && auction.currentBid > 0) {
-      // 上書きされた前の入札者は前段で返金済み。ここで通知イベント積む。
+    if (wasOverwrittenByOther) {
       outbidNotifications.push({
-        userId: auction.highestBidderId,
+        userId: prevBidderId,
         event: "auction_outbid",
         data: {
           auctionId: auction.id,
           name: auction.name,
-          previousBid: auction.currentBid,
+          previousBid: prevBid,
           newBid: amount,
           newBidderName: user.name
         }
@@ -7448,6 +7521,10 @@ function migrateState(state) {
   next.marketplace.nextOfficialFulfillmentId = Math.max(1, Number(next.marketplace.nextOfficialFulfillmentId) || 1,
     ...next.marketplace.officialFulfillment.map((task) => Number(task.id) + 1 || 1));
   next.marketplace.logs = Array.isArray(next.marketplace.logs) ? next.marketplace.logs : [];
+  next.marketplace.centralRefundBurdenTotal = Math.max(0, Math.floor(Number(next.marketplace.centralRefundBurdenTotal) || 0));
+  next.marketplace.centralRefundBurdenLog = Array.isArray(next.marketplace.centralRefundBurdenLog)
+    ? next.marketplace.centralRefundBurdenLog.slice(-200)
+    : [];
   next.marketplace.settings = { ...base.marketplace.settings, ...(next.marketplace.settings || {}) };
   next.marketplace.settings.officialPurchaseLogChannelId = isDiscordSnowflake(next.marketplace.settings.officialPurchaseLogChannelId)
     ? String(next.marketplace.settings.officialPurchaseLogChannelId)
