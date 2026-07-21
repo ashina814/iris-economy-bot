@@ -722,11 +722,14 @@ function buildMentionLeaderboard(engine, actor, typeRaw = "net") {
   // guild.members.cache is intentionally partial: fetching every member here caused
   // Discord rate limits and interaction timeouts. It can enrich display names, but it
   // cannot decide who is eligible for a ledger-backed ranking.
-  const users = Object.values(engine.state.users || {}).filter((user) =>
-    spec.key === "text" || spec.key === "vc"
-      ? isActivityLeaderboardEligible(user, spec.key)
-      : user.joined
-  );
+  // 土台の絞り込み: text/vcは活動XPで、Bump/招待(hideZero)は貢献実績があれば `join` 未済でも見る。
+  // Bump/招待はDiscord側の行動から自動記録されるため、`user.joined` を必須にすると
+  // まだ経済圏に `join` していない貢献者がランキングから丸ごと消える。
+  const users = Object.values(engine.state.users || {}).filter((user) => {
+    if (spec.key === "text" || spec.key === "vc") return isActivityLeaderboardEligible(user, spec.key);
+    if (spec.hideZero) return user.joined || spec.score(user) > 0;
+    return user.joined;
+  });
   const ranked = spec.key === "boost"
     ? buildBoostRankedEntries(engine)
     : users
