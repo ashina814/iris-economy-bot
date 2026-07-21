@@ -137,6 +137,49 @@ assert(partialCacheRank.lines.some((line) => line.includes(missingFromCache.name
 assert(partialCacheRank.lines.some((line) => line.includes(unjoinedActivity.name)), "実績を持つ未加入ユーザーをDiscordランキングから除外してはいけません");
 assert(engine.run("rank vc", actor).lines.some((line) => line.includes(unjoinedActivity.name)), "VC実績を持つ未加入ユーザーをDiscordランキングから除外してはいけません");
 
+// --- 本番オーバーレイ (TunedEconomyEngine) 経由での撤去済みコマンド no-op 確認 ---
+// PR #58 レビューで指摘: 基礎engineは早期returnで no-op でも、Tunedのラッパーが
+// originalRun後に getUser() を叩くと未登録actorのuser stateが新規作成されていた。
+// 現在のラッパーは state.users[actor.id] を直接参照するだけなので新規作成されないことを、
+// 本番と同じEngineクラスで検証する。
+{
+  const OriginalEconomyEngineExport = require("./economy").EconomyEngine;
+  assert.notStrictEqual(OriginalEconomyEngineExport.name, "EconomyEngine",
+    "本番起動経路では economy.EconomyEngine が TunedEconomyEngine に差し替えられている必要があります");
+  const removedCommands = ["work", "労働", "subsidy", "beg", "給付金", "simulate-text 200", "simulate-vc 240"];
+  for (const cmd of removedCommands) {
+    const strangerId = "entrypoint-test:removed-stranger-" + cmd.replace(/\s/g, "-");
+    const strangerActor = { id: strangerId, name: "未登録の他人" };
+    // stranger は engine.state.users に居ないことを前提とする（テスト用の一意ID）
+    assert(!Object.prototype.hasOwnProperty.call(engine.state.users, strangerId),
+      `テスト前提: ${cmd} 用の stranger は事前に登録されていない`);
+    const beforeAll = JSON.stringify(engine.state);
+    const usersBeforeCount = Object.keys(engine.state.users).length;
+    const commandCountBefore = engine.state.commandCount;
+    const result = engine.run(cmd, strangerActor);
+    const afterAll = JSON.stringify(engine.state);
+    assert.strictEqual(afterAll, beforeAll,
+      `本番Tuned経由でも ${cmd} 実行前後で engine.state 全体が完全一致する必要があります`);
+    assert.strictEqual(Object.keys(engine.state.users).length, usersBeforeCount,
+      `本番Tuned経由でも ${cmd} 実行で users に新規レコードが増えてはいけません`);
+    assert.strictEqual(engine.state.commandCount, commandCountBefore,
+      `本番Tuned経由でも ${cmd} 実行で commandCount が動いてはいけません`);
+    assert(!Object.prototype.hasOwnProperty.call(engine.state.users, strangerId),
+      `本番Tuned経由でも ${cmd} 実行で未登録利用者の user state が作成されてはいけません`);
+    assert.strictEqual(result.ok, false, `本番Tuned経由でも ${cmd} は ok:false で拒否される必要があります`);
+    assert(String(result.title).includes("未知"),
+      `本番Tuned経由でも ${cmd} は「未知の経済行為」で応答する必要があります`);
+  }
+}
+
+// simulate系メソッドがTunedEconomyEngineからも露出していない
+{
+  assert.strictEqual(typeof engine.simulateText, "undefined",
+    "TunedEconomyEngine 経由でも simulateText メソッドが露出していてはいけません");
+  assert.strictEqual(typeof engine.simulateVoice, "undefined",
+    "TunedEconomyEngine 経由でも simulateVoice メソッドが露出していてはいけません");
+}
+
 async function verifyOfficialNicknameCompletion() {
   const admin = engine.getUser(actor.id, actor.name);
   const task = engine.createOfficialFulfillment(engine.getUser(actor.id, actor.name), {
