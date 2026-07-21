@@ -81,6 +81,16 @@ async function handleInternalRequest(req, res, context) {
   const pathname = url.pathname;
   const method = String(req.method || "GET").toUpperCase();
 
+  if (method === "GET" && pathname === "/internal/v1/health") {
+    sendJson(res, 200, {
+      ok: true,
+      service: "iris-economy-bot",
+      currency: CURRENCY.code,
+      guildId: context.guildId
+    });
+    return;
+  }
+
   if (method === "GET") {
     const walletMatch = pathname.match(/^\/internal\/v1\/wallets\/([^/]+)$/);
     if (walletMatch) {
