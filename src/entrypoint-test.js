@@ -83,6 +83,19 @@ for (const rankCommand of ["rank bump", "rank invite"]) {
   assert(!rankedLines.some((line) => / - 0(回|人)/.test(line)), `${rankCommand} に実績0のユーザーを表示してはいけません`);
   assert(rankedLines.some((line) => line.includes("bump ranker")), `${rankCommand} に実績のあるユーザーが表示される必要があります`);
 }
+
+// `join` していない貢献者も、Bump/招待の記録があれば必ずランキングに載せる。
+// （回帰: /bump は自動で経済圏加入させないため、joinedフィルタで丸ごと消えていた）
+const unjoinedBumper = { id: "999999999999999904:999999999999999906", name: "unjoined bumper" };
+engine.getUser(unjoinedBumper.id, unjoinedBumper.name).bump.count = 37;
+const unjoinedInviter = { id: "999999999999999904:999999999999999907", name: "unjoined inviter" };
+engine.getUser(unjoinedInviter.id, unjoinedInviter.name).invites.qualified = 5;
+assert(!engine.state.users[unjoinedBumper.id].joined, "テストの前提: bump ユーザーは join 未済である必要があります");
+assert(!engine.state.users[unjoinedInviter.id].joined, "テストの前提: invite ユーザーは join 未済である必要があります");
+const unjoinedBumpRank = engine.run("rank bump", boostRankActor);
+assert(unjoinedBumpRank.lines.some((line) => line.includes("unjoined bumper")), "join 未済の Bumper も Bump ランキングに載る必要があります");
+const unjoinedInviteRank = engine.run("rank invite", boostRankActor);
+assert(unjoinedInviteRank.lines.some((line) => line.includes("unjoined inviter")), "join 未済の招待者も招待ランキングに載る必要があります");
 const savedContribDirectory = global.__IRIS_GUILD_MEMBER_DIRECTORY__;
 global.__IRIS_GUILD_MEMBER_DIRECTORY__ = {
   get(guildId) {
