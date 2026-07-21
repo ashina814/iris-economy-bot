@@ -113,7 +113,18 @@ if (!token) {
 
 const store = new JsonStore(path.join(__dirname, "..", "data", "discord-state.json"), createInitialState);
 const state = loadRequiredState(store, "経済台帳");
-const engine = new EconomyEngine(state);
+// 一回限りのmigrationは EconomyEngine の生成時に走る。本番エントリでは行結果を
+// 起動ログへ出し、応じて state を保存する（返金など state を変えた場合のみ）。
+const engine = new EconomyEngine(state, { migrationLog: (msg) => console.log(msg) });
+if (engine.lastMigrationResult) {
+  const { applied = [], missing = [], errors = [] } = engine.lastMigrationResult;
+  console.log(
+    `[migration] legacy_chair_refund: applied=${applied.length} missing=${missing.length} errors=${errors.length}`
+  );
+  if (applied.length > 0) {
+    try { store.save(engine.state); } catch (error) { console.warn(`migration後の state 保存に失敗: ${error.message}`); }
+  }
+}
 startInternalApi({
   engine,
   store,

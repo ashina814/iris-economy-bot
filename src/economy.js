@@ -10,14 +10,17 @@ const ECONOMY_CONFIG = {
 
 const SHOP_ITEMS = {
   chair: {
+    // 労働制度廃止 (2026-07-21) に伴い記念品化。
+    // 効果 (labor +15%) は撤去済み、既存所持者2名 (イヴ / らぴ) には別途1,500 Ris返金migrationを適用。
+    // 公式ショップの販売対象からも除外 (OFFICIAL_SALE_ITEM_IDS = []) — 再販しないこと。
     name: "深座りの椅子",
     price: 1500,
     max: 1,
-    kind: "passive",
-    type: "権利",
-    description: "労働報酬が少し増える。座ってるだけで偉そう。",
-    effect: "労働報酬 +15%",
-    usage: "持っているだけで自動発動"
+    kind: "keepsake",
+    type: "記念品",
+    description: "旧労働制度で使われていた記念品。現在は効果なし。",
+    effect: "記念品",
+    usage: "所持しているだけで表示されます"
   },
   stamp: {
     name: "常連カード",
@@ -149,15 +152,9 @@ const ACTIVITY_ADJUSTMENT_OPERATIONS = {
   treasury: "debit"
 };
 
-const WORKS = [
-  { text: "自販機の下を金融街として再開発した", min: 90, max: 260, xp: 8 },
-  { text: "会議で『それはレバレッジですね』だけ言い続けた", min: 120, max: 310, xp: 10 },
-  { text: "レシートを見て宇宙の真理に近づいた", min: 80, max: 230, xp: 7 },
-  { text: "社内通貨を勝手に発行して昼休みに上場した", min: 170, max: 420, xp: 14 },
-  { text: "『雰囲気で決算を読む』講座を開いた", min: 140, max: 360, xp: 12 },
-  { text: "空き箱をサブスク化して投資家をうならせた", min: 160, max: 390, xp: 13 },
-  { text: "給与明細に励ましの付箋を貼る副業をした", min: 100, max: 270, xp: 9 }
-];
+// 旧 WORKS 定数（労働報酬メッセージ・XP テーブル）は撤去済み。
+// work コマンド廃止に伴い参照元は無い。旧stateの user.workCount / user.lastWork は
+// 互換のため残置するが、以後のコードからは更新されない。
 
 const TEXT_RANKS = [
   { name: "観測者", min: 0 },
@@ -341,11 +338,92 @@ function createInitialState() {
   };
 }
 
+// 一回限り migration: 旧労働制度 (work / 深座りの椅子+15%効果) 廃止に伴い、
+// 椅子所持者へ購入価格1,500 Risを返金する。詳細は applyLegacyChairRefund を参照。
+const LEGACY_CHAIR_REFUND_MIGRATION_ID = "legacy_chair_refund_v1";
+const LEGACY_CHAIR_REFUND_AMOUNT = 1500;
+const LEGACY_CHAIR_REFUND_TARGETS = ["1494667084037095444", "610021634383806474"];
+
+// stateに対して椅子返金 migration を適用する。副作用: state.migrations, state.ledger,
+// 該当ユーザーの wallet と lifetimeEarned を更新する。冪等: 同一 target を二重に処理しない。
+// options.log(msg): ステータスログの出力先（デフォルト console.log）。
+function applyLegacyChairRefund(state, options = {}) {
+  const log = typeof options.log === "function" ? options.log : (msg) => console.log(msg);
+  const nowIso = () => new Date().toISOString();
+  if (!state || typeof state !== "object") return { applied: [], skipped: [], missing: [], errors: [] };
+  if (!state.migrations || typeof state.migrations !== "object") state.migrations = {};
+  const record = state.migrations[LEGACY_CHAIR_REFUND_MIGRATION_ID]
+    || (state.migrations[LEGACY_CHAIR_REFUND_MIGRATION_ID] = { targets: {}, at: null });
+  if (!record.targets || typeof record.targets !== "object") record.targets = {};
+
+  const applied = [];
+  const skipped = [];
+  const missing = [];
+  const errors = [];
+
+  for (const discordId of LEGACY_CHAIR_REFUND_TARGETS) {
+    if (record.targets[discordId]) { skipped.push(discordId); continue; }
+    // 対象guildの完全なuser IDは state から後方一致で解決する（新規ユーザーは作らない）。
+    const suffix = ":" + discordId;
+    const entry = Object.entries(state.users || {}).find(([id]) => id === discordId || id.endsWith(suffix));
+    if (!entry) {
+      missing.push(discordId);
+      log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] discord user ${discordId} が state に居ないため返金を保留（新規作成しません）。`);
+      continue;
+    }
+    const [internalId, user] = entry;
+    const chairCount = Number(user?.inventory?.chair) || 0;
+    if (chairCount < 1) {
+      skipped.push(discordId);
+      log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] discord user ${discordId} は椅子を所持していないため対象外。`);
+      continue;
+    }
+    const currentWallet = Number(user.wallet) || 0;
+    const currentLifetime = Number(user.lifetimeEarned) || 0;
+    const nextWallet = currentWallet + LEGACY_CHAIR_REFUND_AMOUNT;
+    const nextLifetime = currentLifetime + LEGACY_CHAIR_REFUND_AMOUNT;
+    if (!Number.isSafeInteger(nextWallet) || !Number.isSafeInteger(nextLifetime)) {
+      errors.push(discordId);
+      log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] discord user ${discordId} の返金で MAX_SAFE_INTEGER を超えるため見送り。`);
+      continue;
+    }
+    user.wallet = nextWallet;
+    user.lifetimeEarned = nextLifetime;
+    if (!Array.isArray(state.ledger)) state.ledger = [];
+    state.ledger.push({
+      at: nowIso(),
+      userId: internalId,
+      userName: user.name || discordId,
+      type: "legacy_chair_refund",
+      amount: LEGACY_CHAIR_REFUND_AMOUNT,
+      note: "旧労働制度廃止に伴う深座りの椅子返金"
+    });
+    state.ledger = state.ledger.slice(-200);
+    record.targets[discordId] = {
+      at: nowIso(),
+      amount: LEGACY_CHAIR_REFUND_AMOUNT,
+      userId: internalId
+    };
+    applied.push(discordId);
+    log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] discord user ${discordId} (${internalId}) へ ${LEGACY_CHAIR_REFUND_AMOUNT} Ris を返金しました。`);
+  }
+  if (applied.length > 0) record.at = nowIso();
+  return { applied, skipped, missing, errors, migrationId: LEGACY_CHAIR_REFUND_MIGRATION_ID };
+}
+
 class EconomyEngine {
   constructor(state, options = {}) {
     this.state = migrateState(state || createInitialState());
     this.now = options.now || (() => new Date());
     this.rng = options.rng || Math.random;
+    // 一回限りの migration を state 移行後に適用する。デフォルトでは静音（テスト時に
+    // 大量の EconomyEngine 生成でログを飛ばさない）。本番エントリでは
+    // migrationLog を渡すか、EconomyEngine 生成後に this.lastMigrationResult を
+    // 見て起動ログを出すこと。
+    const migrationLog = typeof options.migrationLog === "function"
+      ? options.migrationLog
+      : () => {};
+    this.lastMigrationResult = applyLegacyChairRefund(this.state, { log: migrationLog });
   }
 
   run(input, actor) {
@@ -411,15 +489,8 @@ class EconomyEngine {
       case "ログボ":
         result = this.daily(user);
         break;
-      case "work":
-      case "労働":
-        result = this.work(user);
-        break;
-      case "subsidy":
-      case "beg":
-      case "給付金":
-        result = this.subsidy(user);
-        break;
+      // work / 労働 / subsidy / beg / 給付金 は撤去済み（旧収入コマンド）。
+      // 通常の未知コマンドとして未定 default 分岐に落とし、stateを一切変えない。
       case "shop":
       case "店":
       case "ショップ":
@@ -464,12 +535,10 @@ class EconomyEngine {
       case "通話報酬":
         result = this.claimVoiceReward(user);
         break;
-      case "simulate-text":
-        result = this.simulateText(user, parsed.args[0]);
-        break;
-      case "simulate-vc":
-        result = this.simulateVoice(user, parsed.args[0]);
-        break;
+      // simulate-text / simulate-vc は本番から緊急無効化。
+      // 一般ユーザー・管理者双方から通常のコマンドルーター経由では実行できない。
+      // テストで seed が要る場合は engine.simulateText() / simulateVoice() を
+      // 直接呼ぶこと。NODE_ENV 分岐やヒドゥンフラグは意図的に設けない。
       default:
         result = {
           ok: false,
@@ -687,7 +756,7 @@ class EconomyEngine {
         "`panel marketplace` - ショップ",
         "`panel my-shop` - 自分の店",
         "`panel invite` - 招待台帳",
-        "`daily` / `work` / `subsidy` - 収入コマンド",
+        "`daily` - 24時間ごとのログボ / `vc` - VC在室分の精算",
         "`card` / `invite` - 直接見たい時だけ使う短縮コマンド"
       ]
     };
@@ -2331,79 +2400,11 @@ class EconomyEngine {
     };
   }
 
-  work(user) {
-    const now = this.now();
-    const cooldown = cooldownRemaining(user.lastWork, now, 45 * 1000);
-    if (cooldown > 0) {
-      return {
-        ok: false,
-        title: "休憩も労働のうち",
-        lines: [`次に働けるまで ${formatDuration(cooldown)}。タイムカードが震えています。`]
-      };
-    }
-
-    const job = pick(this.rng, WORKS);
-    const hasChair = Boolean(user.inventory.chair);
-    const multiplier = hasChair ? 1.15 : 1;
-    const amount = Math.floor(randInt(this.rng, job.min, job.max) * multiplier);
-    user.wallet += amount;
-    user.lifetimeEarned += amount;
-    user.workCount += 1;
-    user.xp += job.xp;
-    user.lastWork = now.toISOString();
-    this.log(user, "work", amount, job.text);
-
-    const lines = [
-      `${job.text}。`,
-      `報酬 ${fmt(amount)} を獲得。`,
-      hasChair ? "深座りの椅子で報酬が少し増えました。" : null,
-      this.moneyLine(user)
-    ].filter(Boolean);
-
-    if (this.rng() < 0.12) {
-      const bonus = randInt(this.rng, 80, 260);
-      user.wallet += bonus;
-      user.lifetimeEarned += bonus;
-      lines.splice(2, 0, `謎の残業代 ${fmt(bonus)} が机の隙間から出ました。`);
-    }
-
-    return { ok: true, title: "労働完了", lines };
-  }
-
-  subsidy(user) {
-    const now = this.now();
-    const cooldown = cooldownRemaining(user.lastSubsidy, now, 2 * 60 * 1000);
-    if (cooldown > 0) {
-      return {
-        ok: false,
-        title: "給付金窓口は昼休み",
-        lines: [`次の申請まで ${formatDuration(cooldown)}。窓口の人も人生を考えています。`]
-      };
-    }
-
-    user.lastSubsidy = now.toISOString();
-    user.xp += 5;
-    const roll = this.rng();
-    if (roll < 0.18) {
-      const fee = Math.min(user.wallet, randInt(this.rng, 20, 160));
-      user.wallet -= fee;
-      user.lifetimeLost += fee;
-      return {
-        ok: false,
-        title: "申請書が迷子",
-        lines: [`手数料 ${fmt(fee)} だけ取られました。これが行政の味。`, this.moneyLine(user)]
-      };
-    }
-
-    const amount = randInt(this.rng, 80, 380);
-    user.wallet += amount;
-    user.lifetimeEarned += amount;
-    return {
-      ok: true,
-      title: "給付金チャレンジ成功",
-      lines: [`${fmt(amount)} を受け取りました。プライドは非課税です。`, this.moneyLine(user)]
-    };
-  }
+  // 旧 work() / subsidy() は撤去済み。
+  // - work: 45秒CDでRis発行 / workCount++ / lastWork更新 / 労働XP / 残業代 / 椅子+15% を全部撤廃
+  // - subsidy: 2分CDの給付金チャレンジ（成功時報酬・失敗時手数料）を撤廃
+  // 現在ルータからも参照されず、旧stateの workCount / lastWork / lastSubsidy は
+  // 表示・migration互換のためだけに残置され、更新経路は無い。
 
   marketplace(user) {
     return {
@@ -6781,25 +6782,11 @@ class EconomyEngine {
     return `${state} / VCレベル ${this.vcLevel(user)} / 給与 ${fmt(this.voiceSalaryPerMinute(user))}/分 / 今日 ${fmt(user.activity.vcDailyEarned)} / ${fmt(cap)} / 残り ${fmt(remaining)}`;
   }
 
-  simulateText(user, countRaw) {
-    const count = clamp(parsePositiveInt(countRaw) || 1, 1, 200);
-    const xp = count * 12;
-    const money = count * 5;
-    user.activity.textMessages += count;
-    user.activity.textXp += xp;
-    user.wallet += money;
-    user.lifetimeEarned += money;
-    return {
-      ok: true,
-      title: "Text活動をシミュレート",
-      lines: [`${count}メッセージ / 発言経験値 +${xp} / +${fmt(money)}`, `発言ランク: ${rankFor(TEXT_RANKS, user.activity.textXp).name}`]
-    };
-  }
-
-  simulateVoice(user, minutesRaw) {
-    const minutes = clamp(parsePositiveInt(minutesRaw) || 10, 1, 240);
-    return this.awardVoiceMinutes(user, minutes);
-  }
+  // simulateText / simulateVoice は本番から緊急撤去済み。
+  // ルータからも本メソッド定義からも削除しているため、engine.run("simulate-text ...") や
+  // engine.simulateText(...) を叩いてもメソッド未定義エラーで確実に失敗する。
+  // テストで seed が必要なら `user.activity.textXp = ...` のように activity 値を
+  // 直接代入するのが正規手順（本番コード経由ではない）。
 
   resetActivityRanks(adminUser, axis = "both") {
     const normalized = String(axis || "both").toLowerCase();
@@ -6909,13 +6896,16 @@ class EconomyEngine {
   }
 
   updateTitle(user) {
+    // workCount >= 25 の「労働市場そのもの」称号は work コマンド撤去に伴い廃止。
+    // どの条件にも当てはまらない場合は明示的にデフォルト称号へ戻す。
+    // 過去の workCount 値は表示・互換のため残っているが、称号判定には使わない。
     const net = this.netWorth(user);
     if (net >= 200000) user.title = "アイリス財閥";
     else if (net >= 80000) user.title = "経済圏の中枢";
     else if (net >= 25000) user.title = "値動きの支配人";
     else if (user.activity.vcXp >= 2600) user.title = "深夜VC責任者";
     else if (user.activity.textXp >= 1500) user.title = "タイムライン統括";
-    else if (user.workCount >= 25) user.title = "労働市場そのもの";
+    else user.title = "未上場の一般人";
   }
 
   log(user, type, amount, note) {
@@ -8134,10 +8124,14 @@ module.exports = {
   CURRENCY,
   ECONOMY_RANKS,
   INVITE_RANKS,
+  LEGACY_CHAIR_REFUND_AMOUNT,
+  LEGACY_CHAIR_REFUND_MIGRATION_ID,
+  LEGACY_CHAIR_REFUND_TARGETS,
   SHOP_ITEMS,
   TEXT_RANKS,
   VC_RANKS,
   EconomyEngine,
+  applyLegacyChairRefund,
   createInitialState,
   formatResult,
   fmt
