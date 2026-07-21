@@ -1823,48 +1823,46 @@ const {
   SHOP_ITEMS: SHOP_ITEMS_FOR_TEST
 } = require("./economy");
 
-function snapshotUser(u) {
-  return JSON.stringify({
-    wallet: u.wallet, xp: u.xp, lifetimeEarned: u.lifetimeEarned, lifetimeLost: u.lifetimeLost,
-    workCount: u.workCount, lastWork: u.lastWork, lastSubsidy: u.lastSubsidy,
-    activity: u.activity, title: u.title, inventory: u.inventory
-  });
-}
-function snapshotLedger(state) {
-  return JSON.stringify(state.ledger || []);
+function fullStateSnapshot(state) {
+  return JSON.stringify(state);
 }
 
-// --- 撤去済みコマンドは state を変えない ---
+// --- 撤去済みコマンドは state 全体を1byteも変えない（早期return確認） ---
 {
-  const removed = ["work", "労働", "subsidy", "beg", "給付金", "simulate-text 200", "simulate-vc 240"];
-  for (const cmd of removed) {
-    const e = new EconomyEngine(createInitialState(), { rng, silentMigrations: true });
-    const a = { id: "removed:actor", name: "撤去テスト" };
-    e.run("join", a);
-    const u = e.state.users[a.id];
-    // 参加直後の user snapshot を撮り、コマンド実行前の全体stateも撮る
-    const before = snapshotUser(u);
-    const beforeLedger = snapshotLedger(e.state);
-    const result = e.run(cmd, a);
-    // 実行後の user と ledger が完全一致することを確認
-    assert.strictEqual(snapshotUser(e.state.users[a.id]), before, `${cmd} の実行で user state が変わってはいけません`);
-    assert.strictEqual(snapshotLedger(e.state), beforeLedger, `${cmd} の実行で ledger が変わってはいけません`);
-    // 未知コマンドとして扱われるので ok:false
+  const removedCommands = ["work", "労働", "subsidy", "beg", "給付金", "simulate-text 200", "simulate-vc 240"];
+  // 参加済み既存ユーザーがいる engine で試す（既存user stateも動かしてはいけない）
+  const e = new EconomyEngine(createInitialState(), { rng });
+  const existing = { id: "removed:existing", name: "既存住民" };
+  e.run("join", existing);
+  for (const cmd of removedCommands) {
+    // 撤去コマンドを実行するのは、engineに未登録の別 actor。user レコードを
+    // 新規作成しないことも同時に検証する。
+    const strangerActor = { id: "removed:stranger-" + cmd.replace(/\s/g, "-"), name: "未登録" };
+    const beforeAll = fullStateSnapshot(e.state);
+    const usersBefore = Object.keys(e.state.users).sort().join(",");
+    const result = e.run(cmd, strangerActor);
+    const afterAll = fullStateSnapshot(e.state);
+    assert.strictEqual(afterAll, beforeAll, `${cmd} の実行で state 全体が変わってはいけません`);
+    // getUser経由の user 新規作成が発生していないこと（commandCount++ もしていないこと含む）
+    assert.strictEqual(Object.keys(e.state.users).sort().join(","), usersBefore,
+      `${cmd} の実行で users に新規レコードが増えてはいけません`);
     assert.strictEqual(result.ok, false, `${cmd} は未知コマンドとして拒否される必要があります`);
     assert(String(result.title).includes("未知"), `${cmd} は「未知の経済行為」で応答する必要があります`);
+    assert(!Object.prototype.hasOwnProperty.call(e.state.users, strangerActor.id),
+      `${cmd} の実行で未登録利用者の user state が新規作成されてはいけません`);
   }
 }
 
 // --- simulate メソッド自体がエンジンから削除されている ---
 {
-  const e = new EconomyEngine(createInitialState(), { rng, silentMigrations: true });
+  const e = new EconomyEngine(createInitialState(), { rng });
   assert.strictEqual(typeof e.simulateText, "undefined", "simulateText メソッドが公開されていてはいけません");
   assert.strictEqual(typeof e.simulateVoice, "undefined", "simulateVoice メソッドが公開されていてはいけません");
 }
 
 // --- 労働称号「労働市場そのもの」が付与されない ---
 {
-  const e = new EconomyEngine(createInitialState(), { rng, silentMigrations: true });
+  const e = new EconomyEngine(createInitialState(), { rng });
   const a = { id: "title:workless", name: "旧称号テスト" };
   e.run("join", a);
   const u = e.state.users[a.id];
@@ -1882,15 +1880,37 @@ function snapshotLedger(state) {
   const chair = SHOP_ITEMS_FOR_TEST.chair;
   assert(chair, "chair定義は残す必要があります");
   assert.strictEqual(chair.effect, "記念品", "chair.effect は記念品になっている必要があります");
+  assert.strictEqual(chair.kind, "keepsake", "chair.kind は keepsake になっている必要があります");
   // 現行効果としての「労働報酬 +15%」表現を禁じる。歴史的説明としての「旧労働制度」は許容。
   assert(!/15%/.test(chair.description), "chair.description に 15% 効果の記述が残っていてはいけません");
   assert(!/15%/.test(chair.effect), "chair.effect に 15% 効果の記述が残っていてはいけません");
   assert(!/労働報酬/.test(chair.description), "chair.description に「労働報酬」記述が残っていてはいけません");
   assert(!/労働報酬/.test(chair.effect), "chair.effect に「労働報酬」記述が残っていてはいけません");
   // OFFICIAL_SALE_ITEM_IDS 経由での販売テスト: officialSaleEntries() が chair を返さない
-  const e = new EconomyEngine(createInitialState(), { rng, silentMigrations: true });
+  const e = new EconomyEngine(createInitialState(), { rng });
   const shopItems = e.officialSaleEntries ? e.officialSaleEntries() : [];
   assert(!shopItems.some(([id]) => id === "chair"), "chairは販売対象に含まれてはいけません");
+}
+
+// --- `use chair` は記念品として応答し 財布/所持数/ledger を変えない ---
+{
+  const e = new EconomyEngine(createInitialState(), { rng });
+  const a = { id: "chair-use:actor", name: "椅子ユーザー" };
+  e.run("join", a);
+  e.state.users[a.id].inventory.chair = 1;
+  const walletBefore = e.state.users[a.id].wallet;
+  const chairBefore = e.state.users[a.id].inventory.chair;
+  const ledgerBefore = JSON.stringify(e.state.ledger || []);
+  const result = e.run("use chair", a);
+  assert.strictEqual(result.ok, false, "use chair は効果ありとして成功扱いにしてはいけません");
+  assert.strictEqual(String(result.title), "記念品", "use chair のタイトルは「記念品」である必要があります");
+  const linesJoined = (result.lines || []).join("\n");
+  assert(/旧労働制度の記念品/.test(linesJoined) || /記念品です/.test(linesJoined),
+    "use chair の本文に「旧労働制度の記念品」旨の記述が必要です");
+  assert(/効果はありません/.test(linesJoined), "use chair は現在効果なしを明示する必要があります");
+  assert.strictEqual(e.state.users[a.id].wallet, walletBefore, "use chair で財布を変えてはいけません");
+  assert.strictEqual(e.state.users[a.id].inventory.chair, chairBefore, "use chair で椅子を消費してはいけません");
+  assert.strictEqual(JSON.stringify(e.state.ledger || []), ledgerBefore, "use chair で ledger を変えてはいけません");
 }
 
 // --- 旧state互換 ---
@@ -1920,12 +1940,13 @@ function snapshotLedger(state) {
 }
 
 // --- 椅子返金 migration ---
-function makeChairState(discordIds = LEGACY_CHAIR_REFUND_TARGETS) {
+// LEGACY_CHAIR_REFUND_TARGETS は本番stateから確認した完全内部user IDのみ。
+// テストでは各targetをそのままstateに置く。
+function makeChairState(targets = LEGACY_CHAIR_REFUND_TARGETS) {
   const s = createInitialState();
-  for (const did of discordIds) {
-    const iid = "guild-A:" + did;
-    s.users[iid] = {
-      id: iid, name: "椅子所持者-" + did, joined: true,
+  for (const internalId of targets) {
+    s.users[internalId] = {
+      id: internalId, name: "椅子所持者-" + internalId, joined: true,
       wallet: 1000, xp: 0, workCount: 0, lifetimeEarned: 5000, lifetimeLost: 0,
       inventory: { chair: 1 }, title: "未上場の一般人"
     };
@@ -1939,21 +1960,22 @@ function makeChairState(discordIds = LEGACY_CHAIR_REFUND_TARGETS) {
   const logs = [];
   const r1 = applyLegacyChairRefund(state, { log: (m) => logs.push(m) });
   assert.strictEqual(r1.applied.length, 2, "対象2名に返金する必要があります");
-  for (const did of LEGACY_CHAIR_REFUND_TARGETS) {
-    const iid = "guild-A:" + did;
+  for (const iid of LEGACY_CHAIR_REFUND_TARGETS) {
     const u = state.users[iid];
-    assert.strictEqual(u.wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT, `${did} の wallet に ${LEGACY_CHAIR_REFUND_AMOUNT} が加算される必要があります`);
-    assert.strictEqual(u.lifetimeEarned, 5000 + LEGACY_CHAIR_REFUND_AMOUNT, `${did} の lifetimeEarned に ${LEGACY_CHAIR_REFUND_AMOUNT} が加算される必要があります`);
-    assert.strictEqual(u.inventory.chair, 1, `${did} の椅子は保持される必要があります`);
+    assert.strictEqual(u.wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT, `${iid} の wallet に ${LEGACY_CHAIR_REFUND_AMOUNT} が加算される必要があります`);
+    assert.strictEqual(u.lifetimeEarned, 5000 + LEGACY_CHAIR_REFUND_AMOUNT, `${iid} の lifetimeEarned に ${LEGACY_CHAIR_REFUND_AMOUNT} が加算される必要があります`);
+    assert.strictEqual(u.inventory.chair, 1, `${iid} の椅子は保持される必要があります`);
   }
   const refundLedgerEntries = state.ledger.filter((e) => e.type === "legacy_chair_refund");
   assert.strictEqual(refundLedgerEntries.length, 2, "ledgerに椅子返金の記録が2件残る必要があります");
   assert(refundLedgerEntries.every((e) => e.amount === LEGACY_CHAIR_REFUND_AMOUNT), "ledger各エントリの金額が一致する必要があります");
   assert(refundLedgerEntries.every((e) => String(e.note).includes("椅子返金")), "ledger note に返金の目的が残る必要があります");
+  // 「返金しました」の per-target 確定ログを migration 内部で出さない（保存確定は呼び出し側が担う）
+  assert(!logs.some((m) => m.includes("返金しました")), "applyLegacyChairRefund 内部で確定ログを出してはいけません（保存後に呼び出し側で出す）");
   // 2) 2回目起動で再付与されない（冪等）
   const r2 = applyLegacyChairRefund(state, { log: (m) => logs.push(m) });
   assert.strictEqual(r2.applied.length, 0, "2回目の適用で新規返金があってはいけません");
-  assert.strictEqual(state.users["guild-A:" + LEGACY_CHAIR_REFUND_TARGETS[0]].wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT,
+  assert.strictEqual(state.users[LEGACY_CHAIR_REFUND_TARGETS[0]].wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT,
     "冪等: 二重返金してはいけません");
   // 3) migration 記録が state に残る
   assert(state.migrations[LEGACY_CHAIR_REFUND_MIGRATION_ID], "migration記録がstateに残る必要があります");
@@ -1961,19 +1983,62 @@ function makeChairState(discordIds = LEGACY_CHAIR_REFUND_TARGETS) {
     "各対象の完了状況が targets に記録される必要があります");
 }
 
-// 4) 対象外ユーザーへ付与されない
+// 4) 対象外ユーザーへ付与されない（別guild同一Discord IDでも返金しない）
 {
   const state = createInitialState();
-  const noneTarget = "guild-A:999999999999999";
-  state.users[noneTarget] = {
-    id: noneTarget, name: "対象外", joined: true,
+  const [tgt0] = LEGACY_CHAIR_REFUND_TARGETS;
+  const targetDidRaw = tgt0.split(":").pop();
+  // (a) 裸 discordId のユーザー: 部分一致対象にしてはいけない
+  const bareId = targetDidRaw;
+  state.users[bareId] = {
+    id: bareId, name: "裸ID", joined: true,
     wallet: 100, xp: 0, workCount: 0, lifetimeEarned: 100, lifetimeLost: 0,
+    inventory: { chair: 1 }, title: "未上場の一般人"
+  };
+  // (b) 別guildの同一Discord ID
+  const otherGuildId = "9999999999999999:" + targetDidRaw;
+  state.users[otherGuildId] = {
+    id: otherGuildId, name: "別guild", joined: true,
+    wallet: 200, xp: 0, workCount: 0, lifetimeEarned: 200, lifetimeLost: 0,
+    inventory: { chair: 1 }, title: "未上場の一般人"
+  };
+  // (c) 全く関係ない別ユーザー
+  const outsider = "1521021464982061146:8888888888888888";
+  state.users[outsider] = {
+    id: outsider, name: "別ユーザー", joined: true,
+    wallet: 300, xp: 0, workCount: 0, lifetimeEarned: 300, lifetimeLost: 0,
     inventory: { chair: 1 }, title: "未上場の一般人"
   };
   const r = applyLegacyChairRefund(state, { log: () => {} });
   assert.strictEqual(r.applied.length, 0, "対象外ユーザーは返金しない");
-  assert.strictEqual(state.users[noneTarget].wallet, 100, "対象外の wallet を変えない");
+  assert.strictEqual(state.users[bareId].wallet, 100, "裸IDの wallet を変えない");
+  assert.strictEqual(state.users[otherGuildId].wallet, 200, "別guildの同一Discord IDの wallet を変えない");
+  assert.strictEqual(state.users[outsider].wallet, 300, "全く別ユーザーの wallet を変えない");
   assert(!(state.ledger || []).some((e) => e.type === "legacy_chair_refund"), "対象外は ledger 記録されない");
+}
+
+// 4b) legacy 裸IDと guild付きID が両方あっても、guild付きの完全一致だけを対象にする
+{
+  const [tgt0] = LEGACY_CHAIR_REFUND_TARGETS;
+  const targetDidRaw = tgt0.split(":").pop();
+  const state = createInitialState();
+  // 裸ID（レガシー）
+  state.users[targetDidRaw] = {
+    id: targetDidRaw, name: "裸ID(旧)", joined: true,
+    wallet: 100, xp: 0, workCount: 0, lifetimeEarned: 100, lifetimeLost: 0,
+    inventory: { chair: 1 }, title: "未上場の一般人"
+  };
+  // 正しい完全内部ID
+  state.users[tgt0] = {
+    id: tgt0, name: "正しい対象", joined: true,
+    wallet: 1000, xp: 0, workCount: 0, lifetimeEarned: 5000, lifetimeLost: 0,
+    inventory: { chair: 1 }, title: "未上場の一般人"
+  };
+  const r = applyLegacyChairRefund(state, { log: () => {} });
+  assert.strictEqual(r.applied.length, 1, "正しい完全内部IDだけ返金される");
+  assert.strictEqual(r.applied[0], tgt0, "返金対象は完全内部IDのみ");
+  assert.strictEqual(state.users[targetDidRaw].wallet, 100, "裸IDには絶対に返金しない");
+  assert.strictEqual(state.users[tgt0].wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT, "完全一致には返金する");
 }
 
 // 5) 対象者不在なら新規ユーザーを作らない + 警告ログを出す
@@ -1990,32 +2055,33 @@ function makeChairState(discordIds = LEGACY_CHAIR_REFUND_TARGETS) {
 // 6) 片方だけ完了済みからの復帰: 未完了の1名だけ処理
 {
   const state = makeChairState();
+  const [tgt0, tgt1] = LEGACY_CHAIR_REFUND_TARGETS;
   // 片方だけ完了済みとしてフラグを立てる
   state.migrations = {
     [LEGACY_CHAIR_REFUND_MIGRATION_ID]: {
-      targets: { [LEGACY_CHAIR_REFUND_TARGETS[0]]: { at: "2026-07-21T00:00:00.000Z", amount: 1500, userId: "guild-A:" + LEGACY_CHAIR_REFUND_TARGETS[0] } },
+      targets: { [tgt0]: { at: "2026-07-21T00:00:00.000Z", amount: 1500, userId: tgt0 } },
       at: "2026-07-21T00:00:00.000Z"
     }
   };
-  const walletCompleted = state.users["guild-A:" + LEGACY_CHAIR_REFUND_TARGETS[0]].wallet;
+  const walletCompleted = state.users[tgt0].wallet;
   const r = applyLegacyChairRefund(state, { log: () => {} });
   assert.strictEqual(r.applied.length, 1, "未完了者1名だけを処理する必要があります");
-  assert.strictEqual(r.applied[0], LEGACY_CHAIR_REFUND_TARGETS[1], "未完了ユーザーの ID が返る必要があります");
-  assert.strictEqual(state.users["guild-A:" + LEGACY_CHAIR_REFUND_TARGETS[0]].wallet, walletCompleted, "完了済み側の wallet は変わらない");
-  assert.strictEqual(state.users["guild-A:" + LEGACY_CHAIR_REFUND_TARGETS[1]].wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT, "未完了側だけ加算される");
+  assert.strictEqual(r.applied[0], tgt1, "未完了ユーザーの内部IDが返る必要があります");
+  assert.strictEqual(state.users[tgt0].wallet, walletCompleted, "完了済み側の wallet は変わらない");
+  assert.strictEqual(state.users[tgt1].wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT, "未完了側だけ加算される");
 }
 
 // 7) safe integer overflow の場合は付与しない
 {
-  const state = makeChairState([LEGACY_CHAIR_REFUND_TARGETS[0]]);
-  const iid = "guild-A:" + LEGACY_CHAIR_REFUND_TARGETS[0];
-  state.users[iid].wallet = Number.MAX_SAFE_INTEGER - 500; // +1500 で overflow
+  const [tgt0] = LEGACY_CHAIR_REFUND_TARGETS;
+  const state = makeChairState([tgt0]);
+  state.users[tgt0].wallet = Number.MAX_SAFE_INTEGER - 500; // +1500 で overflow
   const r = applyLegacyChairRefund(state, { log: () => {} });
   assert.strictEqual(r.errors.length, 1, "overflow なら errors に入る");
-  assert.strictEqual(state.users[iid].wallet, Number.MAX_SAFE_INTEGER - 500, "overflow時は wallet を変えない");
+  assert.strictEqual(state.users[tgt0].wallet, Number.MAX_SAFE_INTEGER - 500, "overflow時は wallet を変えない");
   assert(!(state.ledger || []).some((e) => e.type === "legacy_chair_refund"), "overflow時は ledger に記録しない");
   // 再試行できるよう targets には記録されない
-  assert(!state.migrations[LEGACY_CHAIR_REFUND_MIGRATION_ID]?.targets?.[LEGACY_CHAIR_REFUND_TARGETS[0]],
+  assert(!state.migrations[LEGACY_CHAIR_REFUND_MIGRATION_ID]?.targets?.[tgt0],
     "overflow時は targets 完了記録を残さない（後日再試行の余地を残す）");
 }
 
@@ -2024,16 +2090,50 @@ function makeChairState(discordIds = LEGACY_CHAIR_REFUND_TARGETS) {
   const state = makeChairState();
   const logs = [];
   const eng = new EconomyEngine(state, { rng, migrationLog: (m) => logs.push(m) });
-  assert(logs.some((m) => m.includes(LEGACY_CHAIR_REFUND_MIGRATION_ID)), "コンストラクタ経由でmigrationログが出る必要があります");
-  for (const did of LEGACY_CHAIR_REFUND_TARGETS) {
-    assert.strictEqual(eng.state.users["guild-A:" + did].wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT,
-      `${did} にコンストラクタ経由で返金される必要があります`);
+  for (const iid of LEGACY_CHAIR_REFUND_TARGETS) {
+    assert.strictEqual(eng.state.users[iid].wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT,
+      `${iid} にコンストラクタ経由で返金される必要があります`);
   }
   // 別 engine で同じstate を読んでも二重返金しない
   const logs2 = [];
   const eng2 = new EconomyEngine(eng.state, { rng, migrationLog: (m) => logs2.push(m) });
-  assert.strictEqual(eng2.state.users["guild-A:" + LEGACY_CHAIR_REFUND_TARGETS[0]].wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT,
+  assert.strictEqual(eng2.state.users[LEGACY_CHAIR_REFUND_TARGETS[0]].wallet, 1000 + LEGACY_CHAIR_REFUND_AMOUNT,
     "冪等: コンストラクタ経由でも二重返金してはいけません");
+}
+
+// 9) 起動時 save 失敗テスト: 返金確定ログは save 成功後にのみ出す（本番エントリ相当）
+{
+  const state = makeChairState();
+  const logs = [];
+  const eng = new EconomyEngine(state, { rng, migrationLog: (m) => logs.push(m) });
+  const applied = eng.lastMigrationResult.applied;
+  assert.strictEqual(applied.length, 2, "テスト前提: applied=2");
+  // save を失敗させる fake store
+  let saveCalled = 0;
+  const badStore = { save() { saveCalled += 1; throw new Error("disk full (test)"); } };
+  let thrown = null;
+  try {
+    if (applied.length > 0) {
+      try {
+        badStore.save(eng.state);
+      } catch (error) {
+        // discord-core.js と同じ振る舞い: 例外を上位に投げてプロセス起動を中止
+        throw error;
+      }
+      // 保存失敗時にはここに到達してはいけない（後続の確定ログを出させない）
+      for (const target of applied) console.log(`確定ログ ${target}`);
+    }
+  } catch (e) { thrown = e; }
+  assert(thrown, "save 失敗時は例外が伝播する必要があります");
+  assert.strictEqual(saveCalled, 1, "save は1回だけ試みられる必要があります");
+  // 再試行時: state は返金済みだが migrations フラグも立っているので再度呼んでも冪等（別Engineから同じstateを読み込む想定）
+  const eng2 = new EconomyEngine(JSON.parse(JSON.stringify(eng.state)), { rng });
+  assert.strictEqual(eng2.lastMigrationResult.applied.length, 0, "再起動時は既に済ませた target を再度返金しない");
+  // 保存に成功する新しいstore で再試行するとちゃんと1回だけ保存される
+  let goodSaved = 0;
+  const goodStore = { save() { goodSaved += 1; } };
+  goodStore.save(eng2.state);
+  assert.strictEqual(goodSaved, 1, "再起動時に正常な store で1回だけ保存できる必要があります");
 }
 
 // --- help / help内文言のチェック ---

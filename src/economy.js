@@ -338,19 +338,36 @@ function createInitialState() {
   };
 }
 
+// 撤去済みコマンド。ルータの switch より前で早期returnし、 getUser() や
+// commandCount++、closeEndedAuctions()、updateTitle() などの housekeeping を
+// 通さず完全 no-op にする（state を 1byte も変えない）。
+const REMOVED_COMMANDS = new Set([
+  "work", "労働",
+  "subsidy", "beg", "給付金",
+  "simulate-text", "simulate-vc"
+]);
+
 // 一回限り migration: 旧労働制度 (work / 深座りの椅子+15%効果) 廃止に伴い、
 // 椅子所持者へ購入価格1,500 Risを返金する。詳細は applyLegacyChairRefund を参照。
+// ターゲットは本番state (2026-07-21 read-only 確認) から得た **完全内部user ID** のみ。
+// 別guildの同じdiscordIDや裸のdiscordIDには一切マッチしない（後方一致を排除）。
 const LEGACY_CHAIR_REFUND_MIGRATION_ID = "legacy_chair_refund_v1";
 const LEGACY_CHAIR_REFUND_AMOUNT = 1500;
-const LEGACY_CHAIR_REFUND_TARGETS = ["1494667084037095444", "610021634383806474"];
+const LEGACY_CHAIR_REFUND_TARGETS = [
+  "1521021464982061146:1494667084037095444", // イヴ
+  "1521021464982061146:610021634383806474"   // らぴ
+];
 
 // stateに対して椅子返金 migration を適用する。副作用: state.migrations, state.ledger,
 // 該当ユーザーの wallet と lifetimeEarned を更新する。冪等: 同一 target を二重に処理しない。
-// options.log(msg): ステータスログの出力先（デフォルト console.log）。
+// options.log(msg): 処理ログの出力先（デフォルト no-op）。
+// 「返金完了ログ」はここでは出さない。呼び出し側が永続化に成功したあとで applied を
+// 見て確定ログを出す（部分適用のまま「返金しました」がディスク未反映で流れない
+// ようにするため）。
 function applyLegacyChairRefund(state, options = {}) {
-  const log = typeof options.log === "function" ? options.log : (msg) => console.log(msg);
+  const log = typeof options.log === "function" ? options.log : () => {};
   const nowIso = () => new Date().toISOString();
-  if (!state || typeof state !== "object") return { applied: [], skipped: [], missing: [], errors: [] };
+  if (!state || typeof state !== "object") return { applied: [], skipped: [], missing: [], errors: [], ambiguous: [] };
   if (!state.migrations || typeof state.migrations !== "object") state.migrations = {};
   const record = state.migrations[LEGACY_CHAIR_REFUND_MIGRATION_ID]
     || (state.migrations[LEGACY_CHAIR_REFUND_MIGRATION_ID] = { targets: {}, at: null });
@@ -360,22 +377,28 @@ function applyLegacyChairRefund(state, options = {}) {
   const skipped = [];
   const missing = [];
   const errors = [];
+  const ambiguous = [];
 
-  for (const discordId of LEGACY_CHAIR_REFUND_TARGETS) {
-    if (record.targets[discordId]) { skipped.push(discordId); continue; }
-    // 対象guildの完全なuser IDは state から後方一致で解決する（新規ユーザーは作らない）。
-    const suffix = ":" + discordId;
-    const entry = Object.entries(state.users || {}).find(([id]) => id === discordId || id.endsWith(suffix));
-    if (!entry) {
-      missing.push(discordId);
-      log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] discord user ${discordId} が state に居ないため返金を保留（新規作成しません）。`);
+  for (const internalId of LEGACY_CHAIR_REFUND_TARGETS) {
+    if (record.targets[internalId]) { skipped.push(internalId); continue; }
+    // 完全一致のみを許可（別guild・裸ID・部分一致は対象外）。多重登録がある場合は
+    // 曖昧扱いで返金を止める（先頭を勝手に採用しない）。
+    const matches = Object.keys(state.users || {}).filter((k) => k === internalId);
+    if (matches.length === 0) {
+      missing.push(internalId);
+      log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] internal user ${internalId} が state に居ないため返金を保留（新規作成しません）。`);
       continue;
     }
-    const [internalId, user] = entry;
+    if (matches.length > 1) {
+      ambiguous.push(internalId);
+      log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] internal user ${internalId} に対して複数キー候補があるため返金を保留（要調査）。`);
+      continue;
+    }
+    const user = state.users[internalId];
     const chairCount = Number(user?.inventory?.chair) || 0;
     if (chairCount < 1) {
-      skipped.push(discordId);
-      log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] discord user ${discordId} は椅子を所持していないため対象外。`);
+      skipped.push(internalId);
+      log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] ${internalId} は椅子を所持していないため対象外。`);
       continue;
     }
     const currentWallet = Number(user.wallet) || 0;
@@ -383,8 +406,8 @@ function applyLegacyChairRefund(state, options = {}) {
     const nextWallet = currentWallet + LEGACY_CHAIR_REFUND_AMOUNT;
     const nextLifetime = currentLifetime + LEGACY_CHAIR_REFUND_AMOUNT;
     if (!Number.isSafeInteger(nextWallet) || !Number.isSafeInteger(nextLifetime)) {
-      errors.push(discordId);
-      log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] discord user ${discordId} の返金で MAX_SAFE_INTEGER を超えるため見送り。`);
+      errors.push(internalId);
+      log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] ${internalId} の返金で MAX_SAFE_INTEGER を超えるため見送り。`);
       continue;
     }
     user.wallet = nextWallet;
@@ -393,22 +416,21 @@ function applyLegacyChairRefund(state, options = {}) {
     state.ledger.push({
       at: nowIso(),
       userId: internalId,
-      userName: user.name || discordId,
+      userName: user.name || internalId,
       type: "legacy_chair_refund",
       amount: LEGACY_CHAIR_REFUND_AMOUNT,
       note: "旧労働制度廃止に伴う深座りの椅子返金"
     });
     state.ledger = state.ledger.slice(-200);
-    record.targets[discordId] = {
+    record.targets[internalId] = {
       at: nowIso(),
       amount: LEGACY_CHAIR_REFUND_AMOUNT,
       userId: internalId
     };
-    applied.push(discordId);
-    log(`[migration ${LEGACY_CHAIR_REFUND_MIGRATION_ID}] discord user ${discordId} (${internalId}) へ ${LEGACY_CHAIR_REFUND_AMOUNT} Ris を返金しました。`);
+    applied.push(internalId);
   }
   if (applied.length > 0) record.at = nowIso();
-  return { applied, skipped, missing, errors, migrationId: LEGACY_CHAIR_REFUND_MIGRATION_ID };
+  return { applied, skipped, missing, errors, ambiguous, migrationId: LEGACY_CHAIR_REFUND_MIGRATION_ID };
 }
 
 class EconomyEngine {
@@ -427,8 +449,23 @@ class EconomyEngine {
   }
 
   run(input, actor) {
-    const user = this.getUser(actor.id, actor.name);
     const parsed = parseInput(input);
+
+    // 撤去済みコマンド (旧 work / subsidy / simulate 系) は state を一切触らずに
+    // no-op で返す。getUser() / commandCount++ / closeEndedAuctions() / updateTitle()
+    // より前で早期returnし、未登録利用者の user レコード作成も避ける。
+    if (parsed.command && REMOVED_COMMANDS.has(parsed.command)) {
+      return {
+        ok: false,
+        title: "未知の経済行為",
+        lines: [
+          `\`${parsed.command}\` は撤去済みのコマンドです。`,
+          "迷ったら `panel`。そこから押せます。"
+        ]
+      };
+    }
+
+    const user = this.getUser(actor.id, actor.name);
 
     if (!parsed.command) {
       return this.panel(user, "home");
@@ -535,10 +572,10 @@ class EconomyEngine {
       case "通話報酬":
         result = this.claimVoiceReward(user);
         break;
-      // simulate-text / simulate-vc は本番から緊急無効化。
-      // 一般ユーザー・管理者双方から通常のコマンドルーター経由では実行できない。
-      // テストで seed が要る場合は engine.simulateText() / simulateVoice() を
-      // 直接呼ぶこと。NODE_ENV 分岐やヒドゥンフラグは意図的に設けない。
+      // simulate-text / simulate-vc は本番から緊急無効化。ルータからも本体メソッドからも
+      // 削除済み。NODE_ENV 分岐やヒドゥンフラグは意図的に設けない。テストで activity を
+      // seed する必要がある場合は `user.activity.textXp = ...` のように fixture として
+      // フィールドを直接代入すること（本番コード経路ではない）。
       default:
         result = {
           ok: false,
@@ -6428,6 +6465,18 @@ class EconomyEngine {
         lines: [`${item.name} は持ち物画面の「使う・申請する商品を選ぶ」から希望内容を送信できます。`],
         panel: this.marketInventoryPanel(user),
         requestUse: true
+      };
+    }
+
+    if (item.kind === "keepsake") {
+      // 記念品は使っても効果が発動せず、消費もしない。財布・所持数・ledgerは不変。
+      return {
+        ok: false,
+        title: "記念品",
+        lines: [
+          `${item.name} は旧労働制度の記念品です。`,
+          "現在のゲーム内効果はありません。"
+        ]
       };
     }
 
