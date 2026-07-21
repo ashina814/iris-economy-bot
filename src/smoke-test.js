@@ -1559,4 +1559,247 @@ assert.strictEqual(storeReload.ensureShopShape(reloadedA).marketForumThreadId, "
 assert.strictEqual(storeReload.sellerIdByShopForumThread("710000000000000003"), sSellerA.id, "再読み込み後も店舗投稿から販売者を引ける必要があります");
 assert(JSON.stringify(storeReload.shopForumPanel(sSellerA.id)).includes("有限会社だいたい何とかする"), "再読み込み後も店舗パネルを生成できる必要があります");
 
+// =========================================================================
+// 再発防止テスト: 返金の会計整合性 / 受取確認の状態機械 / オークション上書き通知 / 重複通報
+// =========================================================================
+
+// --- 修正1: 支払い済み注文を返金する際の会計整合性 ---
+{
+  function buildRefundScenario() {
+    const e = new EconomyEngine(createInitialState(), { rng });
+    const adminU = { id: "refund:admin", name: "返金運営" };
+    const sellerU = { id: "refund:seller", name: "返金販売者" };
+    const buyerU = { id: "refund:buyer", name: "返金購入者" };
+    e.run("join", adminU);
+    e.run("join", sellerU);
+    e.run("join", buyerU);
+    const listRes = e.createServiceListing(e.getUser(sellerU.id, sellerU.name), {
+      name: "返金会計テスト", description: "test", price: "1000", category: "fun", limit: ""
+    });
+    assert(listRes.ok, "テスト前提: 返金テスト用の出品を作成できる");
+    const listing = listRes.listing;
+    if (listing.status === "pending") {
+      assert(e.approveListing(e.getUser(adminU.id, adminU.name), listing.id).ok, "テスト前提: 出品を承認できる");
+    }
+    const buy = e.buyServiceListing(e.getUser(buyerU.id, buyerU.name), listing.id, {});
+    assert(buy.ok, "テスト前提: 出品を購入できる");
+    const order = buy.order;
+    assert.strictEqual(order.fee, 50, "テスト前提: 5%手数料で fee=50 になる");
+    // 支払い済みまで進める（seller.wallet += 950 が入る）
+    assert(e.acceptTrade(e.getUser(sellerU.id, sellerU.name), order.id).ok);
+    assert(e.deliverTrade(e.getUser(sellerU.id, sellerU.name), order.id).ok);
+    assert(e.confirmTrade(e.getUser(buyerU.id, buyerU.name), order.id).ok);
+    assert.strictEqual(order.status, "completed", "テスト前提: 受取確認で completed");
+    assert.strictEqual(order.payout, "paid", "テスト前提: 受取確認で payout=paid");
+    return { engine: e, adminU, sellerU, buyerU, order, listing };
+  }
+
+  // ケースA: 販売者が受取額 (950) 以上を持っている → 全額回収, 不足0
+  {
+    const { engine: e, adminU, sellerU, buyerU, order, listing } = buildRefundScenario();
+    const buyerBefore = e.state.users[buyerU.id].wallet;
+    const sellerBefore = e.state.users[sellerU.id].wallet;
+    const inventoryBefore = e.getUser(buyerU.id, buyerU.name).marketplace.inventory.length;
+    assert(sellerBefore >= 950, "テスト前提: 販売者残高が受取額以上");
+    const stockBefore = listing.stock;
+    const centralBefore = e.state.marketplace.centralRefundBurdenTotal || 0;
+    const lifetimeLostBefore = e.state.users[sellerU.id].lifetimeLost;
+    const res = e.adminRefundOrder(e.getUser(adminU.id, adminU.name), order.id);
+    assert(res.ok, "支払い済み注文を通常返金できる必要があります");
+    assert.strictEqual(order.status, "refunded", "返金完了で refunded になる必要があります");
+    assert.strictEqual(e.state.users[buyerU.id].wallet, buyerBefore + 1000, "購入者へ商品価格が1回だけ返る必要があります");
+    assert.strictEqual(order.refundRecovered, 950, "販売者残高が受取額以上なら全額回収される必要があります");
+    assert.strictEqual(order.refundShortfall, 0, "全額回収時は不足額が0である必要があります");
+    assert.strictEqual(e.state.users[sellerU.id].wallet, sellerBefore - 950, "販売者から受取分が引かれる必要があります");
+    assert.strictEqual(e.state.marketplace.centralRefundBurdenTotal, centralBefore, "不足0のときは中央負担が増えてはいけません");
+    assert.strictEqual(e.state.users[sellerU.id].lifetimeLost - lifetimeLostBefore, 950,
+      "lifetimeLost には実回収額のみが加算される必要があります");
+    // 在庫と purchaser inventory の巻き戻し
+    assert.strictEqual(listing.sold, 0, "返金で在庫巻き戻し: sold が減る必要があります");
+    if (typeof stockBefore === "number") {
+      assert.strictEqual(listing.stock, stockBefore + 1, "受付枠が戻る必要があります");
+    }
+    assert(!e.getUser(buyerU.id, buyerU.name).marketplace.inventory.some((item) => String(item.orderId) === String(order.id)),
+      "返金で購入者の持ち物から該当商品が消える必要があります");
+    // 二重返金拒否
+    const dbl = e.adminRefundOrder(e.getUser(adminU.id, adminU.name), order.id);
+    assert(!dbl.ok, "同じ注文を2回返金してはいけません");
+    assert.strictEqual(e.state.users[buyerU.id].wallet, buyerBefore + 1000, "二重返金で購入者残高が変わってはいけません");
+  }
+
+  // ケースB: 販売者が受取額未満しか持っていない → 実回収額と不足額が正しく分離される
+  {
+    const { engine: e, adminU, sellerU, buyerU, order } = buildRefundScenario();
+    // 販売者残高を100 Risに落とす（受取分を他所に使った想定）
+    e.state.users[sellerU.id].wallet = 100;
+    const buyerBefore = e.state.users[buyerU.id].wallet;
+    const centralBefore = e.state.marketplace.centralRefundBurdenTotal || 0;
+    const lifetimeLostBefore = e.state.users[sellerU.id].lifetimeLost;
+    const res = e.adminRefundOrder(e.getUser(adminU.id, adminU.name), order.id);
+    assert(res.ok, "残高不足でも返金は完了する必要があります");
+    assert.strictEqual(e.state.users[buyerU.id].wallet, buyerBefore + 1000, "購入者は商品価格を1回だけ全額返される必要があります");
+    assert.strictEqual(e.state.users[sellerU.id].wallet, 0, "販売者残高は0まで回収される必要があります");
+    assert.strictEqual(order.refundRecovered, 100, "実回収額は販売者残高分だけになる必要があります");
+    assert.strictEqual(order.refundShortfall, 850, "不足額 = 受取分 - 実回収 になる必要があります");
+    assert.strictEqual(e.state.marketplace.centralRefundBurdenTotal, centralBefore + 850,
+      "不足額が中央負担合計に加算される必要があります");
+    assert.strictEqual(e.state.users[sellerU.id].lifetimeLost - lifetimeLostBefore, 100,
+      "lifetimeLost には実回収額のみが加算される必要があります（不足分を損失として記録してはいけません）");
+    const burdenLog = e.state.marketplace.centralRefundBurdenLog;
+    assert(Array.isArray(burdenLog) && burdenLog.length >= 1, "中央負担の詳細ログが記録される必要があります");
+    const lastLog = burdenLog[burdenLog.length - 1];
+    assert.strictEqual(lastLog.orderId, order.id, "中央負担ログに注文IDが記録される必要があります");
+    assert.strictEqual(lastLog.shortfall, 850, "中央負担ログの不足額が一致する必要があります");
+    assert.strictEqual(lastLog.recovered, 100, "中央負担ログの実回収額が一致する必要があります");
+  }
+}
+
+// --- 修正2: 納品前の受取確認を禁止 ---
+{
+  const e = new EconomyEngine(createInitialState(), { rng });
+  const adminU = { id: "confirm:admin", name: "運営" };
+  const sellerU = { id: "confirm:seller", name: "販売者" };
+  const buyerU = { id: "confirm:buyer", name: "購入者" };
+  e.run("join", adminU);
+  e.run("join", sellerU);
+  e.run("join", buyerU);
+  const listRes = e.createServiceListing(e.getUser(sellerU.id, sellerU.name), {
+    name: "受取確認境界テスト", description: "test", price: "1000", category: "fun", limit: ""
+  });
+  const listing = listRes.listing;
+  if (listing.status === "pending") e.approveListing(e.getUser(adminU.id, adminU.name), listing.id);
+  const buy = e.buyServiceListing(e.getUser(buyerU.id, buyerU.name), listing.id, {});
+  const order = buy.order;
+  assert.strictEqual(order.status, "ordered", "テスト前提: 購入直後は ordered");
+  // ordered で受取確認できない
+  const buyerAtOrdered = e.state.users[buyerU.id].wallet;
+  const sellerAtOrdered = e.state.users[sellerU.id].wallet;
+  const rejOrdered = e.confirmTrade(e.getUser(buyerU.id, buyerU.name), order.id);
+  assert(!rejOrdered.ok, "ordered では受取確認できてはいけません");
+  assert.strictEqual(order.status, "ordered", "拒否時に status を変えてはいけません");
+  assert.strictEqual(order.payout, "held", "拒否時に payout を変えてはいけません");
+  assert.strictEqual(e.state.users[buyerU.id].wallet, buyerAtOrdered, "拒否時に購入者残高を変えてはいけません");
+  assert.strictEqual(e.state.users[sellerU.id].wallet, sellerAtOrdered, "拒否時に販売者残高を変えてはいけません");
+  // accepted で受取確認できない
+  e.acceptTrade(e.getUser(sellerU.id, sellerU.name), order.id);
+  assert.strictEqual(order.status, "accepted");
+  const buyerAtAccepted = e.state.users[buyerU.id].wallet;
+  const sellerAtAccepted = e.state.users[sellerU.id].wallet;
+  const rejAccepted = e.confirmTrade(e.getUser(buyerU.id, buyerU.name), order.id);
+  assert(!rejAccepted.ok, "accepted では受取確認できてはいけません");
+  assert.strictEqual(order.status, "accepted", "拒否時に status を変えてはいけません");
+  assert.strictEqual(order.payout, "held", "拒否時に payout を変えてはいけません");
+  assert.strictEqual(e.state.users[buyerU.id].wallet, buyerAtAccepted, "拒否時に購入者残高を変えてはいけません");
+  assert.strictEqual(e.state.users[sellerU.id].wallet, sellerAtAccepted, "拒否時に販売者残高を変えてはいけません");
+  // delivered なら受取確認できる
+  e.deliverTrade(e.getUser(sellerU.id, sellerU.name), order.id);
+  assert.strictEqual(order.status, "delivered");
+  const sellerBeforeConfirm = e.state.users[sellerU.id].wallet;
+  const ok = e.confirmTrade(e.getUser(buyerU.id, buyerU.name), order.id);
+  assert(ok.ok, "delivered では受取確認できる必要があります");
+  assert.strictEqual(order.status, "completed", "受取確認で completed になる必要があります");
+  assert.strictEqual(order.payout, "paid", "受取確認で payout=paid になる必要があります");
+  assert.strictEqual(e.state.users[sellerU.id].wallet, sellerBeforeConfirm + 1000 - order.fee,
+    "完了時に販売者へ手数料差引後の額が1回だけ支払われる必要があります");
+  // 同じ注文を再度確認しても二重支払いされない
+  const dbl = e.confirmTrade(e.getUser(buyerU.id, buyerU.name), order.id);
+  assert(!dbl.ok, "同じ注文を再度確認できてはいけません");
+  assert.strictEqual(e.state.users[sellerU.id].wallet, sellerBeforeConfirm + 1000 - order.fee, "二重支払いされてはいけません");
+}
+
+// --- 修正3: オークション上書き通知 ---
+{
+  const e = new EconomyEngine(createInitialState(), { rng });
+  const adminU = { id: "auc:admin", name: "運営" };
+  const aA = { id: "auc:A", name: "入札者A" };
+  const aB = { id: "auc:B", name: "入札者B" };
+  e.run("join", adminU);
+  e.run("join", aA);
+  e.run("join", aB);
+  e.state.users[aA.id].wallet = 100000;
+  e.state.users[aB.id].wallet = 100000;
+  const created = e.createOfficialAuction(e.getUser(adminU.id, adminU.name), {
+    name: "上書き通知テスト", type: "title", startPrice: "1000", durationMinutes: "60", description: "outbid test"
+  });
+  assert(created.ok, "テスト前提: 公式オークションを作成できる");
+  const auction = e.state.marketplace.auctions[e.state.marketplace.auctions.length - 1];
+
+  const bidA = e.placeAuctionBid(e.getUser(aA.id, aA.name), auction.id, "1200");
+  assert(bidA.ok, "テスト前提: Aが入札できる");
+  const walletAAfterBid = e.state.users[aA.id].wallet;
+
+  // 別ユーザーBが上書き
+  const bidB = e.placeAuctionBid(e.getUser(aB.id, aB.name), auction.id, "1600");
+  assert(bidB.ok, "テスト前提: Bが上書き入札できる");
+  // Aへ返金
+  assert.strictEqual(e.state.users[aA.id].wallet, walletAAfterBid + 1200, "上書きで前入札者へ返金される必要があります");
+  // outbid通知は前入札者Aへ、1件だけ
+  const outbidNotifsB = (bidB.notifications || []).filter((n) => n.event === "auction_outbid");
+  assert.strictEqual(outbidNotifsB.length, 1, "auction_outbid 通知が1件だけ生成される必要があります");
+  assert.strictEqual(outbidNotifsB[0].userId, aA.id, "上書き通知の宛先は前入札者である必要があります");
+  assert.strictEqual(outbidNotifsB[0].data.previousBid, 1200, "previousBid には旧入札額が入る必要があります");
+  assert.strictEqual(outbidNotifsB[0].data.newBid, 1600, "newBid には新入札額が入る必要があります");
+  assert.strictEqual(outbidNotifsB[0].data.newBidderName, aB.name, "newBidderName に新入札者が入る必要があります");
+
+  // 同じユーザーが自分の入札額を上げても、上書き通知は出ない
+  const bidBAgain = e.placeAuctionBid(e.getUser(aB.id, aB.name), auction.id, "2000");
+  assert(bidBAgain.ok, "テスト前提: 同一ユーザーが額を上げられる");
+  const outbidNotifsSelf = (bidBAgain.notifications || []).filter((n) => n.event === "auction_outbid");
+  assert.strictEqual(outbidNotifsSelf.length, 0, "自分自身の追加入札では上書き通知が出てはいけません");
+
+  // 即決入札: 別ユーザーが即決すると前入札者へ通知が出る
+  const buyoutCreated = e.createOfficialAuction(e.getUser(adminU.id, adminU.name), {
+    name: "即決通知テスト", type: "title", startPrice: "500", buyoutPrice: "3000", durationMinutes: "60", description: "buyout"
+  });
+  assert(buyoutCreated.ok, "テスト前提: 即決付きオークションを作成できる");
+  const auction2 = e.state.marketplace.auctions[e.state.marketplace.auctions.length - 1];
+  assert(e.placeAuctionBid(e.getUser(aA.id, aA.name), auction2.id, "700").ok, "テスト前提: Aが auction2 に入札できる");
+  const walletABeforeBuyout = e.state.users[aA.id].wallet;
+  const buyoutRes = e.placeAuctionBid(e.getUser(aB.id, aB.name), auction2.id, "3000");
+  assert(buyoutRes.ok, "テスト前提: Bが即決落札できる");
+  assert.strictEqual(e.state.users[aA.id].wallet, walletABeforeBuyout + 700, "即決入札でも前入札者へ返金される必要があります");
+  const outbidBuyout = (buyoutRes.notifications || []).filter((n) => n.event === "auction_outbid");
+  assert.strictEqual(outbidBuyout.length, 1, "即決入札でも前入札者への通知が失われてはいけません");
+  assert.strictEqual(outbidBuyout[0].userId, aA.id, "即決入札の上書き通知宛先は前入札者");
+  assert.strictEqual(outbidBuyout[0].data.previousBid, 700);
+  assert.strictEqual(outbidBuyout[0].data.newBid, 3000);
+}
+
+// --- 修正4: 同一出品への重複通報防止 ---
+{
+  const e = new EconomyEngine(createInitialState(), { rng });
+  const adminU = { id: "report:admin", name: "運営" };
+  const sellerU = { id: "report:seller", name: "販売者" };
+  const rA = { id: "report:reporterA", name: "通報者A" };
+  const rB = { id: "report:reporterB", name: "通報者B" };
+  e.run("join", adminU);
+  e.run("join", sellerU);
+  e.run("join", rA);
+  e.run("join", rB);
+  const listRes = e.createServiceListing(e.getUser(sellerU.id, sellerU.name), {
+    name: "重複通報テスト", description: "test", price: "1000", category: "fun", limit: ""
+  });
+  const listing = listRes.listing;
+  if (listing.status === "pending") e.approveListing(e.getUser(adminU.id, adminU.name), listing.id);
+
+  const first = e.reportListing(e.getUser(rA.id, rA.name), listing.id, "内容が違う");
+  assert(first.ok, "最初の通報は作成できる必要があります");
+  const nextIdAfterFirst = e.state.marketplace.nextReportId;
+
+  const dup = e.reportListing(e.getUser(rA.id, rA.name), listing.id, "もう一度");
+  assert(!dup.ok, "同一ユーザー・同一出品の未処理重複通報は拒否される必要があります");
+  assert.strictEqual(e.state.marketplace.nextReportId, nextIdAfterFirst, "拒否時に nextReportId が進んではいけません");
+  assert.strictEqual(e.state.marketplace.reports.filter((r) => r.reporterId === rA.id && r.listingId === listing.id).length, 1,
+    "拒否時に台帳へ新規レコードが積まれてはいけません");
+
+  const another = e.reportListing(e.getUser(rB.id, rB.name), listing.id, "別視点");
+  assert(another.ok, "別ユーザーからの通報は作成できる必要があります");
+
+  // 既存通報が処理済み(status !== "open") になれば同一ユーザーからの再通報を許可
+  const firstReport = e.state.marketplace.reports.find((r) => r.reporterId === rA.id && r.listingId === listing.id);
+  firstReport.status = "resolved";
+  const reReport = e.reportListing(e.getUser(rA.id, rA.name), listing.id, "また問題ありました");
+  assert(reReport.ok, "既存通報が処理済みなら再通報できる必要があります");
+}
+
 console.log("スモークテスト通過。");
