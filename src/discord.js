@@ -840,7 +840,10 @@ TunedEconomyEngine.prototype.run = function patchedRun(input, actor) {
   if (["rank", "leaderboard", "ランキング"].includes(command)) return buildMentionLeaderboard(this, actor, parts[1] || "net");
 
   const result = originalRun.call(this, input, actor);
-  const user = actor?.id ? this.getUser(actor.id, actor.name) : null;
+  // 撤去済みコマンドでは基礎engineがuser stateを一切作らないので、ラッパー側でも
+  // getUser() を呼んで作成してはいけない。既存の user を state から直接参照する。
+  // 通常コマンドは originalRun 内で既に user を作成・取得済み。
+  const user = actor?.id ? (this.state.users?.[actor.id] || null) : null;
   return retuneResult(result, user, this);
 };
 
@@ -1013,21 +1016,8 @@ TunedEconomyEngine.prototype.awardVoiceMinutes = function patchedAwardVoiceMinut
   };
 };
 
-TunedEconomyEngine.prototype.simulateText = function patchedSimulateText(user, countRaw) {
-  const count = clamp(Math.floor(Number(countRaw) || 1), 1, 200);
-  const xp = count;
-  const money = count * 2;
-  user.activity.textMessages += count;
-  user.activity.textXp += xp;
-  user.wallet += money;
-  user.lifetimeEarned += money;
-  this.updateTitle(user);
-  return {
-    ok: true,
-    title: "TC活動をシミュレート",
-    lines: [`${count}メッセージ / TC経験値 +${xp} / +${fmt(money)}`, `TCランク: ${this.textRank(user).name}`]
-  };
-};
+// TunedEconomyEngine.simulateText は撤去済み。基礎engineから simulate系メソッドと
+// ルータcaseを消したのに合わせ、ラッパー側も再導入しない（simulate は本番から完全消去）。
 
 TunedEconomyEngine.prototype.playerCard = function patchedPlayerCard(user) {
   const net = Math.floor(this.netWorth(user));

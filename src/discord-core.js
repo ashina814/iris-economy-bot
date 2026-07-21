@@ -113,7 +113,30 @@ if (!token) {
 
 const store = new JsonStore(path.join(__dirname, "..", "data", "discord-state.json"), createInitialState);
 const state = loadRequiredState(store, "経済台帳");
-const engine = new EconomyEngine(state);
+// 一回限りのmigrationは EconomyEngine の生成時に走る。本番エントリでは処理内容を
+// ログに出し、返金など state を変えた場合は永続化を確認してから後続の
+// 内部API / Discord ログインへ進む。永続化前に「返金しました」の確定ログは出さない。
+const engine = new EconomyEngine(state, { migrationLog: (msg) => console.log(msg) });
+if (engine.lastMigrationResult) {
+  const { applied = [], missing = [], errors = [], ambiguous = [] } = engine.lastMigrationResult;
+  console.log(
+    `[migration] legacy_chair_refund: applied=${applied.length} missing=${missing.length} errors=${errors.length} ambiguous=${(ambiguous || []).length}`
+  );
+  if (applied.length > 0) {
+    try {
+      store.save(engine.state);
+    } catch (error) {
+      // メモリ上は返金済み、ディスク上は未反映という不整合を利用者操作へ晒さない。
+      // 例外を投げてプロセス全体を止め、内部API / Discord ログインへは進めない。
+      console.error(`[migration] legacy_chair_refund: 永続化に失敗したため起動を中止します: ${error.message}`);
+      throw error;
+    }
+    // 永続化成功後にはじめて確定ログを出す。
+    for (const target of applied) {
+      console.log(`[migration] legacy_chair_refund: ${target} へ 1500 Ris を返金しました（保存確認済み）。`);
+    }
+  }
+}
 startInternalApi({
   engine,
   store,
